@@ -1,0 +1,1434 @@
+{
+  "meta": {
+    "project": "agnes-manga-studio · Agnes 漫剧工坊 本地版",
+    "version": "1.0.1",
+    "generated_at": "2026-09-18",
+    "description": "本地优先的 AI 漫剧工作台知识图谱：前端页面 → REST API → lib 模块 → JSON 数据层 → Agnes 云端接口的完整链路。",
+    "stats": {
+      "nodes": 73,
+      "edges": 177
+    }
+  },
+  "types": {
+    "entry": {
+      "label": "入口",
+      "color": "#D6B56D"
+    },
+    "frontend": {
+      "label": "前端模块",
+      "color": "#5AC8FA"
+    },
+    "page": {
+      "label": "页面",
+      "color": "#34C7A9"
+    },
+    "server": {
+      "label": "服务进程",
+      "color": "#FF9F43"
+    },
+    "lib": {
+      "label": "后端模块",
+      "color": "#B08CFF"
+    },
+    "api": {
+      "label": "API 资源",
+      "color": "#F67D7D"
+    },
+    "db": {
+      "label": "数据集合",
+      "color": "#6FB7FF"
+    },
+    "storage": {
+      "label": "落盘文件",
+      "color": "#8A9BAE"
+    },
+    "external": {
+      "label": "Agnes 云端",
+      "color": "#FFD166"
+    },
+    "concept": {
+      "label": "机制/约定",
+      "color": "#7DD87D"
+    },
+    "tool": {
+      "label": "测试/工具",
+      "color": "#C48FE0"
+    }
+  },
+  "nodes": [
+    {
+      "id": "html",
+      "type": "entry",
+      "label": "index.html",
+      "file": "public/index.html",
+      "desc": "SPA 壳：#app 容器、modal-root、toasts、加载 js/app.js 与 css/app.css"
+    },
+    {
+      "id": "app",
+      "type": "frontend",
+      "label": "app.js",
+      "file": "public/js/app.js",
+      "desc": "前端外壳：hash 路由、全局 state、侧边导航、EventSource(/api/events) 连接与事件分发"
+    },
+    {
+      "id": "apif",
+      "type": "frontend",
+      "label": "api.js",
+      "file": "public/js/api.js",
+      "desc": "后端接口统一封装：所有请求收敛成 {ok,data,error}，页面不做层层 try"
+    },
+    {
+      "id": "uif",
+      "type": "frontend",
+      "label": "ui.js",
+      "file": "public/js/ui.js",
+      "desc": "通用 UI 组件：toast / modal / confirm / prompt / spinner / options / setBusy（按钮秒表加载态）"
+    },
+    {
+      "id": "consts",
+      "type": "frontend",
+      "label": "consts.js",
+      "file": "public/js/consts.js",
+      "desc": "内联 SVG 图标集、业务枚举与状态表、esc/fmt 工具、extractJson+repairJson+extractJsonArray（模型输出容错解析）"
+    },
+    {
+      "id": "page:dash",
+      "type": "page",
+      "label": "工作台 dashboard",
+      "file": "public/js/pages/dashboard.js",
+      "desc": "统计卡片、最近素材概览，SSE 事件驱动刷新"
+    },
+    {
+      "id": "page:proj",
+      "type": "page",
+      "label": "项目管理 projects",
+      "file": "public/js/pages/projects.js",
+      "desc": "项目 CRUD、复制、级联删除、导出资料包"
+    },
+    {
+      "id": "page:scr",
+      "type": "page",
+      "label": "故事脚本 scripts",
+      "file": "public/js/pages/scripts.js",
+      "desc": "5 类脚本生成（构思/梗概/大纲/单集/分镜）：模板变量表单 → genText(json_mode) → extractJson 展示 → 保存/导入分镜；脚本优化 chips"
+    },
+    {
+      "id": "page:sb",
+      "type": "page",
+      "label": "分镜制作 storyboards",
+      "file": "public/js/pages/storyboards.js",
+      "desc": "链路中枢：粘贴脚本一键生成分镜表（分镜生成走 json_mode）、镜头编辑/排序、批量补提示词、批量出图/出视频、单镜头出图出视频（全部带 setBusy 加载态）"
+    },
+    {
+      "id": "page:img",
+      "type": "page",
+      "label": "图片生成 images",
+      "file": "public/js/pages/images.js",
+      "desc": "文生图 / 图生图，结果自动落盘并关联分镜"
+    },
+    {
+      "id": "page:vid",
+      "type": "page",
+      "label": "视频生成 videos",
+      "file": "public/js/pages/videos.js",
+      "desc": "文生视频 / 图生视频 / 多图参考 / 关键帧，提交后进任务中心"
+    },
+    {
+      "id": "page:task",
+      "type": "page",
+      "label": "任务中心 tasks",
+      "file": "public/js/pages/tasks.js",
+      "desc": "视频任务列表：SSE 实时状态、手动刷新、补录 video_id(bind)、下载、批量地址补取"
+    },
+    {
+      "id": "page:asset",
+      "type": "page",
+      "label": "素材库 assets",
+      "file": "public/js/pages/assets.js",
+      "desc": "图片/视频/文本素材统一浏览、收藏、预览、下载、删除"
+    },
+    {
+      "id": "page:set",
+      "type": "page",
+      "label": "设置 settings",
+      "file": "public/js/pages/settings.js",
+      "desc": "Agnes API Key 配置（只显示脱敏值）、模型目录刷新、默认模型、提示词模板管理、全量导入备份"
+    },
+    {
+      "id": "page:help",
+      "type": "page",
+      "label": "helpers.js",
+      "file": "public/js/pages/helpers.js",
+      "desc": "页面级公共件：head 标题区、projectPicker、renderBatchBar 批量进度条"
+    },
+    {
+      "id": "srv",
+      "type": "server",
+      "label": "server.js",
+      "file": "server.js",
+      "desc": "零依赖 node:http 服务：只监听 127.0.0.1；托管前端、/assets 素材文件、/api/events SSE、Origin 校验、路径穿越防护、Node SEA 单文件 exe 资源释放"
+    },
+    {
+      "id": "lib:store",
+      "type": "lib",
+      "label": "store.js",
+      "file": "lib/store.js",
+      "desc": "JSON 数据层：8 集合 CRUD、原子写 + .bak 回滚、设置脱敏、动态模型目录缓存、导入导出、stats"
+    },
+    {
+      "id": "lib:agnes",
+      "type": "lib",
+      "label": "agnes.js",
+      "file": "lib/agnes.js",
+      "desc": "Agnes API 客户端：chat（含 response_format=json_object + 4xx 自动降级）、image、createVideo（超时≠失败）、queryVideo、buildSafeStatusUpdate 状态机、downloadVideo、listModels、testConnection"
+    },
+    {
+      "id": "lib:poller",
+      "type": "lib",
+      "label": "poller.js",
+      "file": "lib/poller.js",
+      "desc": "视频后台轮询：服务端 setTimeout 链、断线续轮（resume）、poll_timeout 保护、自动落盘、SSE 广播"
+    },
+    {
+      "id": "lib:jobs",
+      "type": "lib",
+      "label": "jobs.js",
+      "file": "lib/jobs.js",
+      "desc": "批量队列：并发上限（图片≤8 视频默认串行）、逐项失败隔离、取消、进度回调"
+    },
+    {
+      "id": "lib:routes",
+      "type": "lib",
+      "label": "routes.js",
+      "file": "lib/routes.js",
+      "desc": "REST 路由表（60 个 /api/* 端点）：模式匹配分发、素材 base64/远端图落盘、fetchInternal 供批量任务复用"
+    },
+    {
+      "id": "lib:seed",
+      "type": "lib",
+      "label": "seed.js",
+      "file": "lib/seed.js",
+      "desc": "首次运行播种 14 个内置提示词模板（8 类型），{{变量}} 由前端渲染成表单"
+    },
+    {
+      "id": "api:sys",
+      "type": "api",
+      "label": "GET /api/health · bootstrap · stats",
+      "desc": "系统探针与启动数据包：settings(脱敏)+projects+stats+templates+models 一次拉齐"
+    },
+    {
+      "id": "api:settings",
+      "type": "api",
+      "label": "/api/settings · /test",
+      "desc": "读写设置（Key 只回脱敏值）、text/image/video 连通性测试"
+    },
+    {
+      "id": "api:models",
+      "type": "api",
+      "label": "/api/models · /refresh",
+      "desc": "模型目录：缓存读取 + 从 GET /v1/models 手动/自动刷新，失败保留旧目录"
+    },
+    {
+      "id": "api:proj",
+      "type": "api",
+      "label": "/api/projects*",
+      "desc": "项目 CRUD、duplicate、:id/export 资料包下载"
+    },
+    {
+      "id": "api:scr",
+      "type": "api",
+      "label": "/api/scripts*",
+      "desc": "脚本 CRUD，按 project_id 过滤"
+    },
+    {
+      "id": "api:sb",
+      "type": "api",
+      "label": "/api/storyboards*",
+      "desc": "分镜 CRUD、批量插入 {rows}、reorder、按集清空"
+    },
+    {
+      "id": "api:img",
+      "type": "api",
+      "label": "/api/images*",
+      "desc": "图片素材记录 CRUD（收藏/标签/备注）"
+    },
+    {
+      "id": "api:vid",
+      "type": "api",
+      "label": "/api/videos*",
+      "desc": "视频任务：POST 提交 Agnes → 落库 → poller.watch；refresh/bind/download/batch-refresh"
+    },
+    {
+      "id": "api:task",
+      "type": "api",
+      "label": "/api/tasks*",
+      "desc": "生成任务历史（文本/图片/视频统一记账），文本图片也会写入 —— 原版此页一直空白"
+    },
+    {
+      "id": "api:tpl",
+      "type": "api",
+      "label": "/api/templates*",
+      "desc": "提示词模板 CRUD，改提示词不用动代码"
+    },
+    {
+      "id": "api:atext",
+      "type": "api",
+      "label": "POST /api/agnes/text",
+      "desc": "文本生成代理：messages 直传，json_mode:true 走约束解码；成功/失败均写 generation_tasks"
+    },
+    {
+      "id": "api:aimage",
+      "type": "api",
+      "label": "POST /api/agnes/image",
+      "desc": "图片生成代理：b64/远端 URL 双路落盘，可回写分镜 linked_image_id"
+    },
+    {
+      "id": "api:batch",
+      "type": "api",
+      "label": "/api/batch/*",
+      "desc": "批量生图/生视频队列：返回 jobId，进度经 SSE batch 事件推送，可取消"
+    },
+    {
+      "id": "api:impexp",
+      "type": "api",
+      "label": "GET /api/export · POST /api/import",
+      "desc": "全量 JSON 备份下载 / merge·replace 导入"
+    },
+    {
+      "id": "api:sse",
+      "type": "api",
+      "label": "GET /api/events (SSE)",
+      "desc": "server.js 内处理：video/batch/log 事件实时推送，25s 心跳"
+    },
+    {
+      "id": "api:asset",
+      "type": "api",
+      "label": "/assets/images|videos/*",
+      "desc": "本地素材文件读取：限定目录 + basename，防路径穿越"
+    },
+    {
+      "id": "db:proj",
+      "type": "db",
+      "label": "projects",
+      "desc": "项目：类型/平台/画风/比例/集数/状态"
+    },
+    {
+      "id": "db:scr",
+      "type": "db",
+      "label": "scripts",
+      "desc": "脚本：script_type ∈ 构思/梗概/大纲/单集/分镜，关联 project_id"
+    },
+    {
+      "id": "db:sb",
+      "type": "db",
+      "label": "storyboards",
+      "desc": "分镜行：景别/画面/台词/时长/image_prompt/video_prompt/linked_image_id/linked_video_id"
+    },
+    {
+      "id": "db:ia",
+      "type": "db",
+      "label": "image_assets",
+      "desc": "图片记录：url(本地)/remote_url/local_file/storyboard 关联/收藏/标签"
+    },
+    {
+      "id": "db:va",
+      "type": "db",
+      "label": "video_assets",
+      "desc": "视频任务记录：agnes_video_id、status/remote_status/local_status 三态、progress、raw 响应存档"
+    },
+    {
+      "id": "db:gt",
+      "type": "db",
+      "label": "generation_tasks",
+      "desc": "生成任务历史：task_type text/image、input/output、失败也记录"
+    },
+    {
+      "id": "db:pt",
+      "type": "db",
+      "label": "prompt_templates",
+      "desc": "提示词模板：system+content({{变量}})、builtin 标记"
+    },
+    {
+      "id": "db:vl",
+      "type": "db",
+      "label": "video_submit_logs",
+      "desc": "视频提交日志集合（表名沿用云端版，本地版暂未启用）"
+    },
+    {
+      "id": "st:db",
+      "type": "storage",
+      "label": "data/db.json",
+      "desc": "全部集合的主档：临时文件+rename 原子写，同级 .bak 可回滚"
+    },
+    {
+      "id": "st:set",
+      "type": "storage",
+      "label": "data/settings.json",
+      "desc": "含明文 API Key —— 仅本机，永不回前端"
+    },
+    {
+      "id": "st:mod",
+      "type": "storage",
+      "label": "data/models.json",
+      "desc": "模型目录缓存（TTL 默认 24h）"
+    },
+    {
+      "id": "st:ai",
+      "type": "storage",
+      "label": "data/assets/images/",
+      "desc": "生成图片与抓取落盘"
+    },
+    {
+      "id": "st:av",
+      "type": "storage",
+      "label": "data/assets/videos/",
+      "desc": "自动/手动保存的视频 {assetId}.mp4"
+    },
+    {
+      "id": "st:ex",
+      "type": "storage",
+      "label": "data/exports/",
+      "desc": "资料导出目录"
+    },
+    {
+      "id": "ext:chat",
+      "type": "external",
+      "label": "POST /v1/chat/completions",
+      "desc": "文本生成；支持 response_format=json_object"
+    },
+    {
+      "id": "ext:image",
+      "type": "external",
+      "label": "POST /v1/images/generations",
+      "desc": "文生图/图生图（LiteLLM 代理，b64_json 为主）"
+    },
+    {
+      "id": "ext:vcreate",
+      "type": "external",
+      "label": "POST /v1/videos",
+      "desc": "视频任务提交；image 放顶层，keyframes 有 mode 标记"
+    },
+    {
+      "id": "ext:vquery",
+      "type": "external",
+      "label": "GET /agnesapi?video_id=",
+      "desc": "视频状态查询（域名根路径，非 /v1）；成片地址在 remixed_from_video_id"
+    },
+    {
+      "id": "ext:models",
+      "type": "external",
+      "label": "GET /v1/models",
+      "desc": "OpenAI 兼容模型清单，三种响应形状全兼容"
+    },
+    {
+      "id": "c:sse",
+      "type": "concept",
+      "label": "SSE 事件总线",
+      "desc": "poller.events：video/batch/log 三类事件，前端 app.js 分发到页面；关页面不断轮询"
+    },
+    {
+      "id": "c:poll",
+      "type": "concept",
+      "label": "视频轮询状态机",
+      "desc": "提交超时≠失败(submit_timeout_unknown 可 bind 补录)；completed 无 URL→video_url_missing；未知 status 不动状态只存档"
+    },
+    {
+      "id": "c:json",
+      "type": "concept",
+      "label": "JSON 约束解码 + 容错解析",
+      "desc": "生成链路走 response_format=json_object（约束解码杜绝坏语法），前端 repairJson 兜底修复历史坏输出模式，extractJsonArray 解包 {shots:[...]}；4xx 自动降级普通请求"
+    },
+    {
+      "id": "c:key",
+      "type": "concept",
+      "label": "Key 本地代理与脱敏",
+      "desc": "明文 Key 只存 settings.json；接口层 getSettingsMasked 返回 ***configured*** + sk-1****abcd；调用 Agnes 由本机服务代发"
+    },
+    {
+      "id": "c:guard",
+      "type": "concept",
+      "label": "本机安全护栏",
+      "desc": "写操作 Origin 校验（挡跨站静默删库）、safeResolve 路径钉死、文件名净化 safeName"
+    },
+    {
+      "id": "c:atomic",
+      "type": "concept",
+      "label": "原子写 + 自动备份",
+      "desc": "tmp→rename 落盘，写前 copyFile .bak，损坏自动回读上一版；persist 串行队列防并发覆盖"
+    },
+    {
+      "id": "c:sea",
+      "type": "concept",
+      "label": "Node SEA 单文件 exe",
+      "desc": "内嵌资源首启释放、portable 哨兵文件、ASSETS_VERSION 戳控制重释放；接收方免装 Node"
+    },
+    {
+      "id": "c:tpl",
+      "type": "concept",
+      "label": "模板变量约定 {{x}}",
+      "desc": "模板 content 内 {{变量}} → 前端渲染表单 → 替换后提交；未填渲染为（未填写）"
+    },
+    {
+      "id": "c:queue",
+      "type": "concept",
+      "label": "批量队列语义",
+      "desc": "图片默认并发 3（上限 8），视频默认串行提交防重复扣费；单项失败不炸整批"
+    },
+    {
+      "id": "c:busy",
+      "type": "concept",
+      "label": "setBusy 加载态",
+      "desc": "所有长耗时按钮：禁用 + 内联 spinner + 秒表，防双击重复烧配额，结束自动还原"
+    },
+    {
+      "id": "t:self",
+      "type": "tool",
+      "label": "selftest.mjs",
+      "file": "tools/selftest.mjs",
+      "desc": "离线自检 110 断言：数据层/脱敏/导入导出/状态机/队列/路由/模板/落盘/前端 JSON 解析"
+    },
+    {
+      "id": "t:api",
+      "type": "tool",
+      "label": "apitest.mjs",
+      "file": "tools/apitest.mjs",
+      "desc": "起 mock Agnes + 真 server 的 127 断言集成测试，不消耗真实配额"
+    },
+    {
+      "id": "t:ui",
+      "type": "tool",
+      "label": "uitest.mjs",
+      "file": "tools/uitest.mjs",
+      "desc": "前端静态一致性 390 断言：import 符号/图标名/api 方法名/资源存在性"
+    },
+    {
+      "id": "t:br",
+      "type": "tool",
+      "label": "browser-test.mjs",
+      "file": "tools/browser-test.mjs",
+      "desc": "Chrome CDP 真浏览器冒烟：白屏/路由/落盘/控制台错误，不用 Playwright"
+    },
+    {
+      "id": "t:exe",
+      "type": "tool",
+      "label": "build-exe.mjs",
+      "file": "tools/build-exe.mjs",
+      "desc": "Node SEA + postject 打包 Windows 单文件 exe"
+    },
+    {
+      "id": "t:all",
+      "type": "tool",
+      "label": "run-all.mjs",
+      "file": "tools/run-all.mjs",
+      "desc": "串起 self → api → ui → browser 四套测试"
+    }
+  ],
+  "edges": [
+    {
+      "from": "html",
+      "to": "app",
+      "kind": "加载",
+      "label": "<script type=module>"
+    },
+    {
+      "from": "app",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "app",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "app",
+      "to": "consts",
+      "kind": "import"
+    },
+    {
+      "from": "page:dash",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:dash",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:proj",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:proj",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:scr",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:scr",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:scr",
+      "to": "consts",
+      "kind": "使用",
+      "label": "extractJson/Array"
+    },
+    {
+      "from": "page:sb",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:sb",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:sb",
+      "to": "consts",
+      "kind": "使用",
+      "label": "extractJsonArray"
+    },
+    {
+      "from": "page:img",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:img",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:vid",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:vid",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:task",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:task",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:asset",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:asset",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "page:set",
+      "to": "apif",
+      "kind": "import"
+    },
+    {
+      "from": "page:set",
+      "to": "uif",
+      "kind": "import"
+    },
+    {
+      "from": "app",
+      "to": "page:dash",
+      "kind": "路由",
+      "label": "#/dashboard"
+    },
+    {
+      "from": "app",
+      "to": "page:proj",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:scr",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:sb",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:img",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:vid",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:task",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:asset",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "page:set",
+      "kind": "路由"
+    },
+    {
+      "from": "app",
+      "to": "api:sse",
+      "kind": "连接",
+      "label": "EventSource"
+    },
+    {
+      "from": "page:help",
+      "to": "consts",
+      "kind": "import"
+    },
+    {
+      "from": "page:dash",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:proj",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:scr",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:sb",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:img",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:vid",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:task",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:asset",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "page:set",
+      "to": "page:help",
+      "kind": "import"
+    },
+    {
+      "from": "srv",
+      "to": "lib:store",
+      "kind": "require"
+    },
+    {
+      "from": "srv",
+      "to": "lib:agnes",
+      "kind": "require"
+    },
+    {
+      "from": "srv",
+      "to": "lib:poller",
+      "kind": "require"
+    },
+    {
+      "from": "srv",
+      "to": "lib:jobs",
+      "kind": "require"
+    },
+    {
+      "from": "srv",
+      "to": "lib:seed",
+      "kind": "require"
+    },
+    {
+      "from": "srv",
+      "to": "lib:routes",
+      "kind": "require"
+    },
+    {
+      "from": "srv",
+      "to": "html",
+      "kind": "托管",
+      "label": "静态资源 + SPA 回退"
+    },
+    {
+      "from": "srv",
+      "to": "api:sse",
+      "kind": "实现"
+    },
+    {
+      "from": "srv",
+      "to": "api:asset",
+      "kind": "实现"
+    },
+    {
+      "from": "srv",
+      "to": "c:sea",
+      "kind": "支持"
+    },
+    {
+      "from": "srv",
+      "to": "c:guard",
+      "kind": "执行"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "lib:store",
+      "kind": "require",
+      "label": "读设置与 Key"
+    },
+    {
+      "from": "lib:poller",
+      "to": "lib:agnes",
+      "kind": "require"
+    },
+    {
+      "from": "lib:poller",
+      "to": "lib:store",
+      "kind": "注入",
+      "label": "init(store)"
+    },
+    {
+      "from": "lib:routes",
+      "to": "lib:store",
+      "kind": "注入"
+    },
+    {
+      "from": "lib:routes",
+      "to": "lib:agnes",
+      "kind": "注入"
+    },
+    {
+      "from": "lib:routes",
+      "to": "lib:poller",
+      "kind": "注入"
+    },
+    {
+      "from": "lib:routes",
+      "to": "lib:jobs",
+      "kind": "注入"
+    },
+    {
+      "from": "lib:seed",
+      "to": "lib:store",
+      "kind": "播种",
+      "label": "14 模板"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:proj",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:scr",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:sb",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:ia",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:va",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:gt",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:pt",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "db:vl",
+      "kind": "管理"
+    },
+    {
+      "from": "lib:store",
+      "to": "st:db",
+      "kind": "持久化"
+    },
+    {
+      "from": "lib:store",
+      "to": "st:set",
+      "kind": "持久化"
+    },
+    {
+      "from": "lib:store",
+      "to": "st:mod",
+      "kind": "持久化"
+    },
+    {
+      "from": "lib:store",
+      "to": "c:atomic",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:store",
+      "to": "c:key",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "ext:chat",
+      "kind": "调用"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "ext:image",
+      "kind": "调用"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "ext:vcreate",
+      "kind": "调用"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "ext:vquery",
+      "kind": "轮询"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "ext:models",
+      "kind": "调用"
+    },
+    {
+      "from": "lib:agnes",
+      "to": "c:json",
+      "kind": "实现",
+      "label": "json 模式+降级"
+    },
+    {
+      "from": "lib:poller",
+      "to": "db:va",
+      "kind": "读写"
+    },
+    {
+      "from": "lib:poller",
+      "to": "c:sse",
+      "kind": "广播"
+    },
+    {
+      "from": "lib:poller",
+      "to": "c:poll",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:poller",
+      "to": "st:av",
+      "kind": "自动下载"
+    },
+    {
+      "from": "lib:jobs",
+      "to": "c:queue",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:sys",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:settings",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:models",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:proj",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:scr",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:sb",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:img",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:vid",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:task",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:tpl",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:atext",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:aimage",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:batch",
+      "kind": "实现"
+    },
+    {
+      "from": "lib:routes",
+      "to": "api:impexp",
+      "kind": "实现"
+    },
+    {
+      "from": "api:sys",
+      "to": "db:proj",
+      "kind": "读"
+    },
+    {
+      "from": "api:settings",
+      "to": "st:set",
+      "kind": "读写"
+    },
+    {
+      "from": "api:settings",
+      "to": "c:key",
+      "kind": "遵守"
+    },
+    {
+      "from": "api:models",
+      "to": "st:mod",
+      "kind": "读写"
+    },
+    {
+      "from": "api:models",
+      "to": "ext:models",
+      "kind": "代理"
+    },
+    {
+      "from": "api:proj",
+      "to": "db:proj",
+      "kind": "读写"
+    },
+    {
+      "from": "api:scr",
+      "to": "db:scr",
+      "kind": "读写"
+    },
+    {
+      "from": "api:sb",
+      "to": "db:sb",
+      "kind": "读写"
+    },
+    {
+      "from": "api:img",
+      "to": "db:ia",
+      "kind": "读写"
+    },
+    {
+      "from": "api:vid",
+      "to": "db:va",
+      "kind": "读写"
+    },
+    {
+      "from": "api:vid",
+      "to": "lib:poller",
+      "kind": "委托",
+      "label": "watch/refresh/download"
+    },
+    {
+      "from": "api:task",
+      "to": "db:gt",
+      "kind": "读写"
+    },
+    {
+      "from": "api:tpl",
+      "to": "db:pt",
+      "kind": "读写"
+    },
+    {
+      "from": "api:atext",
+      "to": "ext:chat",
+      "kind": "代理"
+    },
+    {
+      "from": "api:atext",
+      "to": "db:gt",
+      "kind": "写",
+      "label": "成败都记账"
+    },
+    {
+      "from": "api:aimage",
+      "to": "ext:image",
+      "kind": "代理"
+    },
+    {
+      "from": "api:aimage",
+      "to": "db:ia",
+      "kind": "写"
+    },
+    {
+      "from": "api:aimage",
+      "to": "st:ai",
+      "kind": "落盘"
+    },
+    {
+      "from": "api:aimage",
+      "to": "db:sb",
+      "kind": "回写",
+      "label": "linked_image_id"
+    },
+    {
+      "from": "api:batch",
+      "to": "lib:jobs",
+      "kind": "排队"
+    },
+    {
+      "from": "api:batch",
+      "to": "c:sse",
+      "kind": "推进度"
+    },
+    {
+      "from": "api:impexp",
+      "to": "db:proj",
+      "kind": "导入导出"
+    },
+    {
+      "from": "api:impexp",
+      "to": "db:scr",
+      "kind": "导入导出"
+    },
+    {
+      "from": "api:impexp",
+      "to": "db:pt",
+      "kind": "导入导出"
+    },
+    {
+      "from": "page:scr",
+      "to": "api:atext",
+      "kind": "调用",
+      "label": "生成/优化"
+    },
+    {
+      "from": "page:scr",
+      "to": "api:scr",
+      "kind": "调用"
+    },
+    {
+      "from": "page:scr",
+      "to": "api:tpl",
+      "kind": "调用"
+    },
+    {
+      "from": "page:scr",
+      "to": "api:sb",
+      "kind": "调用",
+      "label": "导入分镜表"
+    },
+    {
+      "from": "page:sb",
+      "to": "api:sb",
+      "kind": "调用"
+    },
+    {
+      "from": "page:sb",
+      "to": "api:atext",
+      "kind": "调用",
+      "label": "分镜生成 json_mode"
+    },
+    {
+      "from": "page:sb",
+      "to": "api:aimage",
+      "kind": "调用"
+    },
+    {
+      "from": "page:sb",
+      "to": "api:vid",
+      "kind": "调用"
+    },
+    {
+      "from": "page:sb",
+      "to": "api:batch",
+      "kind": "调用"
+    },
+    {
+      "from": "page:sb",
+      "to": "api:img",
+      "kind": "调用"
+    },
+    {
+      "from": "page:img",
+      "to": "api:aimage",
+      "kind": "调用"
+    },
+    {
+      "from": "page:img",
+      "to": "api:img",
+      "kind": "调用"
+    },
+    {
+      "from": "page:vid",
+      "to": "api:vid",
+      "kind": "调用"
+    },
+    {
+      "from": "page:vid",
+      "to": "api:img",
+      "kind": "调用"
+    },
+    {
+      "from": "page:task",
+      "to": "api:task",
+      "kind": "调用"
+    },
+    {
+      "from": "page:task",
+      "to": "api:vid",
+      "kind": "调用"
+    },
+    {
+      "from": "page:asset",
+      "to": "api:img",
+      "kind": "调用"
+    },
+    {
+      "from": "page:asset",
+      "to": "api:vid",
+      "kind": "调用"
+    },
+    {
+      "from": "page:asset",
+      "to": "api:scr",
+      "kind": "调用"
+    },
+    {
+      "from": "page:asset",
+      "to": "api:asset",
+      "kind": "预览"
+    },
+    {
+      "from": "page:set",
+      "to": "api:settings",
+      "kind": "调用"
+    },
+    {
+      "from": "page:set",
+      "to": "api:models",
+      "kind": "调用"
+    },
+    {
+      "from": "page:set",
+      "to": "api:tpl",
+      "kind": "调用"
+    },
+    {
+      "from": "page:set",
+      "to": "api:impexp",
+      "kind": "调用"
+    },
+    {
+      "from": "page:dash",
+      "to": "api:sys",
+      "kind": "调用"
+    },
+    {
+      "from": "page:dash",
+      "to": "api:img",
+      "kind": "调用"
+    },
+    {
+      "from": "page:dash",
+      "to": "api:vid",
+      "kind": "调用"
+    },
+    {
+      "from": "page:dash",
+      "to": "api:proj",
+      "kind": "调用"
+    },
+    {
+      "from": "page:proj",
+      "to": "api:proj",
+      "kind": "调用"
+    },
+    {
+      "from": "page:proj",
+      "to": "api:img",
+      "kind": "调用"
+    },
+    {
+      "from": "page:proj",
+      "to": "api:vid",
+      "kind": "调用"
+    },
+    {
+      "from": "page:proj",
+      "to": "api:sb",
+      "kind": "调用"
+    },
+    {
+      "from": "uif",
+      "to": "c:busy",
+      "kind": "实现"
+    },
+    {
+      "from": "consts",
+      "to": "c:json",
+      "kind": "实现",
+      "label": "repairJson/extractJsonArray"
+    },
+    {
+      "from": "c:sse",
+      "to": "api:sse",
+      "kind": "通道"
+    },
+    {
+      "from": "t:self",
+      "to": "lib:store",
+      "kind": "测试"
+    },
+    {
+      "from": "t:self",
+      "to": "lib:agnes",
+      "kind": "测试"
+    },
+    {
+      "from": "t:self",
+      "to": "lib:jobs",
+      "kind": "测试"
+    },
+    {
+      "from": "t:self",
+      "to": "lib:routes",
+      "kind": "测试"
+    },
+    {
+      "from": "t:self",
+      "to": "lib:seed",
+      "kind": "测试"
+    },
+    {
+      "from": "t:self",
+      "to": "consts",
+      "kind": "测试"
+    },
+    {
+      "from": "t:api",
+      "to": "srv",
+      "kind": "测试",
+      "label": "mock Agnes + 真服务"
+    },
+    {
+      "from": "t:ui",
+      "to": "html",
+      "kind": "检查"
+    },
+    {
+      "from": "t:br",
+      "to": "srv",
+      "kind": "冒烟"
+    },
+    {
+      "from": "t:exe",
+      "to": "c:sea",
+      "kind": "打包"
+    },
+    {
+      "from": "t:all",
+      "to": "t:self",
+      "kind": "串跑"
+    },
+    {
+      "from": "t:all",
+      "to": "t:api",
+      "kind": "串跑"
+    },
+    {
+      "from": "t:all",
+      "to": "t:ui",
+      "kind": "串跑"
+    },
+    {
+      "from": "t:all",
+      "to": "t:br",
+      "kind": "串跑"
+    },
+    {
+      "from": "srv",
+      "to": "st:ex",
+      "kind": "初始化",
+      "label": "启动建目录"
+    },
+    {
+      "from": "lib:seed",
+      "to": "c:tpl",
+      "kind": "定义",
+      "label": "模板内容用 {{变量}}"
+    },
+    {
+      "from": "page:scr",
+      "to": "c:tpl",
+      "kind": "渲染",
+      "label": "{{变量}} → 表单"
+    }
+  ]
+}

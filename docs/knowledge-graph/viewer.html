@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Agnes 漫剧工坊 · 项目知识图谱</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #08090D; --panel: #101319; --panel2: #161A22; --border: #232A36;
+    --text: #E8EBF0; --text2: #9AA6B8; --text3: #5F6B7E; --gold: #D6B56D;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  #canvas { position: absolute; inset: 0; cursor: grab; }
+  #canvas.dragging { cursor: grabbing; }
+
+  .panel {
+    position: absolute; background: rgba(16,19,25,0.92); border: 1px solid var(--border);
+    border-radius: 14px; backdrop-filter: blur(8px); box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  #head { top: 16px; left: 16px; padding: 14px 18px; max-width: 380px; }
+  #head h1 { font-size: 15px; letter-spacing: 0.5px; }
+  #head h1 b { color: var(--gold); font-weight: 650; }
+  #head .sub { color: var(--text2); font-size: 11.5px; margin-top: 4px; }
+  #head .row { display: flex; gap: 8px; margin-top: 10px; }
+  #search {
+    flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 9px; padding: 6px 10px; font-size: 12.5px; outline: none;
+  }
+  #search:focus { border-color: var(--gold); }
+  button.ghost {
+    background: transparent; border: 1px solid var(--border); color: var(--text2);
+    border-radius: 9px; padding: 6px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--gold); }
+
+  #legend { top: 16px; right: 16px; padding: 12px 14px; width: 190px; }
+  #legend h2, #detail h2 {
+    font-size: 11px; color: var(--text3); font-weight: 600; letter-spacing: 1.5px; margin-bottom: 8px;
+  }
+  .lgt { display: flex; align-items: center; gap: 8px; padding: 3px 2px; cursor: pointer; user-select: none; font-size: 12px; }
+  .lgt:hover { background: rgba(255,255,255,0.04); border-radius: 6px; }
+  .lgt .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  .lgt .n { margin-left: auto; color: var(--text3); font-size: 10.5px; }
+  .lgt.off { opacity: 0.35; }
+  .lgt.off .dot { background: transparent !important; box-shadow: inset 0 0 0 1.5px currentColor; }
+
+  #detail {
+    left: 16px; bottom: 16px; width: min(460px, calc(100vw - 32px)); max-height: 46vh;
+    padding: 14px 16px; overflow: auto; display: none;
+  }
+  #detail.show { display: block; }
+  #detail .typ { display: inline-block; font-size: 10.5px; padding: 1px 8px; border-radius: 999px; margin-bottom: 6px; }
+  #detail h3 { font-size: 14px; margin-bottom: 2px; }
+  #detail .file { color: var(--text3); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+  #detail .desc { color: var(--text2); margin: 8px 0; }
+  #detail .edges { margin-top: 6px; }
+  #detail .edge { font-size: 11.5px; color: var(--text2); padding: 2px 0; cursor: pointer; }
+  #detail .edge:hover { color: var(--gold); }
+  #detail .edge .k { color: var(--text3); font-size: 10px; border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin: 0 4px; }
+  #detail .close { position: absolute; top: 10px; right: 12px; cursor: pointer; color: var(--text3); }
+  #detail .close:hover { color: var(--text); }
+
+  #tip {
+    position: absolute; pointer-events: none; padding: 5px 10px; border-radius: 8px;
+    background: rgba(22,26,34,0.96); border: 1px solid var(--border); color: var(--text);
+    font-size: 12px; display: none; z-index: 5; white-space: nowrap;
+  }
+  #stats { position: absolute; right: 18px; bottom: 14px; color: var(--text3); font-size: 11px; }
+  #stats b { color: var(--text2); font-weight: 500; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div class="panel" id="head">
+  <h1><b>Agnes 漫剧工坊</b> · 项目知识图谱</h1>
+  <div class="sub">拖拽平移 · 滚轮缩放 · 拖动节点 · 点击看详情 · 双击聚焦邻域。数据：knowledge-graph.json</div>
+  <div class="row">
+    <input id="search" placeholder="搜索节点（名字 / 描述 / 文件）" />
+    <button class="ghost" id="fit">适应</button>
+    <button class="ghost" id="shake">重排</button>
+  </div>
+</div>
+
+<div class="panel" id="legend"><h2>图例 / 点击过滤</h2><div id="lgts"></div></div>
+
+<div class="panel" id="detail">
+  <span class="close" id="dclose">✕</span>
+  <span class="typ" id="dtyp"></span>
+  <h3 id="dname"></h3>
+  <div class="file" id="dfile"></div>
+  <div class="desc" id="ddesc"></div>
+  <div class="edges" id="dedges"></div>
+</div>
+
+<div id="tip"></div>
+<div id="stats"></div>
+
+<script src="./graph.data.js"></script>
+<script>
+'use strict';
+const G = window.GRAPH;
+const cvs = document.getElementById('canvas');
+const ctx = cvs.getContext('2d');
+let W = 0, H = 0, DPR = Math.max(1, window.devicePixelRatio || 1);
+
+/* ── 数据整形：度 → 半径；邻接表 ─────────────────────────── */
+const byId = new Map();
+const nodes = G.nodes.map((n, i) => {
+  const o = Object.assign({ idx: i, deg: 0, x: 0, y: 0, vx: 0, vy: 0, hid: false }, n);
+  byId.set(n.id, o); return o;
+});
+const edges = G.edges.map((e) => ({ s: byId.get(e.from), t: byId.get(e.to), kind: e.kind, label: e.label || '' }));
+for (const e of edges) { e.s.deg++; e.t.deg++; }
+for (const n of nodes) n.r = 5 + Math.sqrt(n.deg) * 2.6;
+const adj = new Map(nodes.map((n) => [n.id, new Set()]));
+for (const e of edges) { adj.get(e.s.id).add(e.t.id); adj.get(e.t.id).add(e.s.id); }
+
+const TYPES = G.types;
+const shown = new Set(Object.keys(TYPES));
+
+/* ── 初始布局：按类型分环，同类聚团 ──────────────────────── */
+(function seedLayout() {
+  const groups = new Map();
+  nodes.forEach((n) => { if (!groups.has(n.type)) groups.set(n.type, []); groups.get(n.type).push(n); });
+  const gk = [...groups.keys()];
+  groups.forEach((arr, gi) => {
+    const a = (gi / gk.length) * Math.PI * 2;
+    const cx = Math.cos(a) * 360, cy = Math.sin(a) * 360;
+    arr.forEach((n, ni) => {
+      const b = (ni / arr.length) * Math.PI * 2;
+      n.x = cx + Math.cos(b) * (50 + arr.length * 7) + (Math.random() - 0.5) * 24;
+      n.y = cy + Math.sin(b) * (50 + arr.length * 7) + (Math.random() - 0.5) * 24;
+    });
+  });
+})();
+
+/* ── 力导向模拟 ─────────────────────────────────────────── */
+let alpha = 1;
+function tickPhysics() {
+  if (alpha < 0.003) return;
+  const act = nodes.filter((n) => !n.hid);
+  // 斥力（节点量小，O(n²) 足够）
+  for (let i = 0; i < act.length; i++) {
+    const a = act[i];
+    for (let j = i + 1; j < act.length; j++) {
+      const b = act[j];
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+      const d = Math.sqrt(d2);
+      const f = (2400 / d2) * alpha;
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+  }
+  // 弹簧
+  for (const e of edges) {
+    if (e.s.hid || e.t.hid) continue;
+    const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const rest = 70 + e.s.r + e.t.r;
+    const f = ((d - rest) / d) * 0.028 * alpha * 8;
+    const fx = dx * f, fy = dy * f;
+    e.s.vx += fx; e.s.vy += fy; e.t.vx -= fx; e.t.vy -= fy;
+  }
+  // 向心 + 移动
+  for (const n of act) {
+    n.vx -= n.x * 0.0035 * alpha * 8; n.vy -= n.y * 0.0035 * alpha * 8;
+    if (n !== dragNode) { n.x += n.vx; n.y += n.vy; }
+    n.vx *= 0.55; n.vy *= 0.55;
+  }
+  alpha *= 0.995;
+}
+
+/* ── 视图变换与交互 ─────────────────────────────────────── */
+let view = { x: 0, y: 0, k: 1 };
+let hover = null, selected = null, focusSet = null, dragNode = null, panning = false;
+let last = { x: 0, y: 0 }, downAt = { x: 0, y: 0, t: 0 };
+
+function resize() {
+  W = innerWidth; H = innerHeight;
+  cvs.width = W * DPR; cvs.height = H * DPR;
+  cvs.style.width = W + 'px'; cvs.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+function fitView() {
+  const act = nodes.filter((n) => !n.hid);
+  if (!act.length) return;
+  let x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+  for (const n of act) { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r); x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); }
+  const pad = 90;
+  const k = Math.min((W - pad * 2) / (x1 - x0), (H - pad * 2) / (y1 - y0), 2.2);
+  view.k = k;
+  view.x = W / 2 - ((x0 + x1) / 2) * k;
+  view.y = H / 2 - ((y0 + y1) / 2) * k;
+}
+function toWorld(px, py) { return { x: (px - view.x) / view.k, y: (py - view.y) / view.k }; }
+function pick(px, py) {
+  const w = toWorld(px, py);
+  let best = null, bd = 1e18;
+  for (const n of nodes) {
+    if (n.hid) continue;
+    const d = Math.hypot(n.x - w.x, n.y - w.y);
+    if (d < n.r + 6 / view.k && d < bd) { bd = d; best = n; }
+  }
+  return best;
+}
+function centerOn(n) { view.k = Math.max(view.k, 1.1); view.x = W / 2 - n.x * view.k; view.y = H / 2 - n.y * view.k; }
+
+cvs.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const f = Math.pow(1.0015, -e.deltaY);
+  const k2 = Math.min(5, Math.max(0.12, view.k * f));
+  view.x = e.clientX - ((e.clientX - view.x) / view.k) * k2;
+  view.y = e.clientY - ((e.clientY - view.y) / view.k) * k2;
+  view.k = k2;
+}, { passive: false });
+
+cvs.addEventListener('pointerdown', (e) => {
+  cvs.setPointerCapture(e.pointerId);
+  last = downAt = { x: e.clientX, y: e.clientY, t: Date.now() };
+  const n = pick(e.clientX, e.clientY);
+  if (n) { dragNode = n; n.fx = n.x; n.fy = n.y; } else { panning = true; cvs.classList.add('dragging'); }
+});
+cvs.addEventListener('pointermove', (e) => {
+  if (dragNode) {
+    const w = toWorld(e.clientX, e.clientY);
+    dragNode.x = w.x; dragNode.y = w.y; alpha = Math.max(alpha, 0.25);
+    return;
+  }
+  if (panning) {
+    view.x += e.clientX - last.x; view.y += e.clientY - last.y;
+    last = { x: e.clientX, y: e.clientY };
+    return;
+  }
+  hover = pick(e.clientX, e.clientY);
+  const tip = document.getElementById('tip');
+  if (hover) {
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX + 14) + 'px';
+    tip.style.top = (e.clientY + 10) + 'px';
+    tip.textContent = `${hover.label}（${(TYPES[hover.type] || {}).label || hover.type}，度 ${hover.deg}）`;
+    cvs.style.cursor = 'pointer';
+  } else { tip.style.display = 'none'; cvs.style.cursor = 'grab'; }
+});
+cvs.addEventListener('pointerup', (e) => {
+  const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+  if (dragNode && moved < 4) select(dragNode);
+  else if (!dragNode && moved < 4 && e.clientX === downAt.x) select(null);
+  dragNode = null; panning = false; cvs.classList.remove('dragging');
+});
+cvs.addEventListener('dblclick', (e) => {
+  const n = pick(e.clientX, e.clientY);
+  if (n) { focusSet = new Set([n.id, ...adj.get(n.id)]); centerOn(n); } else focusSet = null;
+});
+
+/* ── 选中与详情 ─────────────────────────────────────────── */
+function select(n) {
+  selected = n;
+  const d = document.getElementById('detail');
+  if (!n) { d.classList.remove('show'); return; }
+  d.classList.add('show');
+  const t = TYPES[n.type] || { label: n.type, color: '#888' };
+  const dt = document.getElementById('dtyp');
+  dt.textContent = t.label; dt.style.background = t.color + '22'; dt.style.color = t.color; dt.style.border = `1px solid ${t.color}55`;
+  document.getElementById('dname').textContent = n.label;
+  document.getElementById('dfile').textContent = n.file || '';
+  document.getElementById('ddesc').textContent = n.desc || '';
+  const out = edges.filter((e) => e.s === n).map((e) => `<div class="edge" data-go="${e.t.id}">→<span class="k">${e.kind}${e.label ? ' · ' + e.label : ''}</span>${e.t.label}</div>`);
+  const inn = edges.filter((e) => e.t === n).map((e) => `<div class="edge" data-go="${e.s.id}">←<span class="k">${e.kind}${e.label ? ' · ' + e.label : ''}</span>${e.s.label}</div>`);
+  const de = document.getElementById('dedges');
+  de.innerHTML = out.join('') + inn.join('');
+  de.querySelectorAll('[data-go]').forEach((el) => {
+    el.onclick = () => { const m = byId.get(el.getAttribute('data-go')); select(m); centerOn(m); };
+  });
+}
+document.getElementById('dclose').onclick = () => select(null);
+
+/* ── 图例过滤 ───────────────────────────────────────────── */
+(function buildLegend() {
+  const counts = {};
+  nodes.forEach((n) => counts[n.type] = (counts[n.type] || 0) + 1);
+  const box = document.getElementById('lgts');
+  box.innerHTML = Object.entries(TYPES).map(([k, t]) =>
+    `<div class="lgt" data-t="${k}"><span class="dot" style="background:${t.color};color:${t.color}"></span>${t.label}<span class="n">${counts[k] || 0}</span></div>`).join('');
+  box.querySelectorAll('.lgt').forEach((el) => {
+    el.onclick = () => {
+      const k = el.getAttribute('data-t');
+      if (shown.has(k)) shown.delete(k); else shown.add(k);
+      el.classList.toggle('off', !shown.has(k));
+      applyHidden(); alpha = Math.max(alpha, 0.3);
+    };
+  });
+})();
+function applyHidden() { nodes.forEach((n) => { n.hid = !shown.has(n.type); }); }
+
+/* ── 搜索 ───────────────────────────────────────────────── */
+const searchEl = document.getElementById('search');
+let matched = [];
+searchEl.oninput = () => {
+  const q = searchEl.value.trim().toLowerCase();
+  matched = !q ? [] : nodes.filter((n) =>
+    [n.label, n.desc, n.file, n.id].join(' ').toLowerCase().includes(q));
+};
+searchEl.onkeydown = (e) => {
+  if (e.key === 'Enter' && matched.length) { select(matched[0]); centerOn(matched[0]); focusSet = new Set([matched[0].id, ...adj.get(matched[0].id)]); }
+  if (e.key === 'Escape') { searchEl.value = ''; matched = []; focusSet = null; }
+};
+document.getElementById('fit').onclick = () => { focusSet = null; fitView(); };
+document.getElementById('shake').onclick = () => { alpha = 0.9; };
+
+/* ── 绘制 ───────────────────────────────────────────────── */
+function hexA(hex, a) {
+  const v = parseInt(hex.slice(1), 16);
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${a})`;
+}
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(view.x, view.y); ctx.scale(view.k, view.k);
+  const neigh = selected ? adj.get(selected.id) : (hover ? adj.get(hover.id) : null);
+  const hi = focusSet || (selected ? new Set([selected.id, ...neigh]) : null);
+
+  // 边
+  for (const e of edges) {
+    if (e.s.hid || e.t.hid) continue;
+    const active = !hi || hi.has(e.s.id) || hi.has(e.t.id);
+    ctx.strokeStyle = active ? 'rgba(154,166,184,0.34)' : 'rgba(154,166,184,0.07)';
+    ctx.lineWidth = active && hi ? 1.4 / view.k : 1 / view.k;
+    ctx.beginPath(); ctx.moveTo(e.s.x, e.s.y); ctx.lineTo(e.t.x, e.t.y); ctx.stroke();
+    // 箭头
+    if (active) {
+      const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y, d = Math.hypot(dx, dy) || 1;
+      const ux = dx / d, uy = dy / d;
+      const tx = e.t.x - ux * (e.t.r + 3), ty = e.t.y - uy * (e.t.r + 3);
+      const ah = 5 / Math.sqrt(view.k);
+      ctx.fillStyle = active ? 'rgba(154,166,184,0.5)' : 'rgba(154,166,184,0.12)';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - ux * ah - uy * ah * 0.5, ty - uy * ah + ux * ah * 0.5);
+      ctx.lineTo(tx - ux * ah + uy * ah * 0.5, ty - uy * ah - ux * ah * 0.5);
+      ctx.fill();
+    }
+  }
+  // 节点
+  for (const n of nodes) {
+    if (n.hid) continue;
+    const t = TYPES[n.type] || { color: '#888' };
+    const dim = hi && !hi.has(n.id);
+    ctx.globalAlpha = dim ? 0.16 : 1;
+    ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+    ctx.fillStyle = hexA(t.color, 0.85); ctx.fill();
+    if (n === selected || n === hover || matched.includes(n)) {
+      ctx.lineWidth = 2.2 / view.k; ctx.strokeStyle = n === selected ? '#fff' : (matched.includes(n) ? '#FFD166' : 'rgba(255,255,255,0.7)');
+      ctx.stroke();
+    }
+    // 标签
+    const showLabel = !dim && (view.k > 0.5 || n.deg > 10 || n === hover || n === selected);
+    if (showLabel) {
+      ctx.font = `${Math.max(3.4, 11 / Math.sqrt(view.k))}px -apple-system, "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = 'rgba(8,9,13,0.75)';
+      const lbl = n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label;
+      const w = ctx.measureText(lbl).width;
+      ctx.fillRect(n.x - w / 2 - 3, n.y + n.r + 2 / view.k, w + 6, 14 / Math.sqrt(view.k));
+      ctx.fillStyle = n === selected ? '#fff' : 'rgba(232,235,240,0.88)';
+      ctx.fillText(lbl, n.x, n.y + n.r + 4 / view.k);
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+(function loop() {
+  tickPhysics(); draw();
+  requestAnimationFrame(loop);
+})();
+addEventListener('resize', resize);
+resize(); applyHidden();
+for (let i = 0; i < 260; i++) tickPhysics();   // 预热布局再入画，避免开场一团乱
+fitView();
+document.getElementById('stats').innerHTML =
+  `<b>${nodes.length}</b> 节点 · <b>${edges.length}</b> 边 · v${G.meta.version}`;
+</script>
+</body>
+</html>

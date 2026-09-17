@@ -115,6 +115,7 @@ lib/jobs.js           批量任务队列
 lib/seed.js           默认提示词模板
 public/               原生 HTML/CSS/JS 前端
 tools/                测试与 exe 打包脚本
+docs/knowledge-graph/ 项目知识图谱（JSON 数据 + 交互式 viewer）
 ```
 
 ## 说明
