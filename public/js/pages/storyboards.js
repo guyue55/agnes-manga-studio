@@ -4,10 +4,10 @@
  * 支持批量补提示词、批量出图、批量出视频（带队列进度）。
  */
 import {
-  icon, esc, extractJson, copyText, SHOT_TYPES, STORYBOARD_STATUS,
+  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent } from '../app.js';
 
@@ -157,10 +157,10 @@ export default async function storyboards(container, params) {
         container.querySelector('#sel-count').textContent = `已选 ${selected.size} 个镜头`;
       };
     });
-    const bind = (attr, fn) => el.querySelectorAll(`[data-${attr}]`).forEach((b) => { b.onclick = () => fn(b.getAttribute(`data-${attr}`)); });
+    const bind = (attr, fn) => el.querySelectorAll(`[data-${attr}]`).forEach((b) => { b.onclick = () => fn(b.getAttribute(`data-${attr}`), b); });
     bind('edit', (id) => editShot(rows.find((x) => x.id === id)));
-    bind('img', (id) => genImage([rows.find((x) => x.id === id)]));
-    bind('vid', (id) => genVideo([rows.find((x) => x.id === id)]));
+    bind('img', (id, b) => genImage(rows.find((x) => x.id === id), b));
+    bind('vid', (id, b) => genVideo(rows.find((x) => x.id === id), b));
     bind('del', async (id) => {
       if (!(await confirm({ text: '删除这个镜头？', danger: true, okText: '删除' }))) return;
       const r = await api.deleteStoryboard(id);
@@ -192,78 +192,112 @@ export default async function storyboards(container, params) {
   }
 
   // ── 从脚本生成分镜 ───────────────────────────────────────
+  let genBusy = false;
+  /** 模型可能把 characters / sound_effect 返回成数组，统一拼成可读文本 */
+  const flat = (v) => Array.isArray(v)
+    ? v.map((x) => (x && typeof x === 'object' ? JSON.stringify(x) : String(x))).join('、')
+    : String(v ?? '');
+
   async function genFromScript() {
+    if (genBusy) return; // 双击会重复烧一次 API 配额
     const text = container.querySelector('#script-in').value.trim();
     if (!text) { toast.err('请先粘贴脚本内容'); return; }
     if (!projectId) { toast.err('请先选择项目'); return; }
-    const r = await api.genText({
-      messages: [
-        { role: 'system', content: '你是专业的AI漫剧分镜导演。请用JSON数组格式返回分镜表，每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。' },
-        {
-          role: 'user',
-          content: `请将以下脚本内容转换为分镜表，JSON数组格式，每个镜头包含：
+    const btn = container.querySelector('#gen-sb');
+    genBusy = true;
+    setBusy(btn, true, '分镜生成中');
+    try {
+      const r = await api.genText({
+        messages: [
+          { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。' },
+          {
+            role: 'user',
+            content: `请将以下脚本内容转换为分镜表。输出一个 JSON 对象，格式：{"shots": [ ...每个元素是一个镜头... ]}，每个镜头包含：
 shot_number(数字)、shot_type(景别)、scene_description(画面描述)、characters(出场人物)、action(动作)、dialogue(台词)、narration(旁白)、sound_effect(音效)、duration_seconds(时长数字)、image_prompt(英文图片提示词)、video_prompt(英文视频提示词)、negative_prompt(英文负面提示词)。
 
 ${text}`,
-        },
-      ],
-      project_id: projectId,
-      note: '分镜生成',
-    });
-    if (!r.ok) { toast.err(r.error); return; }
-    const parsed = extractJson(r.data.content);
-    if (!Array.isArray(parsed) || !parsed.length) {
-      toast.err('解析失败：模型没有返回镜头数组，请重试或换个模型');
-      return;
+          },
+        ],
+        project_id: projectId,
+        note: '分镜生成',
+        json_mode: true, // 走 response_format=json_object，杜绝语法坏 JSON
+      });
+      if (!r.ok) { toast.err(`模型调用失败：${r.error}`); return; }
+      const shots = extractJsonArray(r.data.content);
+      if (!shots || !shots.length) {
+        const len = (r.data.content || '').length;
+        if (!len) toast.err('模型返回了空内容，请重试或换个模型', 5200);
+        else {
+          // 解析失败不再只甩一句话：把原始输出亮出来，用户能自己判断问题在哪
+          modal({
+            title: '无法从模型输出中解析出镜头数组',
+            wide: true,
+            body: `<div class="note red" style="margin-bottom:10px">模型共返回 ${len} 字符（见下方原文）。可换更强的模型（如 agnes-2.5-pro）重试，或照原文手动录入。</div>
+              <pre class="json-out" style="max-height:55vh;overflow:auto">${esc(r.data.content)}</pre>`,
+            footer: `<button class="btn" data-close>关闭</button>`,
+          });
+        }
+        return;
+      }
+      const rows2 = shots.map((s, i) => ({
+        project_id: projectId,
+        episode_number: episode,
+        shot_number: Number(s.shot_number) || i + 1,
+        shot_type: flat(s.shot_type) || '中景',
+        scene_description: flat(s.scene_description),
+        characters: flat(s.characters),
+        scene: flat(s.scene),
+        action: flat(s.action),
+        dialogue: flat(s.dialogue),
+        narration: flat(s.narration),
+        sound_effect: flat(s.sound_effect),
+        duration_seconds: Number(s.duration_seconds) || 3,
+        image_prompt: flat(s.image_prompt),
+        video_prompt: flat(s.video_prompt),
+        negative_prompt: flat(s.negative_prompt) || 'low quality, blurry, distorted face',
+        status: 'pending',
+        sort_order: i,
+      }));
+      const r2 = await api.createStoryboards(rows2);
+      if (r2.ok) { toast.ok(`已生成 ${r2.data.inserted} 个镜头`); container.querySelector('#script-in').value = ''; load(); }
+      else toast.err(r2.error);
+    } finally {
+      genBusy = false;
+      setBusy(btn, false);
     }
-    const rows2 = parsed.map((s, i) => ({
-      project_id: projectId,
-      episode_number: episode,
-      shot_number: Number(s.shot_number) || i + 1,
-      shot_type: String(s.shot_type || '中景'),
-      scene_description: String(s.scene_description || ''),
-      characters: String(s.characters || ''),
-      scene: String(s.scene || ''),
-      action: String(s.action || ''),
-      dialogue: String(s.dialogue || ''),
-      narration: String(s.narration || ''),
-      sound_effect: String(s.sound_effect || ''),
-      duration_seconds: Number(s.duration_seconds) || 3,
-      image_prompt: String(s.image_prompt || ''),
-      video_prompt: String(s.video_prompt || ''),
-      negative_prompt: String(s.negative_prompt || 'low quality, blurry, distorted face'),
-      status: 'pending',
-      sort_order: i,
-    }));
-    const r2 = await api.createStoryboards(rows2);
-    if (r2.ok) { toast.ok(`已生成 ${r2.data.inserted} 个镜头`); container.querySelector('#script-in').value = ''; load(); }
-    else toast.err(r2.error);
   }
 
   // ── 批量补提示词 ─────────────────────────────────────────
+  let promptBusy = false;
   async function batchPrompts(kind) {
+    if (promptBusy) return;
     const targets = rows.filter((r) => !(kind === 'image' ? r.image_prompt : r.video_prompt));
     if (!targets.length) { toast.info('没有需要补充的镜头'); return; }
+    promptBusy = true;
     const bar = container.querySelector('#batch-bar');
     let done = 0;
-    for (const s of targets) {
-      bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + 1} / ${targets.length}</span></div></div>`;
+    try {
+      for (const s of targets) {
+        bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + 1} / ${targets.length}（每条约 5〜20s）</span></div></div>`;
       const sys = kind === 'image'
         ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，风格统一，细节丰富。只输出提示词，不要解释。'
         : '你是专业的AI视频提示词工程师。请用英文输出，只描述画面运动与镜头运动，不要重复静态外观。';
       const user = kind === 'image'
         ? `为以下分镜生成英文图片提示词：景别:${s.shot_type}，画面:${s.scene_description}，人物:${s.characters}，动作:${s.action}`
         : `为以下分镜生成英文视频运动提示词：画面:${s.scene_description}，动作:${s.action}，台词:${s.dialogue}`;
-      const r = await api.genText({ messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], project_id: projectId });
-      if (r.ok) {
-        const txt = (r.data.content || '').trim().replace(/^["']|["']$/g, '');
-        await api.updateStoryboard(s.id, kind === 'image' ? { image_prompt: txt } : { video_prompt: txt });
+        const r = await api.genText({ messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], project_id: projectId });
+        if (r.ok) {
+          const txt = (r.data.content || '').trim().replace(/^["']|["']$/g, '');
+          await api.updateStoryboard(s.id, kind === 'image' ? { image_prompt: txt } : { video_prompt: txt });
+        }
+        done++;
       }
-      done++;
+      bar.innerHTML = `<div class="note green">${icon('check', 14)} 已为 ${done} 个镜头补充${kind === 'image' ? '图片' : '视频'}提示词</div>`;
+      setTimeout(() => { bar.innerHTML = ''; }, 3500);
+      load();
+    } finally {
+      promptBusy = false;
     }
-    bar.innerHTML = `<div class="note green">${icon('check', 14)} 已为 ${done} 个镜头补充${kind === 'image' ? '图片' : '视频'}提示词</div>`;
-    setTimeout(() => { bar.innerHTML = ''; }, 3500);
-    load();
   }
 
   // ── 批量任务 ─────────────────────────────────────────────
@@ -317,35 +351,43 @@ ${text}`,
     else toast.err(r.error);
   }
 
-  async function genImage(shots) {
-    const s = shots[0];
+  async function genImage(s, btn) {
     if (!s?.image_prompt) { toast.err('这个镜头还没有图片提示词'); return; }
-    const r = await api.genImage({
-      project_id: projectId,
-      storyboard_id: s.id,
-      prompt: s.image_prompt,
-      size: '1024x1024',
-      usage_type: 'storyboard',
-    });
-    if (r.ok) { toast.ok('图片已生成并关联到分镜'); load(); } else toast.err(r.error);
+    setBusy(btn, true);
+    try {
+      const r = await api.genImage({
+        project_id: projectId,
+        storyboard_id: s.id,
+        prompt: s.image_prompt,
+        size: '1024x1024',
+        usage_type: 'storyboard',
+      });
+      if (r.ok) { toast.ok('图片已生成并关联到分镜'); load(); } else toast.err(r.error);
+    } finally {
+      setBusy(btn, false);
+    }
   }
 
-  async function genVideo(shots) {
-    const s = shots[0];
+  async function genVideo(s, btn) {
     if (!s?.video_prompt) { toast.err('这个镜头还没有视频提示词'); return; }
-    const r = await api.createVideo({
-      project_id: projectId,
-      storyboard_id: s.id,
-      mode: 'text_to_video',
-      prompt: s.video_prompt,
-      negative_prompt: s.negative_prompt,
-      num_frames: 121,
-      frame_rate: 24,
-      width: 1152,
-      height: 768,
-    });
-    if (r.ok) { toast.ok('视频任务已提交，去「镜头任务」看进度'); location.hash = '#/tasks'; }
-    else toast.err(r.error);
+    setBusy(btn, true);
+    try {
+      const r = await api.createVideo({
+        project_id: projectId,
+        storyboard_id: s.id,
+        mode: 'text_to_video',
+        prompt: s.video_prompt,
+        negative_prompt: s.negative_prompt,
+        num_frames: 121,
+        frame_rate: 24,
+        width: 1152,
+        height: 768,
+      });
+      if (r.ok) { toast.ok('视频任务已提交，去「镜头任务」看进度'); location.hash = '#/tasks'; }
+      else toast.err(r.error);
+    } finally {
+      setBusy(btn, false);
+    }
   }
 
   async function clearEpisode() {

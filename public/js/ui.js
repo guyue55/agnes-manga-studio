@@ -144,3 +144,39 @@ export function options(items, valueKey = 'value', labelKey = 'label', current) 
     return `<option value="${esc(v)}"${String(v) === String(current) ? ' selected' : ''}>${esc(l)}</option>`;
   }).join('');
 }
+
+/**
+ * 按钮加载态：禁用 + 内联 spinner + 秒表，结束后恢复原状。
+ * 长耗时操作（模型生成、图片生成、视频提交）必须让用户看到"还在干活"，
+ * 否则只剩"点了没反应 → 怀疑坏了 → 狂点"这一条路径。
+ * @param {HTMLElement} btn 按钮元素
+ * @param {boolean} busy true 进入加载态，false 还原
+ * @param {string} label 按钮上的文案；留空则只显示 spinner（适合小图标按钮）
+ */
+export function setBusy(btn, busy, label = '') {
+  if (!btn) return;
+  if (busy) {
+    if (btn.dataset.busy === '1') return; // 已经在转了，别叠加
+    btn.dataset.busy = '1';
+    btn._origHtml = btn.innerHTML;
+    btn._origTitle = btn.getAttribute('title') || '';
+    btn.disabled = true;
+    btn.title = '模型生成通常需要 20〜60 秒，请耐心等待';
+    const t0 = Date.now();
+    btn.innerHTML = label
+      ? `<span class="spinner sm"></span><span data-elapsed>${esc(label)}… 0s</span>`
+      : '<span class="spinner sm"></span>';
+    btn._tmr = setInterval(() => {
+      const el = btn.querySelector('[data-elapsed]');
+      if (el) el.textContent = `${label}… ${Math.round((Date.now() - t0) / 1000)}s`;
+    }, 1000);
+  } else if (btn.dataset.busy === '1') {
+    clearInterval(btn._tmr);
+    btn._tmr = null;
+    // 表格可能已经重渲染，按钮是游离节点 —— 还原也无害
+    btn.innerHTML = btn._origHtml || btn.innerHTML;
+    if (btn._origTitle) btn.setAttribute('title', btn._origTitle); else btn.removeAttribute('title');
+    btn.disabled = false;
+    delete btn.dataset.busy;
+  }
+}

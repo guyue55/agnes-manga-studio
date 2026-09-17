@@ -231,12 +231,57 @@ export function fmtBytes(n) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 从模型输出里抠出 JSON（数组或对象），容忍 ```json 包裹和前后废话 */
-export function extractJson(text) {
-  if (!text) return null;
-  let s = String(text).trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) s = fence[1].trim();
+/**
+ * 启发式修复模型输出 JSON 的常见毛病：
+ *   · 字符串值里没转义的内嵌引号（agnes-flash 最常犯，整段解析就挂在这）
+ *   · 相邻字符串之间多出来的引号（"a" "", 这种）
+ *   · 数组/对象末尾多写的逗号
+ *   · 字符串里裸换行/制表符
+ * 只在正常解析失败后作为兜底调用，不做语义纠错。
+ */
+export function repairJson(src) {
+  let out = '';
+  let inStr = false;
+  let escNext = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (!inStr) {
+      if (c === '"') {
+        // 刚闭合一个字符串又紧跟一个引号 → 多余引号，直接丢弃
+        const prev = out.trimEnd().slice(-1);
+        if (prev === '"') continue;
+        inStr = true;
+      }
+      out += c;
+      continue;
+    }
+    if (escNext) { out += c; escNext = false; continue; }
+    if (c === '\\') { out += c; escNext = true; continue; }
+    if (c === '\n') { out += '\\n'; continue; }
+    if (c === '\r') { continue; }
+    if (c === '\t') { out += '\\t'; continue; }
+    if (c === '"') {
+      // 只有当下一个非空白字符是结构符时才认为字符串闭合，否则它是内嵌引号
+      let j = i + 1;
+      while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\n' || src[j] === '\r')) j++;
+      const nx = j >= src.length ? '' : src[j];
+      if (nx === '' || nx === ',' || nx === ':' || nx === '}' || nx === ']' || nx === '"') inStr = false;
+      else { out += '\\"'; continue; }
+    }
+    out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
+function tryParse(s) {
+  try {
+    const v = JSON.parse(s);
+    return v && typeof v === 'object' ? v : undefined;
+  } catch { return undefined; }
+}
+
+/** 从文本中截取第一段括号配对的 JSON（跳过字符串内部括号，容忍前后废话） */
+function sliceFirstJson(s) {
   const arrStart = s.indexOf('[');
   const objStart = s.indexOf('{');
   let start = -1;
@@ -245,7 +290,6 @@ export function extractJson(text) {
   if (start < 0) return null;
   const openCh = s[start];
   const closeCh = openCh === '[' ? ']' : '}';
-  // 括号配对扫描，跳过字符串里的括号
   let depth = 0, inStr = false, esc = false;
   for (let i = start; i < s.length; i++) {
     const c = s[i];
@@ -259,10 +303,51 @@ export function extractJson(text) {
     if (c === openCh) depth++;
     else if (c === closeCh) {
       depth--;
-      if (depth === 0) {
-        try { return JSON.parse(s.slice(start, i + 1)); } catch { return null; }
-      }
+      if (depth === 0) return s.slice(start, i + 1);
     }
+  }
+  return null;
+}
+
+/**
+ * 从模型输出里抠出 JSON（数组或对象）。
+ * 解析顺序：```围栏块 → 全文直接 parse → 截取第一对括号 → repairJson 修复后重试。
+ */
+export function extractJson(text) {
+  if (!text) return null;
+  const raw = String(text).trim();
+  const candidates = [];
+  const fenceRe = /```(?:json|JSON)?\s*([\s\S]*?)```/g;
+  let m;
+  while ((m = fenceRe.exec(raw)) !== null) candidates.push(m[1].trim());
+  candidates.push(raw);
+  for (const cand of candidates) {
+    if (!cand) continue;
+    let v = tryParse(cand);
+    if (v !== undefined) return v;
+    const sliced = sliceFirstJson(cand);
+    if (sliced) {
+      v = tryParse(sliced);
+      if (v !== undefined) return v;
+      v = tryParse(repairJson(sliced));
+      if (v !== undefined) return v;
+    }
+    v = tryParse(repairJson(cand));
+    if (v !== undefined) return v;
+  }
+  return null;
+}
+
+/**
+ * 要求模型返回「镜头/条目数组」时用这个。
+ * 兼容三种形状：裸数组 [...]、围栏数组、json_object 模式包装的 {shots:[...]}。
+ */
+export function extractJsonArray(text) {
+  const v = extractJson(text);
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    const arr = Object.values(v).find(Array.isArray);
+    if (arr) return arr;
   }
   return null;
 }

@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -321,6 +321,40 @@ group('素材落盘');
   const evil2 = routes.safeName('a/b\\c:*.png', 'png');
   ok('非法字符被替换', !/[\\/:*?"<>|]/.test(path.basename(evil2)), evil2);
   eq('空名字给默认值', path.basename(routes.safeName('', 'png')).startsWith('asset_'), true);
+}
+
+// ── 10. 前端 JSON 解析（模型坏输出兜底） ──────────────────────
+group('前端 JSON 解析');
+{
+  const { extractJson, extractJsonArray, repairJson } =
+    await import(pathToFileURL(path.join(ROOT, 'public/js/consts.js')).href);
+
+  eq('裸数组直接解析', JSON.stringify(extractJson('[{"a":1}]')), '[{"a":1}]');
+  ok('围栏 + 前后废话', Array.isArray(extractJson('好的，结果如下：\n```json\n[{"a":1}]\n```\n以上')));
+  eq('对象模板输出取对象', extractJson('{"one_liner":"x","hook":"y"}').one_liner, 'x');
+  eq('非 JSON 文本返回 null', extractJson('这是一段纯文字。'), null);
+
+  // agnes-2.0-flash 真实坏输出①：值里多写了一个未转义引号（线上事故原样）
+  const brokenQuote = '```json\n[\n  {\n    "shot_number": 1,\n    "narration": " "",\n    "sound_effect": "风声"\n  },\n  {\n    "shot_number": 2,\n    "dialogue": "苏婉儿：「废物！」"\n  }\n]\n```';
+  const fixed1 = extractJson(brokenQuote);
+  ok('修复未转义多余引号', Array.isArray(fixed1) && fixed1.length === 2, JSON.stringify(fixed1));
+  eq('修复后字段完整', fixed1 && fixed1[1].dialogue, '苏婉儿：「废物！」');
+
+  // 真实坏输出②：值里内嵌未转义英文引号
+  const innerQuote = '[{"dialogue": "他说"你好"，转身走了。"}]';
+  const fixed2 = extractJson(innerQuote);
+  ok('修复内嵌英文引号', fixed2 && fixed2[0].dialogue === '他说"你好"，转身走了。', JSON.stringify(fixed2));
+
+  // 尾逗号很常见
+  const trailing = '{"shots":[{"a":1,},{"b":2,},],}';
+  const fixed3 = extractJsonArray(trailing);
+  ok('修复尾逗号', Array.isArray(fixed3) && fixed3.length === 2, JSON.stringify(fixed3));
+
+  // json_object 模式包装成对象 → extractJsonArray 解包
+  eq('对象包裹的数组解包', extractJsonArray('{"shots":[{"shot_number":1}]}').length, 1);
+  eq('裸数组也能过 extractJsonArray', extractJsonArray('[{"shot_number":1}]').length, 1);
+  eq('解不出数组返回 null', extractJsonArray('{"one_liner":"x"}'), null);
+  ok('repairJson 不误伤正常转义', JSON.parse(repairJson('{"a":"x\\"y","b":"[1,2]"}')).a === 'x"y');
 }
 
 // ── 收尾 ─────────────────────────────────────────────────────

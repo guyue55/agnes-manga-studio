@@ -3,7 +3,7 @@
  * 提示词全部来自「提示词模板」（设置页可改），页面只负责收集变量、展示结果。
  * 这样改提示词不用动代码 —— 原版把提示词写死在组件里，改一个字要重新打包。
  */
-import { icon, esc, relTime, extractJson, copyText, SCRIPT_TYPES, modelChoices } from '../consts.js';
+import { icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, options, confirm } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
@@ -132,8 +132,13 @@ export default async function scripts(container, params) {
 
     generating = true;
     const st = container.querySelector('#gen-status');
-    st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px">Agnes 正在生成，稍候…</span></div>`;
+    const t0 = Date.now();
+    st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px" data-elapsed>Agnes 正在生成，通常需 10〜40s…</span></div>`;
     container.querySelector('#gen').disabled = true;
+    const tmr = setInterval(() => {
+      const el = st.querySelector('[data-elapsed]');
+      if (el) el.textContent = `Agnes 正在生成… ${Math.round((Date.now() - t0) / 1000)}s`;
+    }, 1000);
 
     const r = await api.genText({
       messages: [
@@ -143,8 +148,10 @@ export default async function scripts(container, params) {
       model: container.querySelector('#model').value,
       project_id: projectId || null,
       note: tpl.name,
+      json_mode: true, // 模板要求的都是结构化 JSON，走约束解码不再吐坏 JSON
     });
 
+    clearInterval(tmr);
     generating = false;
     container.querySelector('#gen').disabled = false;
     st.innerHTML = '';
@@ -158,6 +165,8 @@ export default async function scripts(container, params) {
     const wrap = container.querySelector('#result-wrap');
     if (!result) { wrap.innerHTML = ''; return; }
     const parsed = extractJson(result);
+    // json_object 模式下数组会被包成 {"shots":[...]}，导入按钮按解包后的判断
+    const shotArr = extractJsonArray(result);
     wrap.innerHTML = `
       <div class="card">
         <div class="row wrap" style="margin-bottom:12px">
@@ -165,7 +174,7 @@ export default async function scripts(container, params) {
           <div class="spacer"></div>
           <button class="btn btn-xs" id="r-copy">${icon('copy', 12)}复制</button>
           <button class="btn btn-xs" id="r-save">${icon('save', 12)}保存到项目</button>
-          ${parsed && Array.isArray(parsed)
+          ${shotArr && shotArr.length
             ? `<button class="btn btn-xs" id="r-storyboard">${icon('film', 12)}导入分镜表</button>` : ''}
         </div>
         ${parsed ? `
@@ -205,7 +214,7 @@ export default async function scripts(container, params) {
       else toast.err(r.error);
     };
     const sbBtn = wrap.querySelector('#r-storyboard');
-    if (sbBtn) sbBtn.onclick = () => importStoryboard(parsed);
+    if (sbBtn) sbBtn.onclick = () => importStoryboard(shotArr);
 
     // 优化按钮：用 optimize 类型模板
     const opts = templates.filter((t) => t.template_type === 'optimize');
