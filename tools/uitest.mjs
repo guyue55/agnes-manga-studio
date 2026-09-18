@@ -332,6 +332,47 @@ group('顶层标识符');
 
 
 console.log(`\n${'═'.repeat(52)}`);
+// ── 测试选择器一致性（防 B40 类「死选择器」回归）─────────────
+// B40 事故：browser-test 点 [data-sec="template"]，而源码分节 id 是 templates，
+// 又用了可选链 ?. 静默跳过 → 断言从未执行，门禁却一直是绿的。
+// 这里把「测试里写的选择器必须在源码中真实存在」变成门禁内的一条硬检查。
+// 检查器自身也曾误报（首版 3 条全是假阳性）：①扫到自己注释里的示例文本
+// ②#p-picker 是动态 id（页面传 {id:'p-picker'}，源码写 id="${id}"）。
+// 教训：会喊狼来了的检查器比没有更糟——故此处剥注释 + 对动态值给出明确解析规则。
+group('测试选择器一致性');
+{
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+  const srcAll = [...walk(PUB), path.join(ROOT, 'lib', 'routes.js')].map(read).join('\n');
+  // 剥注释：`//` 仅在非 `:` 之后才算注释，避免把 http:// 砍断
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const settingsSrc = read(path.join(PUB, 'js', 'pages', 'settings.js'));
+  const secIds = [...settingsSrc.matchAll(/\{\s*id:\s*'([a-z_]+)'/g)].map((m) => m[1]);
+  ok('SECTIONS 分节 id 解析成功（自证解析器有效）', secIds.length >= 5, `解析到 ${secIds.length} 个：${secIds.join(',')}`);
+  ok('灵敏度对照：B40 的错值 template 确实不在 SECTIONS 中', !secIds.includes('template'), secIds.join(','));
+
+  const testSrc = ['browser-test.mjs', 'uitest.mjs'].map((f) => strip(read(path.join(__dirname, f)))).join('\n');
+  const secUsed = [...new Set([...testSrc.matchAll(/\[data-sec="([a-z_]+)"\]/g)].map((m) => m[1]))];
+  ok('测试确实用到了 data-sec 选择器（自证非空跑）', secUsed.length > 0, secUsed.join(','));
+  const secBad = secUsed.filter((x) => !secIds.includes(x));
+  ok('测试用到的每个 [data-sec] 值都在源码 SECTIONS 中', secBad.length === 0, secBad.join(',') || `用到 ${secUsed.join(',')} 全部命中`);
+
+  // 字面量属性选择器 [data-x="v"]（跳过模板字面量 ${...}）：源码里必须有同名属性值
+  const pairs = [...new Set([...testSrc.matchAll(/\[data-([a-z0-9-]+)="([^"$\\]+)"\]/g)].map((m) => `${m[1]}|${m[2]}`))]
+    .map((x) => x.split('|'));
+  const dead = pairs.filter(([a, v]) =>
+    !srcAll.includes(`data-${a}="${v}"`) && !srcAll.includes(`data-${a}='${v}'`) && !(a === 'sec' && secIds.includes(v)));
+  ok('测试中的字面量属性选择器均存在于源码', dead.length === 0,
+    dead.map(([a, v]) => `[data-${a}="${v}"]`).join(',') || `${pairs.length} 个全部命中`);
+
+  // #id：静态 id="x" 或动态 id="${x}" 的实参字面量（如 projectPicker(..., {id:'p-picker'})）都算命中
+  const ids = [...new Set([...testSrc.matchAll(/querySelector(?:All)?\(['"`]#([a-zA-Z0-9_-]+)/g)].map((m) => m[1]))];
+  const idOk = (i) => srcAll.includes(`id="${i}"`) || srcAll.includes(`id='${i}'`)
+    || srcAll.includes(`'${i}'`) || srcAll.includes(`"${i}"`);
+  const deadIds = ids.filter((i) => !idOk(i));
+  ok('测试中的 #id 选择器均存在于源码（含动态 id 实参）', deadIds.length === 0, deadIds.join(',') || `${ids.length} 个全部命中`);
+}
+
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
   console.log('  失败项：');
