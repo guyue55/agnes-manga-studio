@@ -290,6 +290,47 @@ try {
       await fetch(`http://127.0.0.1:${port}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
     }
 
+    group('容量性能基线');
+    {
+      const sbs = Array.from({ length: 300 }, (_, i) => ({
+        id: `perf_sb_${i}`, project_id: 'perf_proj', episode_number: (i % 10) + 1, shot_number: i + 1,
+        shot_type: '特写', scene_description: `容量验证第 ${i} 镜：暴雨天台的长句描述用于贴近真实密度`, characters: '主角A', dialogue: '台词', duration_seconds: 4,
+        image_prompt: 'cinematic shot prompt number ' + i, video_prompt: 'slow dolly in ' + i, status: 'pending',
+      }));
+      const imgs = Array.from({ length: 60 }, (_, i) => ({ id: `perf_img_${i}`, project_id: 'perf_proj', name: `容量图 ${i}`, url: '/assets/none.png', remote_url: '', local_file: '', usage_type: 'storyboard', generation_prompt: 'p', model_name: 'm', is_favorited: false, tags: [] }));
+      const t0 = Date.now();
+      const r = await fetch(`http://127.0.0.1:${port}/api/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'merge', data: { projects: [{ id: 'perf_proj', name: '容量验证剧', art_style: '日漫', aspect_ratio: '1:1 方形' }], storyboards: sbs, image_assets: imgs } }) });
+      const j = await r.json();
+      ok('360 行导入成功', j.ok === true && j.imported >= 360, JSON.stringify(j).slice(0, 120));
+      const ta = Date.now();
+      const apiR = await (await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=perf_proj&episode=1`)).json();
+      ok('300 行接口查询 <800ms 且数据完整', Date.now() - ta < 800 && Array.isArray(apiR) && apiR.length === 30, JSON.stringify({ ms: Date.now() - ta, n: (apiR || []).length }));
+      const paintMs = await cdp.eval(`
+        const t0 = performance.now();
+        location.hash = '#/storyboards?project=perf_proj&episode=1';
+        while (performance.now() - t0 < 9000) {
+          if (document.querySelectorAll('#table tbody tr').length >= 30) break;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        return Math.round(performance.now() - t0);`);
+      console.log(`  [容量] 分镜页 30 镜首绘 ${paintMs}ms（UI 按集分页，全表 300 行不存在单视图渲染）`);
+      ok('分镜页单集 30 镜首绘 <3s', paintMs < 3000, `${paintMs}ms`);
+      const assetMs = await cdp.eval(`
+        const t0 = performance.now();
+        location.hash = '#/assets';
+        while (performance.now() - t0 < 9000) {
+          if (document.querySelectorAll('.asset-card').length >= 60) break;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        return Math.round(performance.now() - t0);`);
+      console.log(`  [容量] 素材页 60 卡渲染 ${assetMs}ms`);
+      ok('素材页 60 卡渲染 <3s', assetMs < 3000, `${assetMs}ms`);
+      const heap = await cdp.eval(`performance.memory ? Math.round(performance.memory.usedJSHeapSize/1048576) : -1`);
+      console.log(`  [容量] JS 堆 ${heap}MB`);
+      ok('JS 堆占用 <250MB（渲染 300 行后）', heap < 250, `${heap}MB`);
+    }
+
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
