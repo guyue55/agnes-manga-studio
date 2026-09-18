@@ -779,6 +779,29 @@ group('SSE');
     })();
   });
   ok('SSE 能连上并收到 handshake', okConn);
+  // 多客户端广播：两条并发连接都要收到同一轮询产生的 video 事件（真实场景=双标签页）
+  const grab = () => new Promise((resolve) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => { ctrl.abort(); resolve(null); }, 9000);
+    (async () => {
+      try {
+        const res = await fetch(`${BASE}/api/events`, { signal: ctrl.signal });
+        const rd = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        for (;;) {
+          const { value, done } = await rd.read();
+          if (done) { clearTimeout(timer); resolve(null); return; }
+          buf += dec.decode(value, { stream: true });
+          if (buf.includes('event: video')) { clearTimeout(timer); ctrl.abort(); resolve(true); return; }
+          if (buf.length > 80000) { clearTimeout(timer); ctrl.abort(); resolve(null); return; }
+        }
+      } catch { clearTimeout(timer); resolve(null); }
+    })();
+  });
+  const [g1, g2] = [grab(), grab()];
+  await new Promise((r) => setTimeout(r, 300));
+  await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'sse 广播探针', project_id: PROJECT_ID });
+  const [b1, b2] = await Promise.all([g1, g2]);
+  ok('SSE 多客户端广播（双标签页场景）', b1 === true && b2 === true, JSON.stringify({ b1, b2 }));
 }
 
 // ── 16. 清理 ─────────────────────────────────────────────────

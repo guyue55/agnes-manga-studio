@@ -473,3 +473,9 @@ AGENTS.md 全部数字对账（含"待收录"表述转正式）。
 docs/research/ui-optimization-plan.md 唯一陈旧值 uitest 410→452 修正。ui-audit 复跑 0 发现（连续第 N 绿）；
 run-all 全绿 128/207/452/69。图谱时效：9-12 轮对 poller.js（函数体行改）/browser-test（脚本无导出面）
 均无结构漂移，锚点结论仍可靠，无需增量。产品零发现，维持收敛。
+
+**B14 巡检轮·三（第 14 轮）**：SSE 连接生命周期审计。
+- 代码面：`/api/events`（server.js 本体）close 钩子双清理（clearInterval ping + clients.delete），emit 写失败兜底摘除——**无泄漏**。
+- 行为面：apitest 新增**多客户端广播钉**（207→210）——双并发连接 + 提交视频触发轮询，两连接均收到 `event: video`（真实双标签页场景成立）。
+- 顺手确认：batch-refresh 只捞 completed-缺-url 资产（非全量），不会给广播添噪声。
+- 基线：128 / **210** / 452 / 69。产品零缺陷，收敛维持。
