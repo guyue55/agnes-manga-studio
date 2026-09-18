@@ -1176,8 +1176,7 @@ R15 功能门禁全绿后，做了一次"代替肉眼"的真机几何复查（�
   `errorOutlet`、`effectiveVideoSeconds`、`VIDEO_DURATION_RANGE` 等）——这是唯一还挂着的技术债，
   按既定决定放在批 7 之后的专门一轮做，不再顺延。
 
-**待办（技术债，已连续 5 轮挂起，明确记账不静默丢弃）**：`.understand-anything/` 工具知识图谱锚点仍是
-`ef8834d`（现落后约 45 个文件，且新增了 `public/js/textstats.js`、`public/js/pages/characters.js`、
-`tools/port-check.mjs` 等文件与新导出符号）。重建需要跑 `/understand` 全流程（7 阶段、约 15 个子代理），
-成本高但不影响运行时；`AGENTS.md` 的层表与事实已手工修订保持正确。**决定：放到批 7 之后的专门一轮做**，
-不再每轮顺延一句"下轮做"。
+**待办（技术债）：当前无挂账项。** 曾经唯一的一笔——`.understand-anything/` 工具知识图谱落后 45 个文件——
+已于 B61（第 80 轮）清偿：锚点更新到 `d268a0d`，覆盖 55 个文件 / 278 节点 / 1076 边，校验全过。
+后续每轮改动若新增/删除文件或增删导出符号，按 `AGENTS.md`「更新流程」跑一次 `/understand` 增量更新
+（并记得注意事项 2 的 `tested_by` 手工补回），不要让它重新积压成挂账项。
