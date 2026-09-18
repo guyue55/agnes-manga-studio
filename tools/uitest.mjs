@@ -376,6 +376,26 @@ group('测试选择器一致性');
 // ── 复用一致性（防「已有工具被绕过」）──────────────────────
 // B42：tasks.js 手工 /1024/1024 格式化字节（<1MB 谎报 0.0 MB），而 consts.js 就有 fmtBytes；
 // images.js 手工建游离 <a> 触发下载，而 consts.js 就有 downloadUrl（append+remove）。
+group('图像替代文本（源级守卫：覆盖条件渲染路径）');
+{
+  const files = ['public/index.html',
+    ...fs.readdirSync(path.join(ROOT, 'public/js')).filter((f) => f.endsWith('.js')).map((f) => path.join('public/js', f)),
+    ...fs.readdirSync(path.join(ROOT, 'public/js/pages')).filter((f) => f.endsWith('.js')).map((f) => path.join('public/js/pages', f))];
+  const bad = [];
+  let total = 0;
+  for (const f of files) {
+    const src = read(path.join(ROOT, f));
+    for (const m of src.matchAll(/<img\b[^>]*>/g)) {
+      total++;
+      if (!/\balt=/.test(m[0])) bad.push(`${f}: ${m[0].slice(0, 60)}`);
+    }
+  }
+  ok('所有 <img> 字面量都带 alt 属性', bad.length === 0, bad.join(' | '));
+  ok('确实扫到了 <img> 字面量（自证非空跑）', total > 0, `img 数=${total}`);
+  const probe = '<img src="x.png" />';
+  ok('灵敏度对照：无 alt 的 <img> 会被规则判为不合格', !/\balt=/.test(probe));
+}
+
 group('复用一致性');
 {
   const pages = listJs(path.join(PUB, 'js', 'pages'));

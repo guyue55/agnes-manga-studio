@@ -191,7 +191,7 @@ export default async function assets(container, params) {
         modal({
           title: img.name,
           wide: true,
-          body: `<img src="${esc(img.url)}" style="width:100%;border-radius:14px" />
+          body: `<img src="${esc(img.url)}" alt="" style="width:100%;border-radius:14px" />
             <pre class="json-out" style="margin-top:14px">${esc(img.generation_prompt || '')}</pre>`,
           footer: `<a class="btn btn-primary" href="${esc(img.url)}" download="${esc(img.name)}.png">下载</a>`,
         });

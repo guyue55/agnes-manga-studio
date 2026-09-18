@@ -13,6 +13,9 @@ export function toast(message, kind = 'info', ms = 3800) {
   const el = document.createElement('div');
   el.className = `toast ${kind === 'error' ? 'err' : kind === 'success' ? 'ok' : kind === 'warn' ? 'warn' : ''}`;
   const ic = TOAST_ICON[kind === 'error' ? 'err' : kind === 'success' ? 'ok' : kind === 'warn' ? 'warn' : 'info'];
+  // A11y：容器是 polite 状态区，错误再提为 alert（强宣告），整条原子播报
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  el.setAttribute('aria-atomic', 'true');
   el.innerHTML = `${icon(ic, 16)}<div style="flex:1;min-width:0">${esc(message)}</div>`;
   // 图标需要一点上边距对齐首行文字
   el.firstElementChild && (el.firstElementChild.style.marginTop = '1px');

@@ -230,7 +230,7 @@ export default async function videos(container, params) {
   function preview(url) {
     const el = container.querySelector('#img-preview');
     if (!el) return;
-    el.innerHTML = url ? `<img src="${esc(url)}" style="max-height:110px;max-width:100%;border-radius:10px;border:1px solid var(--border)" onerror="this.style.display='none'" />` : '';
+    el.innerHTML = url ? `<img src="${esc(url)}" alt="" style="max-height:110px;max-width:100%;border-radius:10px;border:1px solid var(--border)" onerror="this.style.display='none'" />` : '';
   }
 
   function renderMi() {

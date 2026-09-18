@@ -318,6 +318,55 @@ try {
       await fetch(`http://127.0.0.1:${port}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
     }
 
+    group('宣告与图像替代文本契约（A11y：live region 与 img alt）');
+    {
+      // ① 反馈层必须能被屏幕阅读器宣告（此前整个 toast 层无 live region → 完全静默）
+      const live = await cdp.eval(`const w = document.getElementById('toasts'); return w ? { role: w.getAttribute('role'), live: w.getAttribute('aria-live') } : null;`);
+      ok('toast 容器是 live region', !!live && live.role === 'status' && live.live === 'polite', JSON.stringify(live));
+      // 真机触发一条成功/一条错误 toast，断言内容确实进了 live region 且错误提为 alert
+      await cdp.eval(`const m = await import('/js/ui.js'); m.toast.ok('宣告探针成功'); return true;`);
+      await cdp.eval(`const m = await import('/js/ui.js'); m.toast.err('宣告探针失败'); return true;`);
+      await sleep(250);
+      const t = await cdp.eval(`const els = Array.from(document.querySelectorAll('#toasts .toast'));
+        return { n: els.length, okRole: (els.find((e) => e.textContent.includes('宣告探针成功')) || {}).getAttribute ? els.find((e) => e.textContent.includes('宣告探针成功')).getAttribute('role') : '', errRole: (els.find((e) => e.textContent.includes('宣告探针失败')) || {}).getAttribute ? els.find((e) => e.textContent.includes('宣告探针失败')).getAttribute('role') : '', atomic: els.length ? els[0].getAttribute('aria-atomic') : '' };`);
+      ok('toast 内容进入 live region 且成功=status', t.n >= 2 && t.okRole === 'status', JSON.stringify(t));
+      ok('错误 toast 提为 alert（强宣告）', t.errRole === 'alert' && t.atomic === 'true', JSON.stringify(t));
+      await cdp.eval(`document.querySelectorAll('#toasts .toast').forEach((e) => e.click()); return true;`);
+      await sleep(400);
+      // ② img 必须有 alt（无 alt 的图片会被读成文件名/URL）——逐页真机清点
+      const pages3 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/images', '#/videos', '#/tasks', '#/assets'];
+      const noAlt = [];
+      let imgTotal = 0;
+      for (const h of pages3) {
+        await cdp.eval(`location.hash = ${JSON.stringify(h)}; return true;`);
+        await sleep(550);
+        const res = await cdp.eval(`const imgs = Array.from(document.querySelectorAll('img'));
+          return { total: imgs.length, bad: imgs.filter((i) => !i.hasAttribute('alt')).map((i) => String(i.getAttribute('src')).slice(0, 40)) };`);
+        imgTotal += res.total;
+        if (res.bad.length) noAlt.push(`${h}: ${res.bad.join(' | ')}`);
+      }
+      ok('页面内所有 img 都有 alt 属性', noAlt.length === 0, noAlt.join(' || '));
+      // 灵敏度对照：确实有图片被扫到（否则本钉等于空跑）
+      ok('确实扫到了图片（自证非空跑）', imgTotal > 0, `img 总数=${imgTotal}`);
+      // 灵敏度对照：无 alt 的图片确实会被检出（证明探测有效）
+      const ctrl = await cdp.eval(`const i = document.createElement('img'); i.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; document.body.appendChild(i); const bad = !i.hasAttribute('alt'); i.remove(); return bad;`);
+      ok('灵敏度对照：无 alt 的图片会被检出', ctrl === true);
+      // 条件渲染路径（弹窗预览图）默认态扫不到，必须真的打开弹窗再查——首版扫描正因此漏过一处
+      // 前面的组已清理图片 fixture，故自建一张（否则本钉会因空态静默跳过）
+      const altImg = await (await fetch(`http://127.0.0.1:${port}/api/images`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: pid, name: 'alt 探针图', usage_type: 'storyboard', generation_prompt: 'probe', url: '/assets/none.png' }),
+      })).json();
+      ok('alt 探针图片已建（自证非空跑）', !!altImg.id, JSON.stringify(altImg).slice(0, 60));
+      await cdp.eval(`location.hash = '#/assets'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-zoom]')`), '图片预览钮出现');
+      await cdp.eval(`document.querySelector('[data-zoom]').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#modal-root img')`), '预览弹窗图片');
+      ok('弹窗预览图也带 alt（条件渲染路径）', await cdp.eval(`return Array.from(document.querySelectorAll('#modal-root img')).every((i) => i.hasAttribute('alt'));`));
+      await cdp.eval(`const x = document.querySelector('#modal-root [data-close]'); if (x) x.click(); return true;`);
+      await fetch(`http://127.0.0.1:${port}/api/images/${altImg.id}`, { method: 'DELETE' }).catch(() => {});
+    }
+
     group('键盘可达契约（A11y：可点卡片必须能键盘操作）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

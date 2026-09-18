@@ -281,7 +281,7 @@ export default async function images(container, params) {
       title: img.name || '图片',
       wide: true,
       body: `
-        <img src="${esc(img.url)}" style="width:100%;border-radius:14px;display:block" />
+        <img src="${esc(img.url)}" alt="" style="width:100%;border-radius:14px;display:block" />
         <div style="margin-top:14px">
           <div class="section-label">提示词</div>
           <pre class="json-out">${esc(img.generation_prompt || '（无）')}</pre>
