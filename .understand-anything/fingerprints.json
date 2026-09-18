@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "609559363faab88d8d33673b40a69f11856b27c2",
-  "generatedAt": "2026-09-18T12:32:40.149Z",
+  "gitCommitHash": "ef8834d69b94207a0f399847bf580ab5829adc5e",
+  "generatedAt": "2026-09-18T15:59:00.393Z",
   "files": {
     ".understand-anything/.understandignore": {
       "filePath": ".understand-anything/.understandignore",
@@ -25,12 +25,12 @@
     },
     "docs/issues.md": {
       "filePath": "docs/issues.md",
-      "contentHash": "1f5a69c5cdd5a2b08940ff6717881ecf393e859c00768928d74f4ad961641231",
+      "contentHash": "d31c992f6cb47e752603f65c7356cdc10bb3381831500e3056cf2331afcdb899",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 428,
+      "totalLines": 534,
       "hasStructuralAnalysis": true
     },
     "docs/knowledge-graph/graph.data.js": {
@@ -322,7 +322,7 @@
     },
     "lib/poller.js": {
       "filePath": "lib/poller.js",
-      "contentHash": "3ab15e8223c2a116ad297769eba9be8ac22970bdbcf804d9fc9a30323ee0474e",
+      "contentHash": "4ed795a6294b7a824436b10d1a090e8d7f8e07c2fc1c100377209385e8110cff",
       "functions": [
         {
           "name": "bus",
@@ -372,7 +372,7 @@
             "assetId"
           ],
           "exported": false,
-          "lineCount": 22
+          "lineCount": 26
         },
         {
           "name": "schedule",
@@ -425,7 +425,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 183,
+      "totalLines": 187,
       "hasStructuralAnalysis": true
     },
     "lib/routes.js": {
@@ -469,7 +469,7 @@
     },
     "lib/store.js": {
       "filePath": "lib/store.js",
-      "contentHash": "27fe859b122ed10a3b58c60d5946b685e0e1bbf35495bf8dd3825fc477859027",
+      "contentHash": "4236c58032c7c700f46581c3f9208a1630315f92d869fd2fa00b31b4c79cd301",
       "functions": [
         {
           "name": "EMPTY",
@@ -531,7 +531,16 @@
             "fallback"
           ],
           "exported": false,
-          "lineCount": 15
+          "lineCount": 16
+        },
+        {
+          "name": "rescueFile",
+          "params": [
+            "file",
+            "goodObj"
+          ],
+          "exported": false,
+          "lineCount": 7
         },
         {
           "name": "init",
@@ -539,7 +548,7 @@
             "home"
           ],
           "exported": false,
-          "lineCount": 13
+          "lineCount": 18
         },
         {
           "name": "home",
@@ -788,7 +797,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 508,
+      "totalLines": 524,
       "hasStructuralAnalysis": true
     },
     "package.json": {
@@ -2044,7 +2053,7 @@
     },
     "README.md": {
       "filePath": "README.md",
-      "contentHash": "71097770ff8a5a4e4a394548820e3df4d46bd880e2b1f4e8a2182d388360f4bc",
+      "contentHash": "f5f9adc22a675ff1958310a0466c65ff2aa3d4ccf2fed4832d2e1cc165eec018",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -2193,7 +2202,7 @@
     },
     "tools/apitest.mjs": {
       "filePath": "tools/apitest.mjs",
-      "contentHash": "05f48cb3c8aea3b8b50610eb4762f8e31a7e1d5d65df9235efa289d7ffe48c23",
+      "contentHash": "4c7e75a25430aedd16729de4aa7006a1bd3a058b7357fc17aa2a7dae6754591e",
       "functions": [
         {
           "name": "ok",
@@ -2324,12 +2333,12 @@
         }
       ],
       "exports": [],
-      "totalLines": 931,
+      "totalLines": 989,
       "hasStructuralAnalysis": true
     },
     "tools/browser-test.mjs": {
       "filePath": "tools/browser-test.mjs",
-      "contentHash": "95e2ee9e6463c2cf910c0f2ec3f1a83390212a5b4934456512db8145448ca2b4",
+      "contentHash": "704a390f2b1455177591043c67048798ef462b5d8f88adf2fdf51816b380af8d",
       "functions": [
         {
           "name": "sleep",
@@ -2435,6 +2444,12 @@
           ]
         },
         {
+          "source": "node:http",
+          "specifiers": [
+            "http"
+          ]
+        },
+        {
           "source": "node:url",
           "specifiers": [
             "fileURLToPath"
@@ -2442,7 +2457,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 283,
+      "totalLines": 625,
       "hasStructuralAnalysis": true
     },
     "tools/build-exe.mjs": {
@@ -2620,7 +2635,7 @@
     },
     "tools/selftest.mjs": {
       "filePath": "tools/selftest.mjs",
-      "contentHash": "fcc533a6f760049298712760743c1d7c28b60cf15f01b42d78d9181686889a7a",
+      "contentHash": "0d2cf65173287fd50b8de49723893280c4cd4a594cc9eb35dadc957fbe922507",
       "functions": [
         {
           "name": "ok",
@@ -2685,7 +2700,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 417,
+      "totalLines": 446,
       "hasStructuralAnalysis": true
     },
     "tools/uitest.mjs": {
@@ -2753,7 +2768,7 @@
     },
     "tools/ui-audit.mjs": {
       "filePath": "tools/ui-audit.mjs",
-      "contentHash": "e2f11725c0fad3ea174afed07d40e9974a7cc35759e4867fc5ce312abdfbd91d",
+      "contentHash": "b6921c60eaab15b99eaa5e1c739f57d692dbeaf9016b8c897a33ca50cf2b7879",
       "functions": [
         {
           "name": "sleep",
@@ -2850,17 +2865,17 @@
         }
       ],
       "exports": [],
-      "totalLines": 208,
+      "totalLines": 220,
       "hasStructuralAnalysis": true
     },
     "AGENTS.md": {
       "filePath": "AGENTS.md",
-      "contentHash": "c91ba4ee73ee910e40e4283798d62c0a61033cddecbbc5c1e9acf5bb7f08168c",
+      "contentHash": "c5be61af9ed1a3245185faf597c4ab7977274e449520e8822b040ec6fbad676e",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 171,
+      "totalLines": 172,
       "hasStructuralAnalysis": true
     },
     "docs/research/ui-manjugongfang-hosted.md": {
@@ -2875,7 +2890,7 @@
     },
     "docs/research/ui-optimization-plan.md": {
       "filePath": "docs/research/ui-optimization-plan.md",
-      "contentHash": "6eef4c9b3740aff5564bc0ebd6f6caa501d7fc89746370d926cf439d33866181",
+      "contentHash": "eeadebe44f701e61ca57d26bf7c3e0236cfcf8a9f84480b8a6363544c6dd4512",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -2901,6 +2916,85 @@
       "imports": [],
       "exports": [],
       "totalLines": 347,
+      "hasStructuralAnalysis": true
+    },
+    "tools/port-check.mjs": {
+      "filePath": "tools/port-check.mjs",
+      "contentHash": "7d827f73a0148c3a7bfe6410512b7f4af35e88c2ed14fb38aa85dfeb60934c13",
+      "functions": [
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "boot",
+          "params": [
+            "port",
+            "home"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "collect",
+          "params": [
+            "child"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "waitListen",
+          "params": [
+            "port"
+          ],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawn"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": true
+    },
+    "docs/audit-summary.md": {
+      "filePath": "docs/audit-summary.md",
+      "contentHash": "6761c8fbddea2ed2043f420c1c9223abbb6de87d42b280524366bf704aeb94f6",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 90,
       "hasStructuralAnalysis": true
     }
   }
