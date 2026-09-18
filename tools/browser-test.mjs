@@ -367,6 +367,51 @@ try {
       await fetch(`http://127.0.0.1:${port}/api/images/${altImg.id}`, { method: 'DELETE' }).catch(() => {});
     }
 
+    group('弹窗内可达名契约（A11y：模态表单同样必须有可访问名称）');
+    {
+      // 起因：表单可达名扫描在无弹窗时运行，弹窗内控件从未被扫到（B44 的范围漏洞）
+      const NAME = `(el) => {
+        const al = el.getAttribute('aria-label'); if (al && al.trim()) return al.trim();
+        const lb = (el.labels && el.labels.length) ? Array.from(el.labels).map((l) => l.textContent).join(' ') : '';
+        if (lb.trim()) return lb.trim();
+        const t = el.getAttribute('title'); if (t && t.trim()) return t.trim();
+        return (el.textContent || '').trim();
+      }`;
+      const sweepModal = () => cdp.eval(`const name = ${NAME};
+        const m = document.querySelector('.modal-mask');
+        if (!m) return null;
+        const els = Array.from(m.querySelectorAll('input, select, textarea, [role=switch], button, a[href]')).filter((e) => e.type !== 'hidden');
+        return { n: els.length, bad: els.filter((e) => !name(e)).map((e) => e.id || (e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ')[0] : ''))) };`);
+      const closeAll = async () => {
+        await cdp.eval(`const x = document.querySelector('.modal-mask [data-close]'); if (x) x.click(); return true;`);
+        await sleep(220);
+        await cdp.eval(`document.querySelectorAll('.modal-mask').forEach((m) => m.remove()); return true;`); // 脏守卫可能再叠一层
+        await sleep(150);
+      };
+      const checkForm = async (label, openJs) => {
+        await cdp.eval(`${openJs} return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('.modal-mask')`), `${label}弹窗`);
+        const res = await sweepModal();
+        ok(`${label}内控件都有可访问名称`, !!res && res.n > 3 && res.bad.length === 0, JSON.stringify(res));
+        await closeAll();
+      };
+      await cdp.eval(`location.hash = '#/projects'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#new-project')`), '项目页就绪');
+      await checkForm('新建项目表单', `document.querySelector('#new-project').click();`);
+      await checkForm('编辑项目表单', `document.querySelector('[data-act="edit"]').click();`);
+      await cdp.eval(`location.hash = '#/settings?sec=templates'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#t-new')`), '模板分节就绪');
+      await checkForm('新建模板表单', `document.querySelector('#t-new').click();`);
+      // 灵敏度对照：往弹窗里注入一个无名控件，扫描必须检出（证明上面的绿不是空跑）
+      await cdp.eval(`document.querySelector('#t-new').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.modal-mask')`), '对照弹窗');
+      const ctrl = await cdp.eval(`const m = document.querySelector('.modal-mask'); const i = document.createElement('input'); i.type = 'text'; i.className = 'input'; m.querySelector('.modal-body').appendChild(i); return true;`);
+      void ctrl;
+      const res2 = await sweepModal();
+      ok('灵敏度对照：弹窗内无名控件会被检出', !!res2 && res2.bad.length === 1, JSON.stringify(res2));
+      await closeAll();
+    }
+
     group('键盘可达契约（A11y：可点卡片必须能键盘操作）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
