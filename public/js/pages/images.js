@@ -149,6 +149,9 @@ export default async function images(container, params) {
     };
   }
 
+  let lastPrompt = null;   // R21 变体轮换：上一次出图用的提示词
+  let lastVariation = 0;   // 该提示词已出过几张（0 = 还没出过，下一张是首次）
+
   async function generate() {
     if (generating) return;
     const model = container.querySelector('#model').value;
@@ -164,6 +167,9 @@ export default async function images(container, params) {
         prompt, size, width: sz.w, height: sz.h,
         usage_type: container.querySelector('#t2i-usage').value,
         storyboard_id: container.querySelector('#sb-sel')?.value || null,
+        // R21：同一条提示词第 N 次生成（N≥2）自动追加"换机位/时段/构图"短语，
+        // 否则连点生成只会得到一串几乎一样的图。换提示词则计数归零（这是新的一张，不是变体）。
+        variation: prompt === lastPrompt ? lastVariation + 1 : 0,
       });
     } else {
       const url = container.querySelector('#i2i-url').value.trim();
@@ -201,7 +207,15 @@ export default async function images(container, params) {
       st.innerHTML = '';
     }
     if (!r.ok) { toast.err(r.error); return; }
-    toast.ok('图片已生成并保存到素材库');
+    // 记账必须在成功之后：失败的请求没有消耗变体序号，重试仍按同一张算
+    if (mode === 't2i') {
+      const now = container.querySelector('#t2i-prompt').value.trim();
+      lastVariation = now === lastPrompt ? lastVariation + 1 : 0;
+      lastPrompt = now;
+      toast.ok(lastVariation > 0 ? `图片已生成（第 ${lastVariation + 1} 张，已自动换个机位/时段）` : '图片已生成并保存到素材库');
+    } else {
+      toast.ok('图片已生成并保存到素材库');
+    }
     load();
   }
 

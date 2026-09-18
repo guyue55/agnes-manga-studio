@@ -731,6 +731,99 @@ group('批 4：剧本链路（R16 带入下一步 / R17 就地编辑 / R18 计�
     /const results = new Map\(\)/.test(sc) && /function stashResult/.test(sc) && /function loadResultFor/.test(sc));
 }
 
+group('批 5：提示词资产化（R19 运镜字典 / R20 平台画幅 / R21 变体池）');
+{
+  const sbs = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const projSrc = read(path.join(PUB, 'js', 'pages', 'projects.js'));
+  const imgSrc = read(path.join(PUB, 'js', 'pages', 'images.js'));
+  const routesSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+
+  // ① R19 运镜字典本身：数量、分组、唯一性、双语完整
+  const cm = await import(pathToFileURL(path.join(PUB, 'js', 'consts.js')).href);
+  ok('R19 运镜字典 38 条 8 组（数量是承诺，缩水即回归）',
+    cm.CAMERA_MOVES.length === 38 && cm.CAMERA_MOVE_GROUPS.length === 8);
+  ok('R19 每条都有中文标签与英文短语（缺一个就会拼出半截提示词）',
+    cm.CAMERA_MOVES.every((m) => m.zh && m.en && /^[a-z]/.test(m.en)));
+  ok('R19 中文标签唯一（重复标签会让选择器选错项）',
+    new Set(cm.CAMERA_MOVES.map((m) => m.zh)).size === cm.CAMERA_MOVES.length);
+  ok('R19 分组不丢条（分组是视图，不是第二份数据）',
+    cm.CAMERA_MOVE_GROUPS.reduce((n, g) => n + g.items.length, 0) === cm.CAMERA_MOVES.length);
+  ok('R19 未知标签返回空串（绝不把中文标签喂给模型）',
+    cm.cameraMovePhrase('瞎写一个') === '' && cm.cameraMovePhrase('') === '');
+  // 静帧 vs 视频：运动类运镜对静态图无意义，必须只在视频侧注入
+  ok('R19 静帧只放行机位/视角类运镜（甩镜/延时/一镜到底对静态图无意义）',
+    cm.cameraMovePhrase('俯视', true) !== '' && cm.cameraMovePhrase('甩镜', true) === ''
+    && cm.cameraMovePhrase('甩镜', false) !== '' && cm.cameraMoveAffectsStill('俯视') && !cm.cameraMoveAffectsStill('甩镜'));
+
+  // ② 前后端镜像同构（这是"预览"与"实际发出"一致的唯一保证）
+  const pairsFromConsts = cm.CAMERA_MOVES.map((m) => `${m.zh}=${m.en}`).sort().join('\n');
+  const routesPairs = (() => {
+    const m = routesSrc.match(/CAMERA_MOVE_MAP = \{([\s\S]*?)\n\};/);
+    return m ? [...m[1].matchAll(/'([^']+)':\s*'([^']*)'/g)].map((x) => `${x[1]}=${x[2]}`).sort().join('\n') : '';
+  })();
+  ok('R19 前后端运镜表逐对同构（38 条全等，不是"数量相等"）',
+    routesPairs !== '' && routesPairs === pairsFromConsts);
+  const stillFromConsts = cm.CAMERA_MOVES.filter((m) => m.still).map((m) => m.zh).sort().join(',');
+  const stillFromRoutes = (() => {
+    const m = routesSrc.match(/CAMERA_MOVE_STILL_OK = new Set\(\[([\s\S]*?)\]\)/);
+    return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort().join(',') : '';
+  })();
+  ok('R19 前后端"静帧可用"集合同构（少一条就会出现"图片里冒出甩镜"）',
+    stillFromConsts !== '' && stillFromConsts === stillFromRoutes);
+  ok('R19 后端运镜镜像带静帧闸门（图片侧不注入运动类运镜）',
+    /function cameraMovePhrase\(zh, forStill = false\)/.test(routesSrc)
+    && /cameraForStill: true/.test(routesSrc));
+
+  // ③ 后端接线：分镜字段白名单 + 两处使用点 + 导出列
+  ok('R19 分镜 PUT 白名单放行 camera_move 且字典外落空',
+    /if \('camera_move' in body\)/.test(routesSrc) && /patch\.camera_move = cameraMovePhrase\(cm\) \? cm : ''/.test(routesSrc));
+  ok('R19 视频侧运镜对所有模式注入（参考图带不了运动）',
+    /const cam = str\(body\.camera_move\)\.trim\(\)/.test(routesSrc) && /cameraMove: cam/.test(routesSrc));
+  ok('R19 导出含运镜列与运镜口径说明',
+    /'景别', '运镜'/.test(routesSrc) && /含出场角色、运镜与画风/.test(routesSrc));
+
+  // ④ 前端接线：编辑弹窗 + 行徽标 + 预览标签
+  ok('R19 编辑弹窗有运镜选择器与分组（optgroup 走原生键盘可达）',
+    /id="s-cam"/.test(sbs) && /<optgroup label=/.test(sbs) && /CAMERA_MOVE_GROUPS\.map/.test(sbs));
+  ok('R19 选中运镜当场显示会注入的英文（不显示等于让用户猜）',
+    /id="s-cam-hint"/.test(sbs) && /const syncCamHint = /.test(sbs) && /仅视频追加/.test(sbs));
+  ok('R19 分镜行显示运镜徽标且标明仅视频生效',
+    /cam-badge/.test(sbs) && /cameraMoveAffectsStill\(s\.camera_move\)/.test(sbs));
+  ok('R19 提示词预览按列区分口径（图片列静帧口径 / 视频列全量）',
+    /cameraMovePhrase\(s\.camera_move, field === 'image_prompt'\)/.test(sbs) && /\+运镜/.test(sbs));
+  ok('R19 运镜 chips 与运镜字典同源（同一件事不得有两套英文）',
+    cm.PRESET_TERMS[0].items.every((i) => cm.CAMERA_MOVES.some((m) => m.en === i.en)));
+
+  // ⑤ R20 平台 → 画幅
+  ok('R20 平台表带画幅推荐且抖音=9:16 竖屏',
+    cm.PLATFORMS.length === 9 && cm.aspectForPlatform('抖音') === '9:16 竖屏'
+    && cm.aspectForPlatform('小红书') === '3:4 竖版' && cm.aspectForPlatform('B站') === '16:9 横屏');
+  ok('R20 不预设画幅的平台返回 null（自定义/横版视频不硬塞）',
+    cm.aspectForPlatform('自定义') === null && cm.aspectForPlatform('不存在') === null);
+  ok('R20 平台值保持旧字符串（存量项目的 target_platform 不失效）',
+    cm.PLATFORMS.every((p) => typeof p.value === 'string' && p.value === p.label || p.value === '横版视频'));
+  ok('R20 只有用户主动改平台才改画幅（不覆盖手动选择）',
+    /platSel\.onchange = \(\) => syncRatioHint\(true\)/.test(projSrc) && /syncRatioHint\(false\)/.test(projSrc)
+    && /已按「\$\{platSel\.value\}」把画幅设为/.test(projSrc));
+
+  // ⑥ R21 变体池
+  ok('R21 变体池 8 条且首次（n<=0）不注入',
+    cm.VARIATION_POOL.length === 8 && cm.variationPhrase(0) === '' && cm.variationPhrase(-1) === ''
+    && cm.variationPhrase(1) === cm.VARIATION_POOL[0]);
+  ok('R21 取模轮换（第 9 次回到第 1 条，不会越界成 undefined）',
+    cm.variationPhrase(9) === cm.VARIATION_POOL[0] && cm.variationPhrase(8) === cm.VARIATION_POOL[7]);
+  const vpFromRoutes = (() => {
+    const m = routesSrc.match(/VARIATION_POOL = \[([\s\S]*?)\n\];/);
+    return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).join('|') : '';
+  })();
+  ok('R21 前后端变体池逐条同构', vpFromRoutes !== '' && vpFromRoutes === cm.VARIATION_POOL.join('|'));
+  ok('R21 分镜页与图片页都会在"再来一张"时轮换变体',
+    /variationSeen\.get\(s\.id\)/.test(sbs) && /variation: seen/.test(sbs)
+    && /variation: prompt === lastPrompt \? lastVariation \+ 1 : 0/.test(imgSrc));
+  ok('R21 变体只改"机位/时段/构图"（不得改动叙事内容）',
+    cm.VARIATION_POOL.every((v) => !/character|costume|story|plot/.test(v)));
+}
+
 group('角色库（R14：档案 + 绑定 + 引用守卫）');
 {
   const chars = read(path.join(PUB, 'js', 'pages', 'characters.js'));

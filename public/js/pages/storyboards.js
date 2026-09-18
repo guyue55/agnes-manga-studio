@@ -5,6 +5,7 @@
  */
 import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
+  CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
@@ -181,7 +182,8 @@ export default async function storyboards(container, params) {
           return `<tr>
             <td><input type="checkbox" data-sel="${esc(s.id)}" aria-label="选择镜头 #${esc(s.shot_number)}" ${selected.has(s.id) ? 'checked' : ''} /></td>
             <td style="font-family:var(--mono);color:var(--text)">#${esc(s.shot_number)}</td>
-            <td><span class="badge gray">${esc(s.shot_type)}</span></td>
+            <td><span class="badge gray">${esc(s.shot_type)}</span>${
+              s.camera_move ? `<span class="badge gray cam-badge" title="运镜：${esc(cameraMovePhrase(s.camera_move) || '—')}${cameraMoveAffectsStill(s.camera_move) ? '' : '（仅视频生效，静帧图无法表达运动）'}">${esc(s.camera_move)}</span>` : ''}</td>
             <td><div class="cell-ellipsis" style="max-width:260px" title="${esc(s.scene_description)}">${esc(s.scene_description || '—')}</div></td>
             <td>${charCell(s)}</td>
             <td><div class="cell-ellipsis" style="max-width:150px;color:var(--text-3)" title="${esc(s.dialogue)}">${esc(s.dialogue || '—')}</div></td>
@@ -258,13 +260,17 @@ export default async function storyboards(container, params) {
     const chars = (Array.isArray(s.character_ids) ? s.character_ids : [])
       .map((id) => charsOf().find((c) => c.id === id)).filter(Boolean);
     const withChars = characterPhrase(text, chars);
-    const final = artStylePhrase(withChars, style);
+    // 图片是静帧：运镜只认机位/视角类；视频列全量（见 consts.js cameraMovePhrase 的 forStill）
+    const cam = cameraMovePhrase(s.camera_move, field === 'image_prompt');
+    const withCam = cam && !withChars.toLowerCase().includes(cam.toLowerCase()) ? `${withChars}, ${cam}` : withChars;
+    const final = artStylePhrase(withCam, style);
     const injected = chars.filter((c) => withChars.includes(c.name));
     // data-prompt 给测试与后续就地编辑一个稳定锚点（列内还有别的 .cell-ellipsis，靠选择器顺序取会取错）
     return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
       <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${final !== text ? `生成时实际发出：\n${esc(final)}` : esc(text)}">${esc(text)}</span>
       ${withChars !== text ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
-      ${style && final !== withChars ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
+      ${withCam !== withChars ? `<span class="prompt-tag" title="运镜由系统统一注入：${esc(cam)}">+运镜</span>` : ''}
+      ${style && final !== withCam ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
       <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的角色与画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }
@@ -476,6 +482,7 @@ ${text}`,
   // 行内单发入口的在途集合：按镜头 id 去重（保留"多行可同时生成"的能力，
   // 只挡同一行连点——付费确认期间再点不得叠出第二层弹窗）。
   const rowInflight = new Set();
+  const variationSeen = new Map(); // 分镜 id → 已出图次数（R21 变体轮换用）
 
   async function genImage(s, btn) {
     if (!s?.image_prompt) { toast.err('这个镜头还没有图片提示词——点「编辑」补上，或勾选后批量补提示词'); return; }
@@ -483,6 +490,9 @@ ${text}`,
     rowInflight.add(s.id);
     try {
       if (!(await costConfirm({ what: '图片', count: 1 }))) return;
+      // R21 变体轮换：同一个镜头第 N 次出图（N≥2）自动追加一条"换机位/时段/构图"的短语，
+      // 否则反复点生成只会拿到一串几乎一样的图。首次（0）不注入——第一张必须忠实于用户写的词。
+      const seen = variationSeen.get(s.id) || 0;
       setBusy(btn, true);
       const r = await api.genImage({
         project_id: projectId,
@@ -490,8 +500,13 @@ ${text}`,
         prompt: s.image_prompt,
         size: sizeForAspect(aspectOf(), 'image'),
         usage_type: 'storyboard',
+        variation: seen,
       });
-      if (r.ok) { toast.ok('图片已生成并关联到分镜'); load(); } else toast.err(r.error);
+      if (r.ok) {
+        variationSeen.set(s.id, seen + 1);
+        toast.ok(seen > 0 ? `图片已生成（第 ${seen + 1} 张，已自动换个机位/时段，避免与上一张雷同）` : '图片已生成并关联到分镜');
+        load();
+      } else toast.err(r.error);
     } finally {
       setBusy(btn, false);
       rowInflight.delete(s.id);
@@ -552,6 +567,14 @@ ${text}`,
         <div class="grid g2" style="gap:0 14px">
           <div class="field"><label for="s-num">镜头编号</label><input class="input" id="s-num" type="number" value="${esc(s.shot_number)}" /></div>
           <div class="field"><label for="s-type">景别</label><select class="select" id="s-type">${options(SHOT_TYPES, 'v', 'v', s.shot_type)}</select></div>
+          <div class="field" style="grid-column:1/-1">
+            <label for="s-cam">运镜<span style="color:var(--text-4);font-weight:400">（38 条按组归类；视频全量生效，静帧图只认机位/视角类）</span></label>
+            <select class="select" id="s-cam">
+              <option value="">（不指定）</option>
+              ${CAMERA_MOVE_GROUPS.map((g) => `<optgroup label="${esc(g.group)}">${g.items.map((m) => `<option value="${esc(m.zh)}"${m.zh === s.camera_move ? ' selected' : ''}>${esc(m.zh)}${m.still ? '' : '（仅视频）'}</option>`).join('')}</optgroup>`).join('')}
+            </select>
+            <div class="hint-xs" id="s-cam-hint"></div>
+          </div>
           <div class="field" style="grid-column:1/-1"><label for="s-desc">画面描述</label><textarea class="textarea" id="s-desc" rows="2">${esc(s.scene_description)}</textarea></div>
           <div class="field"><label for="s-chars">人物（自由文本）</label><input class="input" id="s-chars" value="${esc(s.characters)}" placeholder="例：林岚、老周（不想建档案时随手写）" /></div>
           <div class="field" style="grid-column:1/-1">
@@ -575,6 +598,20 @@ ${text}`,
         <button class="btn btn-primary" data-yes>${isNew ? '添加' : '保存'}</button>`,
       onMount(root, close) {
         root.querySelector('[data-no]').onclick = close;
+        // 运镜选择：把"这次会注入哪句英文、静帧图会不会生效"当场说清楚。
+        // 不显示的话，用户选完「甩镜」会以为图片也会甩——而静帧图根本表达不了运动。
+        const camSel = root.querySelector('#s-cam');
+        const camHint = root.querySelector('#s-cam-hint');
+        const syncCamHint = () => {
+          const zh = camSel.value;
+          if (!zh) { camHint.textContent = ''; return; }
+          const en = cameraMovePhrase(zh);
+          camHint.innerHTML = cameraMoveAffectsStill(zh)
+            ? `图片与视频都会追加：<code>${esc(en)}</code>`
+            : `仅视频追加：<code>${esc(en)}</code>　静帧图无法表达这种时间上的运动，出图时会自动跳过`;
+        };
+        camSel.onchange = syncCamHint;
+        syncCamHint();
         // R14：角色芯片切换。用 Set 存选中态而不是读 DOM class——保存时不必再解析一遍 DOM
         root.querySelectorAll('#s-char-pick [data-char]').forEach((b) => {
           b.onclick = () => {
@@ -587,6 +624,7 @@ ${text}`,
           const payload = {
             shot_number: Math.max(1, Number(root.querySelector('#s-num').value) || 1),
             shot_type: root.querySelector('#s-type').value,
+            camera_move: root.querySelector('#s-cam').value,
             scene_description: root.querySelector('#s-desc').value,
             characters: root.querySelector('#s-chars').value,
             character_ids: [...pickedChars],

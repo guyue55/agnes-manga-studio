@@ -67,9 +67,137 @@ export function icon(name, size = 18, cls = '') {
 
 // ── 枚举 ────────────────────────────────────────────────────
 export const PROJECT_TYPES = ['爽文漫剧', '悬疑漫剧', '都市逆袭', '末世生存', '奇幻冒险', '科幻脑洞', '情绪故事', '短篇条漫动态化', '自定义'];
-export const PLATFORMS = ['抖音', '快手', '视频号', '小红书', 'B站', 'YouTube Shorts', 'TikTok', '横版视频', '自定义'];
 export const ASPECTS = ['9:16 竖屏', '16:9 横屏', '1:1 方形', '3:4 竖版', '4:3 横版'];
-export const SHOT_TYPES = ['远景', '全景', '中景', '近景', '特写', '极特写', '俯拍', '仰拍'];
+
+/**
+ * R20 平台 → 画幅推荐表（`value` 与旧数据的 target_platform 字符串保持一致，老项目不失效）。
+ * 为什么值得做：`PLATFORMS` 原本是个 9 项纯下拉，与 `ASPECTS` 毫无关系——用户选了「抖音」还得
+ * 自己知道要选 9:16，选错了要到出片才发现。平台与画幅的对应关系是**确定性的行业常识**，
+ * 让用户手填等于把已知答案变成一道考题。
+ * aspect 为 null = 不预设（横版视频/自定义这类"看情况"的平台，硬塞一个反而是添乱）。
+ */
+export const PLATFORMS = [
+  { value: '抖音', label: '抖音', aspect: '9:16 竖屏', hint: '竖屏短视频主战场' },
+  { value: '快手', label: '快手', aspect: '9:16 竖屏', hint: '竖屏短视频' },
+  { value: '视频号', label: '视频号', aspect: '9:16 竖屏', hint: '微信生态竖屏' },
+  { value: '小红书', label: '小红书', aspect: '3:4 竖版', hint: '笔记封面偏 3:4，信息流展示面积更大' },
+  { value: 'B站', label: 'B站', aspect: '16:9 横屏', hint: '横屏为主，也有竖屏 Story 模式' },
+  { value: 'YouTube Shorts', label: 'YouTube Shorts', aspect: '9:16 竖屏', hint: 'Shorts 强制竖屏' },
+  { value: 'TikTok', label: 'TikTok', aspect: '9:16 竖屏', hint: '竖屏短视频' },
+  { value: '横版视频', label: '横版视频（通用）', aspect: '16:9 横屏', hint: '通用横屏' },
+  { value: '自定义', label: '自定义', aspect: null, hint: '不预设画幅' },
+];
+
+/** 平台 → 推荐画幅（找不到或未设推荐时返回 null，调用方据此决定要不要提示） */
+export function aspectForPlatform(platform) {
+  const p = PLATFORMS.find((x) => x.value === String(platform || ''));
+  return p && p.aspect ? p.aspect : null;
+}
+
+/**
+ * R19 景别：8 → 14。补的都是**分镜脚本里真会用到的**标准景别与机位视角，
+ * 而不是把电影词典整本抄进来（选项越多，下拉越难用；每个选项都必须有存在理由）。
+ */
+export const SHOT_TYPES = [
+  '大远景', '远景', '全景', '中全景', '中景', '中近景', '近景', '特写', '极特写',
+  '过肩', '主观视角', '俯拍', '仰拍', '鸟瞰',
+];
+
+/**
+ * R19 运镜字典（8 组 38 条）：中文标签给人看，英文短语给视频模型用。
+ * 与画风/角色同一范式——**在使用点注入**，所以改词表不用重新生成任何东西。
+ * 英文写成"能直接拼进提示词的短语"，而不是行业黑话（模型不认识"dolly zoom"的缩写变体，
+ * 但认识完整的镜头语言描述）。
+ */
+export const CAMERA_MOVES = [
+  { group: '推拉', zh: '推镜', en: 'slow push in toward the subject' },
+  { group: '推拉', zh: '急推', en: 'rapid crash zoom in' },
+  { group: '推拉', zh: '拉镜', en: 'pull out reveal, wider framing' },
+  { group: '推拉', zh: '变焦拉远', en: 'zoom out to reveal the surroundings' },
+  { group: '推拉', zh: '滑动变焦（希区柯克）', en: 'dolly zoom vertigo effect, background stretches while subject stays fixed' },
+  { group: '横移', zh: '横移', en: 'lateral tracking shot, camera slides sideways' },
+  { group: '横移', zh: '跟随', en: 'follow shot tracking behind the subject' },
+  { group: '横移', zh: '侧跟', en: 'side tracking shot moving parallel with the subject' },
+  { group: '横移', zh: '摇镜', en: 'slow pan across the scene' },
+  { group: '横移', zh: '甩镜', en: 'whip pan, fast motion blur transition' },
+  { group: '升降', zh: '升镜', en: 'crane up shot rising above the scene' },
+  { group: '升降', zh: '降镜', en: 'crane down descending toward the subject' },
+  { group: '升降', zh: '摇臂环绕', en: 'jib shot arcing around the subject' },
+  { group: '环绕', zh: '环绕', en: 'orbiting camera circling the subject' },
+  { group: '环绕', zh: '半环绕', en: 'half orbit arc around the subject' },
+  { group: '环绕', zh: '旋转', en: 'camera rolls rotating the horizon' },
+  { group: '手持', zh: '手持', en: 'handheld camera with natural shake', still: true },
+  { group: '手持', zh: '跟拍晃动', en: 'documentary style handheld following the action' },
+  { group: '手持', zh: '呼吸感微动', en: 'subtle breathing camera drift, static but alive' },
+  { group: '固定', zh: '固定机位', en: 'locked-off static camera', still: true },
+  { group: '固定', zh: '三脚架微推', en: 'tripod shot with a very slow push' },
+  { group: '固定', zh: '定点摇摄', en: 'static camera panning to follow the subject' },
+  { group: '视角', zh: '第一人称', en: 'first-person POV shot', still: true },
+  { group: '视角', zh: '过肩视角', en: 'over-the-shoulder framing', still: true },
+  { group: '视角', zh: '俯视', en: 'high angle looking down', still: true },
+  { group: '视角', zh: '仰视', en: 'low angle looking up, subject looms', still: true },
+  { group: '视角', zh: '鸟瞰', en: 'aerial top-down bird eye view, looking straight down', still: true },
+  { group: '视角', zh: '低角度贴地', en: 'ground-level low angle shot', still: true },
+  { group: '视角', zh: '越肩反打', en: 'reverse over-the-shoulder shot', still: true },
+  { group: '特殊', zh: '穿越', en: 'camera flies through the scene, continuous forward motion' },
+  { group: '特殊', zh: '一镜到底', en: 'continuous long take without cuts' },
+  { group: '特殊', zh: '慢动作', en: 'slow motion, high frame rate feel' },
+  { group: '特殊', zh: '延时', en: 'time-lapse, accelerated time' },
+  { group: '特殊', zh: '虚实变焦', en: 'rack focus shifting between foreground and background', still: true },
+  { group: '特殊', zh: '穿墙进入', en: 'camera pushes through a wall into the next space' },
+  { group: '特殊', zh: '镜头失焦再合焦', en: 'defocus then snap back into sharp focus' },
+  { group: '特殊', zh: '闪白转场', en: 'flash cut transition, brief white flash' },
+  { group: '特殊', zh: '无运镜', en: 'no camera movement' },
+];
+
+/** 运镜按组归类，供界面渲染分组选择器（组内顺序即上表顺序） */
+export const CAMERA_MOVE_GROUPS = CAMERA_MOVES.reduce((acc, m) => {
+  const g = acc.find((x) => x.group === m.group);
+  if (g) g.items.push(m); else acc.push({ group: m.group, items: [m] });
+  return acc;
+}, []);
+
+/**
+ * 按中文标签取英文运镜短语（找不到返回空串，绝不把中文标签直接喂给视频模型）。
+ * `forStill` = 给**静帧图片**用时，只放行"机位/视角类"运镜（still:true）：
+ * 「甩镜」「延时」「一镜到底」这类描述的是**时间上的运动**，静态图里根本没有对应物，
+ * 拼进去只会给模型添乱（还可能画出莫名其妙的运动模糊）。视频侧则全量放行。
+ */
+export function cameraMovePhrase(zh, forStill = false) {
+  const m = CAMERA_MOVES.find((x) => x.zh === String(zh || '').trim());
+  if (!m) return '';
+  if (forStill && !m.still) return '';
+  return m.en;
+}
+
+/** 该运镜对静帧是否成立（界面据此提示"仅视频生效"，别让用户以为图片也会跟着变） */
+export function cameraMoveAffectsStill(zh) {
+  const m = CAMERA_MOVES.find((x) => x.zh === String(zh || '').trim());
+  return !!(m && m.still);
+}
+
+/**
+ * R21 场景变体池：同一条提示词再次生成时按序轮换，避免"点第二次得到一张几乎一样的图"。
+ * 与画风/角色/运镜同一范式（使用点注入），且**首次生成不注入**——第一次必须忠实于用户写的词，
+ * 只有"再来一张"才引入变化。措辞刻意避开具体内容（只改机位/时段/构图这类不改变叙事的信息）。
+ */
+export const VARIATION_POOL = [
+  'slightly different camera angle, alternative framing',
+  'different time of day, changed lighting mood',
+  'alternate composition, rule of thirds, different lens',
+  'closer framing on the subject, shallower depth of field',
+  'wider establishing framing, more environment visible',
+  'different weather and atmosphere',
+  'lower camera position, more dramatic perspective',
+  'mirrored composition, subject on the other side of frame',
+];
+
+/** 取第 n 个变体（n 从 1 起；n<=0 返回空串 = 不注入变体） */
+export function variationPhrase(n) {
+  const i = Math.floor(Number(n) || 0);
+  if (i <= 0) return '';
+  return VARIATION_POOL[(i - 1) % VARIATION_POOL.length];
+}
 // R14：角色定位。只影响档案分组与提示词里的称呼方式，不做权限/流程限制——
 // 竞品把"主角/配角"做成了流程门禁（配角不许锁外貌），结果用户被自己的工具挡住。
 export const CHARACTER_ROLES = ['主角', '配角', '反派', '群演', '道具化角色'];
@@ -222,15 +350,18 @@ export const LOCAL_STATUS = {
 };
 // B3.6：提示词预设速查（竞品 113 条库的精简子集）。中文标签=记忆负担零，英文短语=模型实际吃的话。
 // 点击追加到提示词尾部，已含同短语则去重。后续可扩至分镜编辑弹窗内。
+/**
+ * 预设短语面板（图片页）：点一下把专业短语追加进提示词。
+ * R19 去重：运镜这组**从 CAMERA_MOVES 生成**，不再另写一套英文——
+ * 原来同一件事有两套措辞（这里 `slow push in`、运镜字典 `slow push in toward the subject`），
+ * 用户从 chips 点一下和从运镜字段选一下会得到不同文本，模型表现也就跟着飘。
+ */
+const PRESET_MOVES = ['推镜', '拉镜', '横移', '环绕', '手持', '升镜'];
 export const PRESET_TERMS = [
-  { cat: '运镜', items: [
-    { label: '推镜', en: 'slow push in' },
-    { label: '拉镜', en: 'pull out reveal' },
-    { label: '横移', en: 'lateral tracking shot' },
-    { label: '环绕', en: 'orbiting camera' },
-    { label: '手持', en: 'handheld shakiness' },
-    { label: '升降', en: 'crane up shot' },
-  ] },
+  { cat: '运镜', items: PRESET_MOVES.map((zh) => {
+    const m = CAMERA_MOVES.find((x) => x.zh === zh);
+    return { label: m.zh, en: m.en };
+  }) },
   { cat: '光线', items: [
     { label: '逆光', en: 'strong backlight rim light' },
     { label: '黄金时刻', en: 'golden hour warm light' },

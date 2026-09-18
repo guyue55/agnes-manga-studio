@@ -1071,13 +1071,75 @@ group('R15 角色注入（使用点 / 锁定语义 / 去重 / 视频口径 / 导
 
   // ⑧ 导出必须与发出的一致，且说清图生模式的口径
   const csvText = new TextDecoder().decode(new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer()));
-  ok('CSV 表头标明含角色与画风', csvText.includes('含角色与画风'));
+  ok('CSV 表头标明含角色、运镜与画风', csvText.includes('含角色与运镜与画风'));
   ok('CSV 新增「绑定角色」列', csvText.includes('绑定角色') && csvText.includes('林岚、老周、无貌'));
   ok('CSV 最终词含角色注入', csvText.includes('林岚：黑色长直发、丹凤眼，身着白色衬衫'));
   const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
   ok('MD 最终词含角色注入', mdText.includes('出场角色——'));
   ok('MD 说清图生模式实际不注入（导出不骗人）', mdText.includes('图生/多帧视频'));
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+group('R19 运镜字段与注入口径（白名单 / 静帧闸门 / 导出列）');
+{
+  const P = await api('POST', '/api/projects', { name: '运镜测试剧', art_style: '', aspect_ratio: '9:16 竖屏' });
+  const PID2 = P.data.id;
+  const mk = async (shot, cam, ip, vp) => (await api('POST', `/api/storyboards?project_id=${PID2}`, {
+    project_id: PID2, episode_number: 1, shot_number: shot, shot_type: '中景',
+    camera_move: cam, scene_description: `镜头 ${shot}`, image_prompt: ip, video_prompt: vp, duration_seconds: 3,
+  })).data;
+  const rows2 = async () => (await api('GET', `/api/storyboards?episode=1&project_id=${PID2}`)).data;
+
+  // ① 白名单：字典内落库、字典外落空（不让任意文本被拼进提示词）
+  const okRow = await mk(1, '推镜', 'a girl on a rooftop', 'a girl walks forward');
+  const badRow = await mk(2, '这是一句随便写的话', 'a boy on a bridge', 'a boy runs');
+  eq('字典内的运镜正常落库', okRow.camera_move, '推镜');
+  eq('字典外的值落成空（白名单而非自由文本）', badRow.camera_move, '');
+
+  // ② PUT 也要过白名单（POST 过了不代表 PUT 过）
+  await api('PUT', `/api/storyboards/${okRow.id}`, { camera_move: '瞎写' });
+  eq('PUT 白名单同样生效（改回字典外值 → 落空）', (await rows2()).find((r) => r.id === okRow.id).camera_move, '');
+  await api('PUT', `/api/storyboards/${okRow.id}`, { camera_move: '环绕' });
+  eq('PUT 回字典内值 → 落库', (await rows2()).find((r) => r.id === okRow.id).camera_move, '环绕');
+
+  // ③ 视频侧运镜对所有模式注入（参考图带不了运动）；图片侧只放行机位/视角类
+  await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'hero walks', project_id: PID2, storyboard_id: okRow.id });
+  ok('t2v 注入运镜', String(lastVideoCreate && lastVideoCreate.prompt).includes('orbiting camera circling the subject'), String(lastVideoCreate && lastVideoCreate.prompt));
+  await api('POST', '/api/videos', { mode: 'image_to_video', prompt: 'animate this', image: 'http://127.0.0.1:1/x.png', project_id: PID2, storyboard_id: okRow.id });
+  ok('i2v 也注入运镜（长相由参考图决定，运动必须靠文字）',
+    String(lastVideoCreate.prompt).includes('orbiting camera circling the subject'), String(lastVideoCreate.prompt));
+  await api('POST', '/api/agnes/image', { prompt: 'a boy on a bridge', project_id: PID2, storyboard_id: badRow.id });
+  eq('图片侧：运动类运镜被跳过（静帧图表达不了运动）', String(lastImageCreate.prompt), 'a boy on a bridge');
+  await api('PUT', `/api/storyboards/${badRow.id}`, { camera_move: '俯视' });
+  await api('POST', '/api/agnes/image', { prompt: 'a boy', project_id: PID2, storyboard_id: badRow.id });
+  ok('图片侧：机位类运镜照常注入',
+    String(lastImageCreate.prompt).includes('high angle looking down'), String(lastImageCreate.prompt));
+
+  // ④ 变体：首次不注入，再来一张才注入（否则第一张就不是用户写的那个镜头）
+  await api('POST', '/api/agnes/image', { prompt: 'a cat', project_id: PID2, variation: 0 });
+  eq('variation=0 不注入变体', String(lastImageCreate.prompt), 'a cat');
+  await api('POST', '/api/agnes/image', { prompt: 'a cat', project_id: PID2, variation: 1 });
+  ok('variation=1 注入第一条变体', String(lastImageCreate.prompt).includes('slightly different camera angle'), String(lastImageCreate.prompt));
+  await api('POST', '/api/agnes/image', { prompt: 'a cat', project_id: PID2, variation: 9 });
+  ok('variation=9 取模回到第一条（不越界）',
+    String(lastImageCreate.prompt).includes('slightly different camera angle') && !/undefined/.test(String(lastImageCreate.prompt)), String(lastImageCreate.prompt));
+
+  // ⑤ 导出：运镜列 + 图片/视频两列口径不同
+  const csv2 = new TextDecoder().decode(new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID2}/export.csv?episode=1`)).arrayBuffer()));
+  ok('CSV 有「运镜」列且带值', csv2.includes('运镜') && csv2.includes('环绕') && csv2.includes('俯视'));
+  const line1 = csv2.split('\n').find((l) => l.includes('镜头 1')) || '';
+  const line2 = csv2.split('\n').find((l) => l.includes('镜头 2')) || '';
+  ok('CSV 视频列含运镜', line1.includes('orbiting camera circling the subject'));
+  // 逐列比对（不能整行 includes：整行含视频列，会把"图片列也注入了"误判为通过）
+  // 行 1 = 环绕（运动类）：图片列必须还是 a girl，视频列才带运镜
+  // 行 2 = 俯视（机位类）：图片列也要带
+  ok('CSV 图片列对运动类运镜跳过、机位类放行（两列口径真的不同）',
+    line1.includes(',a girl on a rooftop,a girl walks forward,')
+    && line2.includes('"a boy on a bridge, high angle looking down"'),
+    JSON.stringify([line1.slice(-90), line2.slice(-90)]));
+  const md2 = (await api('GET', `/api/projects/${PID2}/export.md?episode=1`)).data.raw;
+  ok('MD 标题行带运镜（人读的导出也要看得到镜头语言）', md2.includes('中景 · 环绕 ·'));
+  await api('DELETE', `/api/projects/${PID2}?cascade=1`);
 }
 
 group('B4.6 导出矩阵');
@@ -1089,7 +1151,7 @@ group('B4.6 导出矩阵');
   const csvBuf = new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer());
   ok('CSV 带 UTF-8 BOM 字节', csvBuf[0] === 0xEF && csvBuf[1] === 0xBB && csvBuf[2] === 0xBF);
   const csvText = new TextDecoder().decode(csvBuf);
-  ok('CSV 表头双语列', csvText.includes('图片提示词·最终词（含角色与画风）'));
+  ok('CSV 表头双语列', csvText.includes('图片提示词·最终词（含角色与运镜与画风）'));
   ok('CSV 注入映射画风', csvText.includes('watercolor illustration, soft paper texture'));
   const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
   ok('MD 含镜头代码块', mdText.includes('```') && mdText.includes('camera slowly pulls back'));

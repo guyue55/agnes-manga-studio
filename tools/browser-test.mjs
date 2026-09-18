@@ -1168,6 +1168,105 @@ try {
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 
+    group('提示词资产化契约（批 5：R19 运镜 / R20 平台画幅 / R21 变体）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+
+      // ── R20 平台 → 画幅：只有"主动改平台"才改画幅，且当场告知
+      await cdp.eval(`location.hash = '#/projects'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#new-project');`), '项目页就绪');
+      await sleep(400);
+      await cdp.eval(`document.querySelector('#new-project').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#f-plat')`), '项目弹窗打开');
+      await sleep(300);
+      const platOpts = await cdp.eval(`return Array.from(document.querySelectorAll('#f-plat option')).map((o) => o.value);`);
+      ok('R20 平台下拉带上了推荐（值仍是旧字符串，存量项目不失效）',
+        Array.isArray(platOpts) && platOpts.includes('抖音') && platOpts.includes('小红书') && platOpts.length === 9, JSON.stringify(platOpts));
+      // 默认（未选平台）不得擅改画幅
+      await cdp.eval(`const r = document.querySelector('#f-ratio'); r.value = '16:9 横屏'; return true;`);
+      await cdp.eval(`const p = document.querySelector('#f-plat'); p.value = '抖音'; p.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+      await sleep(300);
+      const afterPlat = await cdp.eval(`return { ratio: document.querySelector('#f-ratio').value, hint: document.querySelector('#f-ratio-hint').innerText };`);
+      ok('R20 选「抖音」自动把画幅设为 9:16 竖屏', afterPlat.ratio === '9:16 竖屏', JSON.stringify(afterPlat));
+      ok('R20 画幅推荐给了理由（不是静默改掉用户的选择）',
+        /推荐/.test(afterPlat.hint) && /竖屏/.test(afterPlat.hint), JSON.stringify(afterPlat));
+      // 手动改画幅后再切平台：仍会推荐（用户是主动换平台的），但手动选择在"不换平台"时不受干扰
+      await cdp.eval(`const r = document.querySelector('#f-ratio'); r.value = '1:1 方形'; return true;`);
+      await cdp.eval(`const p = document.querySelector('#f-plat'); p.value = '小红书'; p.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+      await sleep(250);
+      ok('R20 换平台再推荐一次（小红书 → 3:4 竖版）',
+        (await cdp.eval(`return document.querySelector('#f-ratio').value;`)) === '3:4 竖版');
+      await cdp.eval(`const p = document.querySelector('#f-plat'); p.value = '自定义'; p.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+      await sleep(250);
+      const custom = await cdp.eval(`return { ratio: document.querySelector('#f-ratio').value, hint: document.querySelector('#f-ratio-hint').innerText };`);
+      ok('R20 自定义平台不预设画幅（保留用户当前选择，不硬塞）',
+        custom.ratio === '3:4 竖版' && /未预设画幅/.test(custom.hint), JSON.stringify(custom));
+      await cdp.eval(`document.querySelector('.modal [data-no]')?.click(); return true;`);
+      await sleep(300);
+
+      // ── R19 运镜：编辑弹窗 → 保存 → 行徽标 → 预览口径
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const row = await J(`/api/storyboards?episode=1&project_id=${pid}`);
+      const target = row.find((r) => r.image_prompt && r.video_prompt) || row[0];
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('[data-edit="${target.id}"]');`), '分镜行就绪', 12000);
+      await cdp.eval(`document.querySelector('[data-edit="${target.id}"]').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#s-cam');`), '编辑弹窗打开');
+      await sleep(300);
+      const camInfo = await cdp.eval(`
+        const sel = document.querySelector('#s-cam');
+        return { n: sel.querySelectorAll('option').length, groups: sel.querySelectorAll('optgroup').length,
+          groupNames: Array.from(sel.querySelectorAll('optgroup')).map((g) => g.label),
+          motionLabel: Array.from(sel.querySelectorAll('option')).filter((o) => /仅视频/.test(o.textContent)).length };`);
+      ok('R19 弹窗运镜选择器 38 条 + 空项，按 8 组归类（原生 optgroup 键盘可达）',
+        camInfo.n === 39 && camInfo.groups === 8 && camInfo.groupNames.includes('推拉') && camInfo.groupNames.includes('特殊'), JSON.stringify(camInfo));
+      ok('R19 运动类运镜在选项里就标了「仅视频」（选之前就知道，不是保存后才说）',
+        camInfo.motionLabel === 28, JSON.stringify(camInfo));
+      // 选一个运动类运镜：提示必须说清"静帧图跳过"
+      await cdp.eval(`const s2 = document.querySelector('#s-cam'); s2.value = '甩镜'; s2.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+      await sleep(250);
+      const hintMotion = await cdp.eval(`return document.querySelector('#s-cam-hint').innerText;`);
+      ok('R19 选中「甩镜」当场说明只对视频生效、并给出将注入的英文',
+        /仅视频追加/.test(hintMotion) && /whip pan/.test(hintMotion), JSON.stringify(hintMotion));
+      await cdp.eval(`const s2 = document.querySelector('#s-cam'); s2.value = '俯视'; s2.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+      await sleep(250);
+      const hintStill = await cdp.eval(`return document.querySelector('#s-cam-hint').innerText;`);
+      ok('R19 选中「俯视」说明图片与视频都会追加',
+        /图片与视频都会追加/.test(hintStill) && /high angle/.test(hintStill), JSON.stringify(hintStill));
+      await cdp.eval(`document.querySelector('.modal [data-yes]').click(); return true;`);
+      await sleep(900);
+      const saved = (await J(`/api/storyboards?episode=1&project_id=${pid}`)).find((r) => r.id === target.id);
+      ok('R19 运镜随分镜一起保存（不是只存在界面上）', saved.camera_move === '俯视', JSON.stringify(saved.camera_move));
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('.cam-badge');`), '运镜徽标渲染', 8000);
+      const badges = await cdp.eval(`
+        const tr = document.querySelector('.cam-badge').closest('tr');
+        const cam = tr.querySelector('.cam-badge');
+        const cells = tr.querySelectorAll('[data-prompt]');
+        return { text: cam.innerText, title: cam.getAttribute('title'),
+          imgTags: Array.from(cells[0].querySelectorAll('.prompt-tag')).map((x) => x.innerText),
+          vidTags: Array.from(cells[1].querySelectorAll('.prompt-tag')).map((x) => x.innerText) };`);
+      ok('R19 行内显示运镜徽标 + 悬停给英文（不用猜这条中文会变成什么）',
+        badges.text === '俯视' && /high angle looking down/.test(badges.title), JSON.stringify(badges));
+      ok('R19 图片列与视频列都标了 +运镜（俯视对静帧成立）',
+        badges.imgTags.includes('+运镜') && badges.vidTags.includes('+运镜'), JSON.stringify(badges));
+      // 灵敏度对照：换成运动类运镜后，图片列的 +运镜 必须消失、视频列保留
+      await J(`/api/storyboards/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ camera_move: '甩镜' }) });
+      await cdp.eval(`document.querySelector('#reload')?.click(); return true;`);
+      await sleep(900);
+      const badges2 = await cdp.eval(`
+        const tr = document.querySelector('.cam-badge').closest('tr');
+        const cells = tr.querySelectorAll('[data-prompt]');
+        return { imgTags: Array.from(cells[0].querySelectorAll('.prompt-tag')).map((x) => x.innerText),
+          vidTags: Array.from(cells[1].querySelectorAll('.prompt-tag')).map((x) => x.innerText),
+          imgTitle: cells[0].querySelector('.cell-ellipsis').getAttribute('title') || '' };`);
+      ok('灵敏度对照：运动类运镜只在视频列出现 +运镜（图片列不得谎报会注入）',
+        !badges2.imgTags.includes('+运镜') && badges2.vidTags.includes('+运镜'), JSON.stringify(badges2));
+      ok('R19 图片列的悬停预览里不含运动类运镜英文（预览与实际一致）',
+        !/whip pan/.test(badges2.imgTitle), JSON.stringify(badges2.imgTitle.slice(0, 120)));
+      await J(`/api/storyboards/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ camera_move: '' }) });
+    }
+
     group('剧本链路契约（批 4：就地编辑 → 带入下一步 → 门禁 → 计数）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

@@ -2,7 +2,7 @@
  * projects.js — 项目管理
  * 列表 + 新建/编辑弹窗 + 复制/删除 + 导出资料
  */
-import { icon, esc, fmtTime, relTime, PROJECT_TYPES, PLATFORMS, ASPECTS } from '../consts.js';
+import { icon, esc, fmtTime, relTime, PROJECT_TYPES, PLATFORMS, ASPECTS, aspectForPlatform } from '../consts.js';
 import { api } from '../api.js';
 import { modal, confirm, toast, empty, spinner, skeleton, options, setBusy } from '../ui.js';
 import { head } from './helpers.js';
@@ -133,8 +133,9 @@ export default async function projects(container, params) {
         <div class="field"><label for="f-desc">简介</label><textarea class="textarea" id="f-desc" rows="3" placeholder="一句话说清这部漫剧讲什么">${esc(p.description)}</textarea></div>
         <div class="grid g2" style="gap:0 14px">
           <div class="field"><label for="f-type">类型</label><select class="select" id="f-type">${options(PROJECT_TYPES, 'v', 'v', p.project_type)}</select></div>
-          <div class="field"><label for="f-plat">目标平台</label><select class="select" id="f-plat">${options(PLATFORMS, 'v', 'v', p.target_platform)}</select></div>
-          <div class="field"><label for="f-ratio">视频比例</label><select class="select" id="f-ratio">${options(ASPECTS, 'v', 'v', p.aspect_ratio)}</select></div>
+          <div class="field"><label for="f-plat">目标平台</label><select class="select" id="f-plat">${options(PLATFORMS, 'value', 'label', p.target_platform)}</select></div>
+          <div class="field"><label for="f-ratio">视频比例</label><select class="select" id="f-ratio">${options(ASPECTS, 'v', 'v', p.aspect_ratio)}</select>
+            <div class="hint-xs" id="f-ratio-hint"></div></div>
           <div class="field"><label for="f-style">画风</label><input class="input" id="f-style" value="${esc(p.art_style)}" placeholder="例：日漫厚涂、国漫写实（出图/出视频时统一注入，换画风无需重做提示词）" /></div>
           <div class="field"><label for="f-dur">单集时长</label><input class="input" id="f-dur" value="${esc(p.episode_duration)}" placeholder="1分钟" /></div>
           <div class="field"><label for="f-eps">预计集数</label><input class="input" id="f-eps" type="number" min="1" value="${esc(p.planned_episodes)}" /></div>
@@ -149,6 +150,24 @@ export default async function projects(container, params) {
         <button class="btn" data-no>取消</button>
         <button class="btn btn-primary" data-yes>${isEdit ? '保存' : '创建'}</button>`,
       onMount(root, close) {
+        // R20 平台 → 画幅一键适配。为什么只"推荐"不"锁定"：平台画幅是常识（抖音 9:16），
+        // 但用户可能故意做横版投竖屏平台——所以只在他**主动改平台**时顺手改一次画幅，
+        // 之后他手动选的画幅不会被覆盖（切换平台才会再推荐一次，且明确告知）。
+        const platSel = root.querySelector('#f-plat');
+        const ratioSel = root.querySelector('#f-ratio');
+        const ratioHint = root.querySelector('#f-ratio-hint');
+        const syncRatioHint = (byPlatform) => {
+          const want = aspectForPlatform(platSel.value);
+          const plat = PLATFORMS.find((x) => x.value === platSel.value) || {};
+          if (!want) { ratioHint.textContent = plat.hint ? `${plat.hint}（未预设画幅，按需自选）` : ''; return; }
+          ratioHint.textContent = `${plat.hint || ''}　推荐 ${want}`;
+          if (byPlatform && ratioSel.value !== want) {
+            ratioSel.value = want;
+            toast(`已按「${platSel.value}」把画幅设为 ${want}`, 'info');
+          }
+        };
+        platSel.onchange = () => syncRatioHint(true);
+        syncRatioHint(false);
         root.querySelector('[data-no]').onclick = close;
         root.querySelector('#f-name').focus();
         const yes = root.querySelector('[data-yes]');

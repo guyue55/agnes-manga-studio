@@ -529,6 +529,27 @@ group('角色注入纯函数（R15：锁定语义 / 去重 / 空壳防护）');
     naive('老周点点头', [zhou]) !== characterPhrase('老周点点头', [zhou]));
 }
 
+group('运镜与变体纯函数（R19/R21：白名单 / 静帧闸门 / 取模轮换）');
+{
+  const { cameraMovePhrase, variationPhrase } = createRoutes;
+  eq('字典内的运镜取到英文', cameraMovePhrase('推镜'), 'slow push in toward the subject');
+  eq('字典外的值一律落空（白名单，不是自由文本）', cameraMovePhrase('随便写一句'), '');
+  eq('空值安全', cameraMovePhrase(''), ''); eq('undefined 安全', cameraMovePhrase(undefined), '');
+  eq('两侧空格也认（表单值可能带空格）', cameraMovePhrase('  推镜 '), 'slow push in toward the subject');
+  // 静帧闸门：运动类运镜对静态图无意义，只对视频注入
+  eq('运动类运镜对静帧返回空（甩镜在图片里没有对应物）', cameraMovePhrase('甩镜', true), '');
+  ok('同一运镜对视频仍返回英文（不是把整条都禁了）', cameraMovePhrase('甩镜') !== '');
+  eq('机位类运镜对静帧放行（俯视换个角度看，静态图也能表达）', cameraMovePhrase('俯视', true), 'high angle looking down');
+  // 变体池：首次不注入 + 取模轮换
+  eq('首次生成不注入变体（第一张必须忠实于用户写的词）', variationPhrase(0), '');
+  eq('负数也当首次（脏数据不得越界）', variationPhrase(-3), '');
+  eq('第 1 次"再来一张"取第一条', variationPhrase(1), 'slightly different camera angle, alternative framing');
+  eq('取模轮换：第 9 次回到第 1 条（不会越界成 undefined）',
+    variationPhrase(9), variationPhrase(1));
+  ok('变体短语不碰叙事内容（只改机位/时段/构图这类信息）',
+    [1, 2, 3, 4, 5, 6, 7, 8].map(variationPhrase).every((v) => v && !/character|costume|story|plot/i.test(v)));
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
