@@ -592,6 +592,56 @@ try {
       await sleep(300);
     }
 
+    group('失败恢复契约（M8：断连不得锁死按钮）');
+    {
+      // 慢失败上游：1.2s 后 500——给 busy 态留出确定性观测窗口
+      const mock = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          const u = new URL(req.url, 'http://x');
+          if (u.pathname.endsWith('/images/generations')) {
+            setTimeout(() => { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'probe upstream down' } })); }, 1200);
+            return;
+          }
+          res.writeHead(404); res.end('{}');
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
+      const busySel = `return (() => { const b = document.querySelector('[data-img]'); return !!b && b.dataset.busy === '1'; })();`;
+      const idleSel = `return (() => { const b = document.querySelector('[data-img]'); return !!b && b.dataset.busy !== '1' && !b.disabled; })();`;
+      try {
+        const pid = (await Jget('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+        const shot = await fetch(`http://127.0.0.1:${port}/api/storyboards`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: pid, episode_number: 88, shot_number: 881, image_prompt: 'fail recovery probe', video_prompt: 'fail recovery probe' }) }).then((r) => r.json());
+        ok('失败探针镜头已建', !!shot.id);
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'probe-key' }) });
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=88'; return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('[data-img]')`), '失败探针镜头行就绪');
+        await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+        const sawBusy = await waitFor(() => cdp.eval(busySel), '提交态置位', 8000).then(() => true).catch(() => false);
+        ok('点击后进入提交态（busy 置位）', sawBusy);
+        await waitFor(() => cdp.eval(idleSel), '失败后按钮自动解锁', 20000);
+        const st = await cdp.eval(`return (() => { const b = document.querySelector('[data-img]'); return { busy: b.dataset.busy || '', disabled: !!b.disabled, title: b.getAttribute('title') || '', errToast: !!document.querySelector('.toast.err') }; })();`);
+        ok('解锁后无残留 busy/disabled', st.busy !== '1' && !st.disabled, JSON.stringify(st));
+        ok('title 复原（未卡在等待文案）', !String(st.title).includes('耐心等待'), String(st.title));
+        ok('失败对用户可见（错误提示）', !!st.errToast);
+        await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+        const again = await waitFor(() => cdp.eval(busySel), '可二次提交', 8000).then(() => true).catch(() => false);
+        ok('解锁后可重试（二次点击再次进入提交态）', again);
+        await waitFor(() => cdp.eval(idleSel), '二次失败后仍解锁', 20000);
+        const rec = await Jget(`/api/storyboards?project_id=${pid}&episode=88`);   // 裸数组：路由返回值原样发出，无统一信封
+        ok('失败未污染数据（镜头仍在且无图）', Array.isArray(rec) && rec.some((r) => r.id === shot.id && !r.linked_image_id), `type=${Array.isArray(rec) ? 'array' : typeof rec} n=${Array.isArray(rec) ? rec.length : '-'}`);
+      } finally {
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: '', agnes_api_key: '' }) });
+        mock.close();
+        await cdp.send('Page.reload', {}); await sleep(700);
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      }
+    }
+
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
