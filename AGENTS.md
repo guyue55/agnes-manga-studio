@@ -15,7 +15,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 ## 知识图谱（`.understand-anything/`）
 
-由 `/understand` 技能生成的**全项目结构化图谱**，覆盖全部 39 个文件与其中的函数/类级符号。Agent 做任何跨文件改动前，优先查图谱而不是盲目 grep。
+由 `/understand` 技能生成的**全项目结构化图谱**，覆盖全部 45 个文件与其中的函数/类级符号。Agent 做任何跨文件改动前，优先查图谱而不是盲目 grep。
 
 ### 文件清单
 
@@ -27,7 +27,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 | `.understand-anything/config.json` | 工具配置（`outputLanguage: zh`） |
 | `.understand-anything/intermediate/scan-result.json` | 文件清单 + 预解析 importMap（供增量分析复用） |
 
-当前快照：commit `2cf57976ddf979bb117e4bb774983116ba908ab7` — **172 节点 / 442 边 / 9 层 / 14 步导览**，全部文本为中文。
+当前快照：commit `609559363faab88d8d33673b40a69f11856b27c2` — **194 节点 / 578 边 / 9 层 / 15 步导览**，全部文本为中文。
 
 ### 图谱 Schema
 
@@ -37,26 +37,26 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 | type | 数量 | id 约定 |
 |---|---|---|
-| `file` | 33 | `file:<相对路径>` |
-| `function` | 131 | `function:<相对路径>:<函数名>` |
-| `class` | 2 | `class:<相对路径>:<类名>` |
-| `document` | 3 | `document:<相对路径>`（Markdown） |
+| `file` | 34 | `file:<相对路径>` |
+| `function` | 146 | `function:<相对路径>:<函数名>` |
+| `class` | 3 | `class:<相对路径>:<类名>` |
+| `document` | 8 | `document:<相对路径>`（Markdown） |
 | `config` | 3 | `config:<相对路径>`（JSON） |
 
 **边**（`edges[]`）— `{ source, target, type, direction, weight }`，端点引用节点 id。权重约定：`contains` 1.0；`inherits/implements/calls/exports` 0.8–0.9；`imports/deploys` 0.7；`depends_on/configures/triggers` 0.6；其余 0.5。
 
 | type | 数量 | 含义 |
 |---|---|---|
-| `contains` | 133 | 文件 → 其内部函数/类 |
-| `calls` | 110 | 调用关系（含跨文件的函数级调用） |
-| `exports` | 97 | 文件 → 对外导出符号（CJS `module.exports` 面为读源人工校正） |
+| `contains` | 149 | 文件 → 其内部函数/类 |
+| `calls` | 164 | 调用关系（含跨文件的函数级调用） |
+| `exports` | 105 | 文件 → 对外导出符号（CJS `module.exports` 面为读源人工校正） |
 | `imports` | 61 | ESM import 解析结果（**CJS require 不在这里**，见下文注意事项） |
-| `depends_on` | 18 | 语义依赖（动态 require、`<script src>` 加载、spawn 目标等） |
-| `documents` | 15 | 文档 ↔ 被说明的文件 |
+| `depends_on` | 26 | 语义依赖（动态 require、`<script src>` 加载、spawn 目标等） |
+| `documents` | 59 | 文档 ↔ 被说明的文件 |
 | `tested_by` | 7 | 生产文件 → 覆盖它的测试脚本 |
 | `configures` | 1 | 配置文件 → 被配置对象 |
 
-**层**（`layers[]`：`{ id, name, description, nodeIds }`，每个文件级节点恰好属于一层）与**导览**（`tour[]`：`{ order, title, description, nodeIds, languageLesson? }`，14 步新手引导，按代码实际结构复述 README 的创作链路故事）。
+**层**（`layers[]`：`{ id, name, description, nodeIds }`，每个文件级节点恰好属于一层）与**导览**（`tour[]`：`{ order, title, description, nodeIds, languageLesson? }`，15 步新手引导，按代码实际结构复述 README 的创作链路故事）。
 
 ### 架构层速查（9 层）
 
@@ -67,9 +67,9 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 | `layer:backend-api` | HTTP 接口与路由层 | 2 |
 | `layer:backend-service` | 后端服务层（agnes/jobs/poller） | 3 |
 | `layer:data-persistence` | 数据持久化层（store/seed） | 2 |
-| `layer:test` | 测试层（tools/ 四套测试 + run-all；另有度量报表 ui-audit.mjs 待图谱更新收录） | 5 |
+| `layer:test` | 测试层（tools/ 四套断言测试 + run-all + ui-audit 度量） | 6 |
 | `layer:build-tooling` | 构建工具（build-exe / build-graph-data） | 2 |
-| `layer:documentation` | 文档与静态图谱查看器（docs/） | 6 |
+| `layer:documentation` | 文档、竞品调研与静态图谱查看器（docs/、AGENTS.md） | 11 |
 | `layer:config` | 项目配置 | 3 |
 
 ### 常用查询（可直接复制执行）
@@ -129,7 +129,7 @@ console.log(g.nodes.filter(n=>(n.summary||'').includes(kw)||(n.tags||[]).some(t=
 "
 ```
 
-**⑦ 走 14 步导览了解全貌**：读 `g.tour`（`order` 排序，含每步 `nodeIds` 与 `languageLesson`）。
+**⑦ 走 15 步导览了解全貌**：读 `g.tour`（`order` 排序，含每步 `nodeIds` 与 `languageLesson`）。
 
 ### 时效检测
 
@@ -163,8 +163,8 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
 
 1. **CJS 依赖不在 `imports` 边里**：`server.js`、`lib/routes.js`、`tools/selftest.mjs` 等用 CommonJS `require()` / `createRequire()`（SEA 兼容），tree-sitter import 解析返回空。它们的真实依赖被捕获为 `depends_on` / `calls` 边（例：`file:server.js → file:lib/routes.js`）。查后端依赖时**务必同时看这两种边**，只看 `imports` 会漏。
 2. **`tested_by` 语义**：本项目测试脚本在 `tools/`（非 `*.test.*` 约定命名），这 7 条边是审查阶段逐对源码验证后恢复的，可信。
-3. **孤立节点（3 个）**：`.understand-anything/` 自身的 2 个元文件与 `tools/run-all.mjs`（用子进程 spawn 调用其他测试，不 import）。属正常，非图谱缺陷。
+3. **孤立节点（2 个）**：`.understand-anything/` 自身的 `.understandignore` 与 `config.json`。属正常，非图谱缺陷（run-all.mjs 的 spawn 目标依赖边已于增量时补齐）。
 4. **两套"知识图谱"，不要混淆**：
-   - `.understand-anything/knowledge-graph.json` — 本文档描述的**工具生成全图**（172 节点），机器消费、可增量更新；
+   - `.understand-anything/knowledge-graph.json` — 本文档描述的**工具生成全图**（194 节点），机器消费、可增量更新；
    - `docs/knowledge-graph/` — **手工维护的架构讲解图**（73 节点，提交入库，供人浏览），配套 `viewer.html` 双击可开。**修改 `docs/knowledge-graph/knowledge-graph.json` 后必须跑 `node tools/build-graph-data.mjs`** 重新生成 `graph.data.js`（该脚本会做引用完整性/孤立节点校验，失败即退出非零）。其边 schema 是 `from`/`to`，与工具图谱的 `source`/`target` 不同。
 5. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。

@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "2cf57976ddf979bb117e4bb774983116ba908ab7",
-  "generatedAt": "2026-09-18T04:13:40.576Z",
+  "gitCommitHash": "609559363faab88d8d33673b40a69f11856b27c2",
+  "generatedAt": "2026-09-18T12:32:40.149Z",
   "files": {
     ".understand-anything/.understandignore": {
       "filePath": ".understand-anything/.understandignore",
@@ -25,12 +25,12 @@
     },
     "docs/issues.md": {
       "filePath": "docs/issues.md",
-      "contentHash": "0ced4bc2c943d45b8a3b1bcef0d071587ba281ec3892d1d05b7b078f1832cbe5",
+      "contentHash": "1f5a69c5cdd5a2b08940ff6717881ecf393e859c00768928d74f4ad961641231",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 208,
+      "totalLines": 428,
       "hasStructuralAnalysis": true
     },
     "docs/knowledge-graph/graph.data.js": {
@@ -75,7 +75,7 @@
     },
     "lib/agnes.js": {
       "filePath": "lib/agnes.js",
-      "contentHash": "ab4bf73b4d1c86a128f9d64ebc4b64a326407011b7e1dab4f0297bc2c773f66c",
+      "contentHash": "3975afefad1c7783fa8b3bfe3e4386ac9464fa3e4aa14d8ef072d0a0e46590fb",
       "functions": [
         {
           "name": "normalizeBase",
@@ -113,7 +113,7 @@
             "e"
           ],
           "exported": false,
-          "lineCount": 8
+          "lineCount": 12
         },
         {
           "name": "request",
@@ -121,7 +121,7 @@
             "url"
           ],
           "exported": false,
-          "lineCount": 61
+          "lineCount": 66
         },
         {
           "name": "chat",
@@ -216,13 +216,22 @@
           "lineCount": 34
         },
         {
+          "name": "keyAllowedFor",
+          "params": [
+            "videoUrl",
+            "base"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
           "name": "downloadVideo",
           "params": [
             "videoUrl",
             "destFile"
           ],
           "exported": false,
-          "lineCount": 15
+          "lineCount": 20
         },
         {
           "name": "listModels",
@@ -234,7 +243,7 @@
           "name": "testConnection",
           "params": [],
           "exported": false,
-          "lineCount": 23
+          "lineCount": 16
         }
       ],
       "classes": [
@@ -245,12 +254,12 @@
           ],
           "properties": [],
           "exported": false,
-          "lineCount": 10
+          "lineCount": 12
         }
       ],
       "imports": [],
       "exports": [],
-      "totalLines": 484,
+      "totalLines": 505,
       "hasStructuralAnalysis": true
     },
     "lib/jobs.js": {
@@ -313,7 +322,7 @@
     },
     "lib/poller.js": {
       "filePath": "lib/poller.js",
-      "contentHash": "619108be026908994bee98d3bc0f3dde0865aa2dd87793bb41a690899baa90c8",
+      "contentHash": "3ab15e8223c2a116ad297769eba9be8ac22970bdbcf804d9fc9a30323ee0474e",
       "functions": [
         {
           "name": "bus",
@@ -363,7 +372,7 @@
             "assetId"
           ],
           "exported": false,
-          "lineCount": 11
+          "lineCount": 22
         },
         {
           "name": "schedule",
@@ -416,22 +425,32 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 172,
+      "totalLines": 183,
       "hasStructuralAnalysis": true
     },
     "lib/routes.js": {
       "filePath": "lib/routes.js",
-      "contentHash": "e7ee539a9a19a6487af5e8dba0f2664b56dd95da4161d0928ebb3a803e805989",
-      "functions": [],
+      "contentHash": "0b0a4b5f35dfd3264a47afaf2648a9299377759c4f0f6da29bd623416009b500",
+      "functions": [
+        {
+          "name": "artStylePhrase",
+          "params": [
+            "prompt",
+            "style"
+          ],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 960,
+      "totalLines": 1097,
       "hasStructuralAnalysis": true
     },
     "lib/seed.js": {
       "filePath": "lib/seed.js",
-      "contentHash": "c6d689b092806ab4aa9100618f2bba1342f01c973154a214cc8be93a11f6e6b4",
+      "contentHash": "4753a055afe7ffa5e6cf33a382c1ae7b614cece9cb04969d4850107a656222a5",
       "functions": [
         {
           "name": "seedTemplates",
@@ -450,7 +469,7 @@
     },
     "lib/store.js": {
       "filePath": "lib/store.js",
-      "contentHash": "7f46c513160337ada2af704a23fb82f4b2313255e8c18ebb1d1185b23c4d7bd8",
+      "contentHash": "27fe859b122ed10a3b58c60d5946b685e0e1bbf35495bf8dd3825fc477859027",
       "functions": [
         {
           "name": "EMPTY",
@@ -477,7 +496,33 @@
             "obj"
           ],
           "exported": false,
-          "lineCount": 10
+          "lineCount": 20
+        },
+        {
+          "name": "writeErrorHandler",
+          "params": [
+            "where",
+            "e"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "onWriteError",
+          "params": [
+            "fn"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "failWrite",
+          "params": [
+            "where",
+            "e"
+          ],
+          "exported": false,
+          "lineCount": 3
         },
         {
           "name": "readJson",
@@ -644,7 +689,7 @@
             "patch"
           ],
           "exported": false,
-          "lineCount": 8
+          "lineCount": 18
         },
         {
           "name": "getRawKey",
@@ -703,12 +748,21 @@
           "lineCount": 3
         },
         {
+          "name": "sanitizeImportedRow",
+          "params": [
+            "c",
+            "row"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
           "name": "importAll",
           "params": [
             "payload"
           ],
           "exported": false,
-          "lineCount": 24
+          "lineCount": 37
         },
         {
           "name": "exportProject",
@@ -734,12 +788,12 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 436,
+      "totalLines": 508,
       "hasStructuralAnalysis": true
     },
     "package.json": {
       "filePath": "package.json",
-      "contentHash": "e1e66a9b4ed7de288362000af72ba96ce72aa84c3cd5294e09c14e0e92701e07",
+      "contentHash": "73727c13005f106f244430e1cffaa9a3ac44f241ebf1c7076a4de94a73f43502",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -749,12 +803,12 @@
     },
     "public/css/app.css": {
       "filePath": "public/css/app.css",
-      "contentHash": "7aabb003ca750e3a014f74cd20b687a55b9f87676e1ea8cd0fb3f3efd48d778c",
+      "contentHash": "67eadbb06786df21fe2d952d9ccc3e69d96c0474247d79fa2e9978a4db14fd26",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 903,
+      "totalLines": 994,
       "hasStructuralAnalysis": false
     },
     "public/index.html": {
@@ -792,13 +846,21 @@
     },
     "public/js/app.js": {
       "filePath": "public/js/app.js",
-      "contentHash": "2a92583be533ee09d4cd61ec521ce4d9199ff9e2512707592410c2504b57dbe4",
+      "contentHash": "b923916ba9197cbecf173fce5065515e86a232cdc6305526a27d29eb8e93b148",
       "functions": [
         {
           "name": "parseHash",
           "params": [],
           "exported": false,
           "lineCount": 6
+        },
+        {
+          "name": "syncViewParams",
+          "params": [
+            "patch"
+          ],
+          "exported": true,
+          "lineCount": 7
         },
         {
           "name": "navigate",
@@ -818,7 +880,7 @@
           "name": "renderSidebar",
           "params": [],
           "exported": false,
-          "lineCount": 28
+          "lineCount": 38
         },
         {
           "name": "refreshState",
@@ -842,16 +904,22 @@
           "lineCount": 4
         },
         {
+          "name": "debouncedRefresh",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
           "name": "connectSSE",
           "params": [],
           "exported": false,
-          "lineCount": 20
+          "lineCount": 35
         },
         {
           "name": "boot",
           "params": [],
           "exported": false,
-          "lineCount": 17
+          "lineCount": 20
         }
       ],
       "classes": [],
@@ -932,17 +1000,18 @@
       ],
       "exports": [
         "state",
+        "syncViewParams",
         "navigate",
         "refreshState",
         "softRefresh",
         "onEvent"
       ],
-      "totalLines": 179,
+      "totalLines": 235,
       "hasStructuralAnalysis": true
     },
     "public/js/consts.js": {
       "filePath": "public/js/consts.js",
-      "contentHash": "6ed45cf9277363a123bcd4bdbc0693929da81e06d941d89e69b6614e5ae7048f",
+      "contentHash": "26aab860496291dd54a3273d5acd1473b326b7a3821ffe45cda7e7506aa7e950",
       "functions": [
         {
           "name": "P",
@@ -961,6 +1030,22 @@
           "lineCount": 4
         },
         {
+          "name": "sizeForAspect",
+          "params": [
+            "aspect"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "secondsToFrames",
+          "params": [
+            "sec"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
           "name": "modelChoices",
           "params": [
             "directory",
@@ -968,6 +1053,15 @@
           ],
           "exported": true,
           "lineCount": 11
+        },
+        {
+          "name": "artStylePhrase",
+          "params": [
+            "prompt",
+            "style"
+          ],
+          "exported": true,
+          "lineCount": 8
         },
         {
           "name": "statusBadge",
@@ -1092,6 +1186,8 @@
         "IMAGE_SIZES",
         "VIDEO_RESOLUTIONS",
         "DURATION_PRESETS",
+        "sizeForAspect",
+        "secondsToFrames",
         "IMAGE_USAGES",
         "IMAGE_ROLES",
         "VIDEO_MODES",
@@ -1101,6 +1197,9 @@
         "VIDEO_STATUS",
         "REMOTE_STATUS",
         "LOCAL_STATUS",
+        "PRESET_TERMS",
+        "ART_STYLE_MAP",
+        "artStylePhrase",
         "STORYBOARD_STATUS",
         "statusBadge",
         "esc",
@@ -1115,12 +1214,12 @@
         "copyText",
         "downloadUrl"
       ],
-      "totalLines": 382,
+      "totalLines": 450,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/assets.js": {
       "filePath": "public/js/pages/assets.js",
-      "contentHash": "c88cf114e8f6e8a3947c11f890e25dd6ce4e6ea6d2e8a074d932f78876e049a8",
+      "contentHash": "a130f89a22c8206f40d49831d6ecdd972917361dae067b42538700a6aee47aae",
       "functions": [
         {
           "name": "assets",
@@ -1129,7 +1228,7 @@
             "params"
           ],
           "exported": true,
-          "lineCount": 234
+          "lineCount": 246
         }
       ],
       "classes": [],
@@ -1159,7 +1258,9 @@
             "empty",
             "spinner",
             "confirm",
-            "setBusy"
+            "setBusy",
+            "errBox",
+            "twoClick"
           ]
         },
         {
@@ -1174,19 +1275,20 @@
           "specifiers": [
             "state",
             "navigate",
-            "onEvent"
+            "onEvent",
+            "syncViewParams"
           ]
         }
       ],
       "exports": [
         "assets"
       ],
-      "totalLines": 245,
+      "totalLines": 257,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/dashboard.js": {
       "filePath": "public/js/pages/dashboard.js",
-      "contentHash": "bbd7f3833fb3f19f0e15483aee38bdfd75de712190d2df503f9fdaa3fad33a1d",
+      "contentHash": "7e5a8544f2dcf97d0af3de28e956c56332ccca8005069ecf3127aab4d2f404cf",
       "functions": [
         {
           "name": "dashboard",
@@ -1194,7 +1296,7 @@
             "container"
           ],
           "exported": true,
-          "lineCount": 136
+          "lineCount": 149
         }
       ],
       "classes": [],
@@ -1219,7 +1321,8 @@
           "specifiers": [
             "empty",
             "spinner",
-            "toast"
+            "toast",
+            "errBox"
           ]
         },
         {
@@ -1239,12 +1342,12 @@
       "exports": [
         "dashboard"
       ],
-      "totalLines": 147,
+      "totalLines": 160,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/helpers.js": {
       "filePath": "public/js/pages/helpers.js",
-      "contentHash": "faa3ecb86fd9ddbb69a320338701d42d2df73afd217d618bb727fd10843ad134",
+      "contentHash": "2ac7781e2b07c888cbbaf161845093a98c2b813715fb00253f7f29cf49bcf7c8",
       "functions": [
         {
           "name": "head",
@@ -1267,10 +1370,11 @@
           "name": "renderBatchBar",
           "params": [
             "el",
-            "job"
+            "job",
+            "onCancel"
           ],
           "exported": true,
-          "lineCount": 18
+          "lineCount": 23
         },
         {
           "name": "selectField",
@@ -1319,12 +1423,12 @@
         "inputField",
         "textareaField"
       ],
-      "totalLines": 67,
+      "totalLines": 72,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/images.js": {
       "filePath": "public/js/pages/images.js",
-      "contentHash": "717b609604edeb08ab4da41a70c60a2fe88fc004ff5d0ffacf0a4c8baaaf6174",
+      "contentHash": "ec458be0f23abea82db68a9ced970b2b71d4ea3222c29da1090f73230a7798a9",
       "functions": [
         {
           "name": "images",
@@ -1333,7 +1437,7 @@
             "params"
           ],
           "exported": true,
-          "lineCount": 274
+          "lineCount": 295
         }
       ],
       "classes": [],
@@ -1346,7 +1450,9 @@
             "copyText",
             "IMAGE_SIZES",
             "IMAGE_USAGES",
-            "modelChoices"
+            "modelChoices",
+            "sizeForAspect",
+            "PRESET_TERMS"
           ]
         },
         {
@@ -1385,12 +1491,12 @@
       "exports": [
         "images"
       ],
-      "totalLines": 285,
+      "totalLines": 306,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/projects.js": {
       "filePath": "public/js/pages/projects.js",
-      "contentHash": "2367a9d286942ed228c7c767a151ba5666f765173ede3587e0363f544cd71302",
+      "contentHash": "b79fbf3d0e107d8077515af8f5befbf5115c9a9d16d8df13a9d41d305a0677df",
       "functions": [
         {
           "name": "projects",
@@ -1399,7 +1505,7 @@
             "params"
           ],
           "exported": true,
-          "lineCount": 167
+          "lineCount": 175
         }
       ],
       "classes": [],
@@ -1430,7 +1536,8 @@
             "toast",
             "empty",
             "spinner",
-            "options"
+            "options",
+            "setBusy"
           ]
         },
         {
@@ -1450,12 +1557,12 @@
       "exports": [
         "projects"
       ],
-      "totalLines": 178,
+      "totalLines": 186,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/scripts.js": {
       "filePath": "public/js/pages/scripts.js",
-      "contentHash": "5122dbc1ef75db4e328cb2aa746641c38c27b9e0ca5faa39afd53054db653da3",
+      "contentHash": "7be5b25f0fc017e0df8738ff845478f495e58702b951f14c1b0aae61b78d578b",
       "functions": [
         {
           "name": "scripts",
@@ -1464,7 +1571,7 @@
             "params"
           ],
           "exported": true,
-          "lineCount": 341
+          "lineCount": 362
         }
       ],
       "classes": [],
@@ -1496,7 +1603,8 @@
             "empty",
             "spinner",
             "options",
-            "confirm"
+            "confirm",
+            "setBusy"
           ]
         },
         {
@@ -1510,19 +1618,20 @@
           "source": "../app.js",
           "specifiers": [
             "state",
-            "softRefresh"
+            "softRefresh",
+            "syncViewParams"
           ]
         }
       ],
       "exports": [
         "scripts"
       ],
-      "totalLines": 361,
+      "totalLines": 382,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/settings.js": {
       "filePath": "public/js/pages/settings.js",
-      "contentHash": "6804a1820521c2143f74743de12af8d7192c98a66ab1df7e731d00d3d0201632",
+      "contentHash": "736688ffb01bc7cedb424f6557a8707cb27046b0796075bf3aaf8b3fa30c26b8",
       "functions": [
         {
           "name": "settings",
@@ -1530,7 +1639,7 @@
             "container"
           ],
           "exported": true,
-          "lineCount": 408
+          "lineCount": 434
         }
       ],
       "classes": [],
@@ -1559,7 +1668,9 @@
             "spinner",
             "confirm",
             "options",
-            "setBusy"
+            "setBusy",
+            "errBox",
+            "twoClick"
           ]
         },
         {
@@ -1572,19 +1683,20 @@
           "source": "../app.js",
           "specifiers": [
             "state",
-            "refreshState"
+            "refreshState",
+            "syncViewParams"
           ]
         }
       ],
       "exports": [
         "settings"
       ],
-      "totalLines": 428,
+      "totalLines": 454,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/storyboards.js": {
       "filePath": "public/js/pages/storyboards.js",
-      "contentHash": "7fdfaf64c8a5e8ce504c6762ed8a4a93b9ad4c6ee65bcd4c328886baa176d669",
+      "contentHash": "07d6362786387cee6e60cb7d79cd10c195316f4bef3cc587c3dfd3a35661de79",
       "functions": [
         {
           "name": "storyboards",
@@ -1593,7 +1705,7 @@
             "params"
           ],
           "exported": true,
-          "lineCount": 456
+          "lineCount": 515
         }
       ],
       "classes": [],
@@ -1606,7 +1718,10 @@
             "extractJsonArray",
             "copyText",
             "SHOT_TYPES",
-            "STORYBOARD_STATUS"
+            "STORYBOARD_STATUS",
+            "secondsToFrames",
+            "sizeForAspect",
+            "artStylePhrase"
           ]
         },
         {
@@ -1622,6 +1737,7 @@
             "toast",
             "empty",
             "spinner",
+            "twoClick",
             "confirm",
             "options",
             "setBusy"
@@ -1639,19 +1755,20 @@
           "source": "../app.js",
           "specifiers": [
             "state",
-            "onEvent"
+            "onEvent",
+            "syncViewParams"
           ]
         }
       ],
       "exports": [
         "storyboards"
       ],
-      "totalLines": 470,
+      "totalLines": 529,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/tasks.js": {
       "filePath": "public/js/pages/tasks.js",
-      "contentHash": "9bd6b74a0d43020f990e389377d45ce5992fe0eb9682a6c9e4de1557cdd67503",
+      "contentHash": "a85210038b1b06526f4649d507dd0b37db7d7a696fe976bb99c8a7ee67222ef6",
       "functions": [
         {
           "name": "tasks",
@@ -1659,7 +1776,7 @@
             "container"
           ],
           "exported": true,
-          "lineCount": 295
+          "lineCount": 329
         }
       ],
       "classes": [],
@@ -1694,7 +1811,8 @@
             "confirm",
             "promptDlg",
             "options",
-            "setBusy"
+            "setBusy",
+            "errBox"
           ]
         },
         {
@@ -1706,19 +1824,20 @@
         {
           "source": "../app.js",
           "specifiers": [
-            "onEvent"
+            "onEvent",
+            "syncViewParams"
           ]
         }
       ],
       "exports": [
         "tasks"
       ],
-      "totalLines": 319,
+      "totalLines": 353,
       "hasStructuralAnalysis": true
     },
     "public/js/pages/videos.js": {
       "filePath": "public/js/pages/videos.js",
-      "contentHash": "0e19b5b78ad4a64251891c15141e0877eb7115fab6d21fff2317df486cbcb857",
+      "contentHash": "ba9cebcdddcfd71d90e3517a904fe4bcffa8d14b15eecf33183ba8a795942803",
       "functions": [
         {
           "name": "videos",
@@ -1727,7 +1846,7 @@
             "params"
           ],
           "exported": true,
-          "lineCount": 390
+          "lineCount": 401
         }
       ],
       "classes": [],
@@ -1743,7 +1862,8 @@
             "IMAGE_ROLES",
             "statusBadge",
             "relTime",
-            "modelChoices"
+            "modelChoices",
+            "sizeForAspect"
           ]
         },
         {
@@ -1776,19 +1896,20 @@
           "source": "../app.js",
           "specifiers": [
             "state",
-            "navigate"
+            "navigate",
+            "onEvent"
           ]
         }
       ],
       "exports": [
         "videos"
       ],
-      "totalLines": 405,
+      "totalLines": 416,
       "hasStructuralAnalysis": true
     },
     "public/js/ui.js": {
       "filePath": "public/js/ui.js",
-      "contentHash": "abdb278ff607d39f644d87dcf70b88bb718e1c0c7e1a95fc633e11798e087301",
+      "contentHash": "52c62d294bcc3e6d636e6827771a05f2aff0ded582a453ded2710f8ff463e627",
       "functions": [
         {
           "name": "toast",
@@ -1804,7 +1925,16 @@
             "o"
           ],
           "exported": true,
-          "lineCount": 59
+          "lineCount": 90
+        },
+        {
+          "name": "twoClick",
+          "params": [
+            "btn",
+            "run"
+          ],
+          "exported": true,
+          "lineCount": 22
         },
         {
           "name": "confirm",
@@ -1812,7 +1942,7 @@
             "o"
           ],
           "exported": true,
-          "lineCount": 34
+          "lineCount": 37
         },
         {
           "name": "prompt",
@@ -1850,7 +1980,7 @@
             "desc"
           ],
           "exported": true,
-          "lineCount": 3
+          "lineCount": 4
         },
         {
           "name": "spinner",
@@ -1861,13 +1991,19 @@
           "lineCount": 3
         },
         {
+          "name": "errBox",
+          "params": [],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
           "name": "options",
           "params": [
             "items",
             "current"
           ],
           "exported": true,
-          "lineCount": 7
+          "lineCount": 13
         },
         {
           "name": "setBusy",
@@ -1892,31 +2028,33 @@
       "exports": [
         "toast",
         "modal",
+        "twoClick",
         "confirm",
         "prompt",
         "on",
         "dataOf",
         "empty",
         "spinner",
+        "errBox",
         "options",
         "setBusy"
       ],
-      "totalLines": 244,
+      "totalLines": 320,
       "hasStructuralAnalysis": true
     },
     "README.md": {
       "filePath": "README.md",
-      "contentHash": "c56bc0c95afd418e5c16f45c90f7cac93e00ed3d900f32d6237bb2224c101b73",
+      "contentHash": "71097770ff8a5a4e4a394548820e3df4d46bd880e2b1f4e8a2182d388360f4bc",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 124,
+      "totalLines": 126,
       "hasStructuralAnalysis": true
     },
     "server.js": {
       "filePath": "server.js",
-      "contentHash": "73d2e6b4697fb810c6c035e7644db0a57adb1968bb88b7a583c785157ecf05fd",
+      "contentHash": "35ee95f0952c7acb2366fe74c56de066c22ff83cc3d5d5a794d127e56f3344f7",
       "functions": [
         {
           "name": "resolveHome",
@@ -1956,7 +2094,7 @@
             "req"
           ],
           "exported": false,
-          "lineCount": 17
+          "lineCount": 18
         },
         {
           "name": "originOk",
@@ -1964,7 +2102,7 @@
             "req"
           ],
           "exported": false,
-          "lineCount": 10
+          "lineCount": 20
         },
         {
           "name": "safeResolve",
@@ -1983,7 +2121,7 @@
             "urlPath"
           ],
           "exported": false,
-          "lineCount": 23
+          "lineCount": 28
         },
         {
           "name": "serveAsset",
@@ -1996,12 +2134,37 @@
           "lineCount": 19
         },
         {
+          "name": "hostOk",
+          "params": [
+            "req"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "handleRequest",
+          "params": [
+            "req",
+            "res"
+          ],
+          "exported": false,
+          "lineCount": 69
+        },
+        {
           "name": "listen",
           "params": [
             "port"
           ],
           "exported": false,
-          "lineCount": 17
+          "lineCount": 34
+        },
+        {
+          "name": "sameAppAlive",
+          "params": [
+            "port"
+          ],
+          "exported": false,
+          "lineCount": 10
         },
         {
           "name": "banner",
@@ -2025,12 +2188,12 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 359,
+      "totalLines": 452,
       "hasStructuralAnalysis": true
     },
     "tools/apitest.mjs": {
       "filePath": "tools/apitest.mjs",
-      "contentHash": "59f28e8f6ee3cc4a0bbcf90ab756e7ea56b6300333535a179aec1a8bfbe5aa77",
+      "contentHash": "05f48cb3c8aea3b8b50610eb4762f8e31a7e1d5d65df9235efa289d7ffe48c23",
       "functions": [
         {
           "name": "ok",
@@ -2068,10 +2231,18 @@
           "lineCount": 1
         },
         {
-          "name": "freePort",
+          "name": "portBusy",
+          "params": [
+            "p"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "freePortPair",
           "params": [],
           "exported": false,
-          "lineCount": 1
+          "lineCount": 10
         },
         {
           "name": "listenAsync",
@@ -2099,6 +2270,12 @@
           ],
           "exported": false,
           "lineCount": 10
+        },
+        {
+          "name": "cleanup",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
         }
       ],
       "classes": [],
@@ -2128,6 +2305,12 @@
           ]
         },
         {
+          "source": "node:net",
+          "specifiers": [
+            "net"
+          ]
+        },
+        {
           "source": "node:child_process",
           "specifiers": [
             "spawn"
@@ -2141,12 +2324,12 @@
         }
       ],
       "exports": [],
-      "totalLines": 711,
+      "totalLines": 931,
       "hasStructuralAnalysis": true
     },
     "tools/browser-test.mjs": {
       "filePath": "tools/browser-test.mjs",
-      "contentHash": "aae21520b383ce5f45583b6a278fbe87c22b64e2501e0fd7f8e582f4e254b9b8",
+      "contentHash": "95e2ee9e6463c2cf910c0f2ec3f1a83390212a5b4934456512db8145448ca2b4",
       "functions": [
         {
           "name": "sleep",
@@ -2155,6 +2338,22 @@
           ],
           "exported": false,
           "lineCount": 1
+        },
+        {
+          "name": "portBusy",
+          "params": [
+            "p"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "pickPortPair",
+          "params": [
+            "base"
+          ],
+          "exported": false,
+          "lineCount": 7
         },
         {
           "name": "ok",
@@ -2230,6 +2429,12 @@
           ]
         },
         {
+          "source": "node:net",
+          "specifiers": [
+            "net"
+          ]
+        },
+        {
           "source": "node:url",
           "specifiers": [
             "fileURLToPath"
@@ -2237,12 +2442,12 @@
         }
       ],
       "exports": [],
-      "totalLines": 228,
+      "totalLines": 283,
       "hasStructuralAnalysis": true
     },
     "tools/build-exe.mjs": {
       "filePath": "tools/build-exe.mjs",
-      "contentHash": "f010a74fb355f487bd2b5429bc35da8e14e0412cc8c04212fc913b0a1bf1d7c6",
+      "contentHash": "9ed3acb89dea73a1da6c63bcc26c7d53f03a622dbd027ced7ac6c2101e6ed39d",
       "functions": [
         {
           "name": "valueOf",
@@ -2309,7 +2514,7 @@
           "name": "main",
           "params": [],
           "exported": false,
-          "lineCount": 69
+          "lineCount": 84
         }
       ],
       "classes": [],
@@ -2324,6 +2529,12 @@
           "source": "node:path",
           "specifiers": [
             "path"
+          ]
+        },
+        {
+          "source": "node:crypto",
+          "specifiers": [
+            "crypto"
           ]
         },
         {
@@ -2346,7 +2557,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 139,
+      "totalLines": 155,
       "hasStructuralAnalysis": true
     },
     "tools/build-graph-data.mjs": {
@@ -2409,7 +2620,7 @@
     },
     "tools/selftest.mjs": {
       "filePath": "tools/selftest.mjs",
-      "contentHash": "d51830420f14daa5d20fe4a431a12046556563465679f21c5e50de3bc9d088a6",
+      "contentHash": "fcc533a6f760049298712760743c1d7c28b60cf15f01b42d78d9181686889a7a",
       "functions": [
         {
           "name": "ok",
@@ -2474,12 +2685,12 @@
         }
       ],
       "exports": [],
-      "totalLines": 377,
+      "totalLines": 417,
       "hasStructuralAnalysis": true
     },
     "tools/uitest.mjs": {
       "filePath": "tools/uitest.mjs",
-      "contentHash": "1bc70863c13e7c26afb26ca16aff4deaa89e36d49547a4b5fe3caa48290bf751",
+      "contentHash": "b27c5d5a971b574fed218834136ddb63e3dd49d9db1db5a335ccb52eee1d60f4",
       "functions": [
         {
           "name": "ok",
@@ -2537,7 +2748,159 @@
         }
       ],
       "exports": [],
-      "totalLines": 251,
+      "totalLines": 342,
+      "hasStructuralAnalysis": true
+    },
+    "tools/ui-audit.mjs": {
+      "filePath": "tools/ui-audit.mjs",
+      "contentHash": "e2f11725c0fad3ea174afed07d40e9974a7cc35759e4867fc5ce312abdfbd91d",
+      "functions": [
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "portBusy",
+          "params": [
+            "p"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "pickPortPair",
+          "params": [
+            "base"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "findBrowser",
+          "params": [],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "waitFor",
+          "params": [
+            "fn",
+            "label"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "getTarget",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "CDP",
+          "methods": [
+            "constructor",
+            "connect",
+            "send",
+            "eval",
+            "viewport",
+            "close"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 39
+        }
+      ],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawn"
+          ]
+        },
+        {
+          "source": "node:net",
+          "specifiers": [
+            "net"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 208,
+      "hasStructuralAnalysis": true
+    },
+    "AGENTS.md": {
+      "filePath": "AGENTS.md",
+      "contentHash": "c91ba4ee73ee910e40e4283798d62c0a61033cddecbbc5c1e9acf5bb7f08168c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 171,
+      "hasStructuralAnalysis": true
+    },
+    "docs/research/ui-manjugongfang-hosted.md": {
+      "filePath": "docs/research/ui-manjugongfang-hosted.md",
+      "contentHash": "2962bc85c7ffb3798045bd3b8a8c467d85f63fe5853c316ddb576c04c3a6407d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 681,
+      "hasStructuralAnalysis": true
+    },
+    "docs/research/ui-optimization-plan.md": {
+      "filePath": "docs/research/ui-optimization-plan.md",
+      "contentHash": "6eef4c9b3740aff5564bc0ebd6f6caa501d7fc89746370d926cf439d33866181",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 72,
+      "hasStructuralAnalysis": true
+    },
+    "docs/research/ui-other-competitors.md": {
+      "filePath": "docs/research/ui-other-competitors.md",
+      "contentHash": "999fb782ece255c60436ce9f91a5ecd5c008883b2e7e917527274b40944f4e5b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 258,
+      "hasStructuralAnalysis": true
+    },
+    "docs/research/ui-our-baseline.md": {
+      "filePath": "docs/research/ui-our-baseline.md",
+      "contentHash": "c81becf1f2623ea287e12b9c01e8c2c60018d59228205c55bfd63524fab729e1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 347,
       "hasStructuralAnalysis": true
     }
   }
