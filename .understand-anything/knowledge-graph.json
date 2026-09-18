@@ -1,0 +1,6226 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "agnes-studio",
+    "languages": [
+      "css",
+      "html",
+      "javascript",
+      "json",
+      "markdown"
+    ],
+    "frameworks": [],
+    "description": "Agnes 漫剧工坊本地版：一个零云端数据库依赖的 AI 漫剧制作工作台，基于 Node.js 原生 http 服务构建，将故事构思、分集脚本、分镜、图片与视频生成、任务轮询和素材管理串成一条本机创作链路。API Key、项目数据与生成记录全部保存在本地，支持导入导出备份并打包为单文件 Windows exe。",
+    "analyzedAt": "2026-09-18T04:13:04.818Z",
+    "gitCommitHash": "2cf57976ddf979bb117e4bb774983116ba908ab7"
+  },
+  "nodes": [
+    {
+      "id": "file:public/js/pages/projects.js",
+      "type": "file",
+      "name": "projects.js",
+      "filePath": "public/js/pages/projects.js",
+      "summary": "项目管理页面：以卡片列表展示每部漫剧项目，提供新建/编辑弹窗、复制、级联删除与项目资料导出。",
+      "tags": [
+        "页面",
+        "component",
+        "crud",
+        "项目管理"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/pages/projects.js:projects",
+      "type": "function",
+      "name": "projects",
+      "filePath": "public/js/pages/projects.js",
+      "lineRange": [
+        11,
+        177
+      ],
+      "summary": "项目管理页入口：渲染项目卡片与类型/平台/画幅标签，绑定新建编辑弹窗（复用 modal + helpers 表单片段）、复制、删除与导出，并在变更后 softRefresh 全局状态。",
+      "tags": [
+        "页面",
+        "crud",
+        "event-handler",
+        "表单"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/pages/scripts.js",
+      "type": "file",
+      "name": "scripts.js",
+      "filePath": "public/js/pages/scripts.js",
+      "summary": "故事脚本页面：按「故事概念 → 剧情梗概 → 分集大纲 → 单集剧本 → 分镜脚本」五个标签收集模板变量并调用文本模型，结果可保存复用并直接导入分镜表；提示词全部来自设置页模板而非写死在代码里。",
+      "tags": [
+        "页面",
+        "component",
+        "llm-output",
+        "提示词模板"
+      ],
+      "complexity": "complex",
+      "languageNotes": "把 prompt 外置成数据库模板（TEMPLATE_TYPES 映射），改提示词无需改动前端代码，这是该页刻意的设计取舍。"
+    },
+    {
+      "id": "function:public/js/pages/scripts.js:scripts",
+      "type": "function",
+      "name": "scripts",
+      "filePath": "public/js/pages/scripts.js",
+      "lineRange": [
+        20,
+        360
+      ],
+      "summary": "故事脚本页入口：加载模板并按 {{var}} 占位符动态渲染变量字段，带秒表计时地调用 api.genText、用 extractJson/extractJsonArray 解析结果，并提供复制、保存历史与导入分镜（含选集弹窗）等动作。",
+      "tags": [
+        "页面",
+        "生成",
+        "json解析",
+        "event-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/pages/settings.js",
+      "type": "file",
+      "name": "settings.js",
+      "filePath": "public/js/pages/settings.js",
+      "summary": "设置页面（macOS 系统设置风格）：左侧分栏切换 Agnes API 密钥、模型配置、任务参数、提示词模板 CRUD、数据导入导出与关于信息。",
+      "tags": [
+        "页面",
+        "component",
+        "configuration",
+        "设置"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/pages/settings.js:settings",
+      "type": "function",
+      "name": "settings",
+      "filePath": "public/js/pages/settings.js",
+      "lineRange": [
+        20,
+        427
+      ],
+      "summary": "设置页入口：并行拉取 settings 与 templates，按 SECTIONS 渲染六个面板（含连通性测试、模型刷新、模板编辑表单、数据导入/清空），所有写操作统一走 save(patch) 并在成功后 refreshState。",
+      "tags": [
+        "页面",
+        "configuration",
+        "crud",
+        "event-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/pages/storyboards.js",
+      "type": "file",
+      "name": "storyboards.js",
+      "filePath": "public/js/pages/storyboards.js",
+      "summary": "分镜制作页面，整条链路的中枢：分镜表可增删改排序、从脚本导入，并支持批量补提示词、批量出图、批量出视频（带队列进度），向下对接图片与视频生成。",
+      "tags": [
+        "页面",
+        "component",
+        "batch",
+        "分镜"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/pages/storyboards.js:storyboards",
+      "type": "function",
+      "name": "storyboards",
+      "filePath": "public/js/pages/storyboards.js",
+      "lineRange": [
+        14,
+        469
+      ],
+      "summary": "分镜页入口：按项目+集数加载分镜表格并维护勾选集合，绑定上移下移/编辑/删除，触发从脚本批量生成分镜、批量补提示词、batchImages/batchVideos 队列（用 renderBatchBar 展示进度、onEvent 接收 SSE 更新）。",
+      "tags": [
+        "页面",
+        "batch",
+        "队列",
+        "event-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/pages/tasks.js",
+      "type": "file",
+      "name": "tasks.js",
+      "filePath": "public/js/pages/tasks.js",
+      "summary": "镜头任务指挥中心：并列展示视频记录与异步任务，显示状态/进度、支持补录 video_id、下载保存到本地、收藏与删除，状态变化通过 SSE 实时推送无需手动刷新。",
+      "tags": [
+        "页面",
+        "component",
+        "任务队列",
+        "sse"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/pages/tasks.js:tasks",
+      "type": "function",
+      "name": "tasks",
+      "filePath": "public/js/pages/tasks.js",
+      "lineRange": [
+        24,
+        318
+      ],
+      "summary": "镜头任务页入口：Promise.all 拉取 videos 与 tasks 并渲染双表格行（按生成模式与远端/本地状态打标签），通过 onEvent('video') 增量更新，绑定刷新、补录绑定、下载、删除与批量修复等操作。",
+      "tags": [
+        "页面",
+        "event-handler",
+        "状态同步",
+        "crud"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/pages/videos.js",
+      "type": "file",
+      "name": "videos.js",
+      "filePath": "public/js/pages/videos.js",
+      "summary": "视频生成页面：支持文生视频、图生视频、多图参考、关键帧动画四种模式提交，提交后交后端轮询，页面额外展示链路诊断以区分是 Agnes 侧还是本地侧的超时。",
+      "tags": [
+        "页面",
+        "component",
+        "视频生成",
+        "诊断"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/pages/videos.js:videos",
+      "type": "function",
+      "name": "videos",
+      "filePath": "public/js/pages/videos.js",
+      "lineRange": [
+        15,
+        404
+      ],
+      "summary": "视频生成页入口：按模式切换表单（模型、时长、分辨率、参考图与图像角色），提交 api.createVideo 后渲染最近生成列表与链路诊断面板，并提供打开、下载、补录 video_id 与跳转镜头任务等动作。",
+      "tags": [
+        "页面",
+        "表单",
+        "生成",
+        "event-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/ui.js",
+      "type": "file",
+      "name": "ui.js",
+      "filePath": "public/js/ui.js",
+      "summary": "全站共用 UI 原语库：toast 轻提示、modal 通用弹窗（含焦点陷阱与滚动锁）、confirm/prompt Promise 化对话框，以及事件绑定、空态、spinner、options 生成与按钮加载态 setBusy。",
+      "tags": [
+        "utility",
+        "component",
+        "ui-primitives",
+        "对话框"
+      ],
+      "complexity": "complex",
+      "languageNotes": "modal 用 MutationObserver 监听 DOM 摘除来做统一收尾（解绑键盘事件、恢复 body 滚动），confirm/prompt 建立在 modal 之上并返回 Promise。"
+    },
+    {
+      "id": "function:public/js/ui.js:toast",
+      "type": "function",
+      "name": "toast",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        10,
+        32
+      ],
+      "summary": "在 #toasts 容器中插入一条带图标与语义色的轻提示，按 ms 自动消失；挂载 toast.ok / err / warn / info 四个便捷方法。",
+      "tags": [
+        "ui-primitives",
+        "通知",
+        "feedback"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/ui.js:modal",
+      "type": "function",
+      "name": "modal",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        45,
+        103
+      ],
+      "summary": "通用弹窗实现：遮罩点击与 ESC 关闭最上层、Tab 焦点在弹窗内循环、自动聚焦首个安全控件、打开时锁背景滚动，并返回 { close, root } 供调用方接管。",
+      "tags": [
+        "ui-primitives",
+        "对话框",
+        "accessibility",
+        "焦点管理"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/ui.js:confirm",
+      "type": "function",
+      "name": "confirm",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        111,
+        144
+      ],
+      "summary": "Promise 化确认框：不带 checkbox 时返回 Promise<boolean>，带 checkbox 时返回 {confirmed, checked}，避免弹窗关闭后取不到勾选状态。",
+      "tags": [
+        "ui-primitives",
+        "对话框",
+        "promise"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/ui.js:prompt",
+      "type": "function",
+      "name": "prompt",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        147,
+        179
+      ],
+      "summary": "Promise 化单值输入对话框，用于补录 video_id、命名等轻录入场景，取消时 resolve 为 null。",
+      "tags": [
+        "ui-primitives",
+        "对话框",
+        "表单"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/ui.js:on",
+      "type": "function",
+      "name": "on",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        183,
+        185
+      ],
+      "summary": "设置 innerHTML 之后批量挂事件的小工具：on(root, selector, type, fn)。",
+      "tags": [
+        "utility",
+        "event-handler",
+        "dom"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/ui.js:dataOf",
+      "type": "function",
+      "name": "dataOf",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        188,
+        190
+      ],
+      "summary": "读取元素 data-* 属性值的简写工具。",
+      "tags": [
+        "utility",
+        "dom",
+        "accessor"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/ui.js:empty",
+      "type": "function",
+      "name": "empty",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        192,
+        194
+      ],
+      "summary": "生成统一空态 HTML（图标 + 标题 + 描述），供各页列表无数据时占位。",
+      "tags": [
+        "utility",
+        "空态",
+        "模板片段"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/ui.js:spinner",
+      "type": "function",
+      "name": "spinner",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        196,
+        198
+      ],
+      "summary": "生成带文案的加载占位 HTML，默认文案为「加载中…」。",
+      "tags": [
+        "utility",
+        "loading",
+        "模板片段"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/ui.js:options",
+      "type": "function",
+      "name": "options",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        201,
+        207
+      ],
+      "summary": "把对象或字符串数组渲染成 <option> 列表并支持选中态回填，供各页下拉框复用。",
+      "tags": [
+        "utility",
+        "表单",
+        "渲染"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/ui.js:setBusy",
+      "type": "function",
+      "name": "setBusy",
+      "filePath": "public/js/ui.js",
+      "lineRange": [
+        217,
+        243
+      ],
+      "summary": "按钮加载态：禁用并替换为内联 spinner + 秒表计时，结束后还原原始 HTML 与 disabled 状态，避免长耗时生成时用户误判「点了没反应」而狂点。",
+      "tags": [
+        "ui-primitives",
+        "loading",
+        "feedback",
+        "dom"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:public/js/api.js",
+      "type": "file",
+      "name": "api.js",
+      "filePath": "public/js/api.js",
+      "summary": "前端唯一的后端接口封装层：内部 req() 统一发起 fetch 并把 HTTP 错误与业务 ok:false 收敛成 {ok, data, error} 信封，再以 api 对象暴露项目/脚本/分镜/图片/视频/任务/模板/批量/导入等全部 /api 端点。",
+      "tags": [
+        "api-client",
+        "网络请求",
+        "错误处理",
+        "service"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "所有方法都是薄箭头函数包装 req()，页面层因此无需层层 try/catch，直接判断返回的 r.ok。"
+    },
+    {
+      "id": "function:public/js/api.js:req",
+      "type": "function",
+      "name": "req",
+      "filePath": "public/js/api.js",
+      "lineRange": [
+        6,
+        28
+      ],
+      "summary": "统一请求核心：组装 method 与 JSON body、执行 fetch、解析响应文本，再按 HTTP 状态码和业务 ok 字段归一化为 {ok, data, error, status} 结构。",
+      "tags": [
+        "网络请求",
+        "错误处理",
+        "utility",
+        "serialization"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:public/js/app.js",
+      "type": "file",
+      "name": "app.js",
+      "filePath": "public/js/app.js",
+      "summary": "应用外壳：维护全局 state，基于 location.hash 的极简路由、侧边栏渲染、SSE 实时事件分发（video/batch 等）与启动引导 boot()，并把 9 个 page 模块挂载到导航表 NAV。",
+      "tags": [
+        "entry-point",
+        "路由",
+        "状态管理",
+        "event-handler"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "无框架，纯 hash 路由 + 订阅者列表；页面卸载通过 render() 里保存的 cleanup 回调回收 SSE 监听。"
+    },
+    {
+      "id": "function:public/js/app.js:navigate",
+      "type": "function",
+      "name": "navigate",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        51,
+        54
+      ],
+      "summary": "改写 location.hash 驱动路由跳转，params 会被序列化成查询串附加在路径后面。",
+      "tags": [
+        "路由",
+        "navigation",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/app.js:render",
+      "type": "function",
+      "name": "render",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        56,
+        82
+      ],
+      "summary": "路由出口：解析 hash、匹配 NAV 条目、执行上一页 cleanup 后挂载页面容器并调用对应 page 模块，最后同步侧边栏高亮与滚动位置。",
+      "tags": [
+        "路由",
+        "渲染",
+        "生命周期"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/app.js:renderSidebar",
+      "type": "function",
+      "name": "renderSidebar",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        84,
+        111
+      ],
+      "summary": "渲染左侧导航栏：图标 + 标签 + 运行中任务数徽章，并为每个按钮绑定 navigate 跳转。",
+      "tags": [
+        "渲染",
+        "navigation",
+        "component"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/app.js:refreshState",
+      "type": "function",
+      "name": "refreshState",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        114,
+        124
+      ],
+      "summary": "调用 /api/bootstrap 拉取全局状态（settings、projects、stats、models、home 目录等）并刷新侧边栏。",
+      "tags": [
+        "状态管理",
+        "数据加载",
+        "api-handler"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/app.js:softRefresh",
+      "type": "function",
+      "name": "softRefresh",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        127,
+        129
+      ],
+      "summary": "轻量刷新：只重新拉全局状态，不重建当前页面 DOM，避免打断用户正在填的表单。",
+      "tags": [
+        "状态管理",
+        "utility",
+        "刷新"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/app.js:onEvent",
+      "type": "function",
+      "name": "onEvent",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        133,
+        136
+      ],
+      "summary": "注册 SSE 事件监听回调（kind 如 video/batch），返回一个取消订阅函数供页面 cleanup 调用。",
+      "tags": [
+        "event-handler",
+        "订阅",
+        "sse"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/app.js:connectSSE",
+      "type": "function",
+      "name": "connectSSE",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        138,
+        157
+      ],
+      "summary": "连接后端 EventSource，把 video / batch 等推送事件反序列化后分发给 onEvent 注册的回调，并在状态变化时触发软刷新。",
+      "tags": [
+        "sse",
+        "event-handler",
+        "实时推送"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/app.js:boot",
+      "type": "function",
+      "name": "boot",
+      "filePath": "public/js/app.js",
+      "lineRange": [
+        160,
+        176
+      ],
+      "summary": "启动引导：健康检查 → 拉取全局状态 → 绑定 hashchange → 首次渲染 → 连接 SSE；后端未就绪时定时重试。",
+      "tags": [
+        "entry-point",
+        "bootstrap",
+        "初始化"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:public/js/consts.js",
+      "type": "file",
+      "name": "consts.js",
+      "filePath": "public/js/consts.js",
+      "summary": "前端公共常量与小工具中枢：内联 SVG 图标集（断网可用）、项目/分镜/图片/视频枚举表与状态徽章映射，以及 esc、时间/字节格式化、模型筛选和 LLM 输出 JSON 容错解析等函数。",
+      "tags": [
+        "utility",
+        "常量",
+        "枚举",
+        "serialization"
+      ],
+      "complexity": "complex",
+      "languageNotes": "图标用 Lucide 线性风格的 24×24 stroke 内联 SVG 字符串表；repairJson/extractJson 是针对模型脏输出的多级降级解析策略。"
+    },
+    {
+      "id": "function:public/js/consts.js:icon",
+      "type": "function",
+      "name": "icon",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        60,
+        63
+      ],
+      "summary": "按名称从 ICONS 表取出路径片段，拼装成 24×24 内联 SVG 字符串（可指定尺寸）。",
+      "tags": [
+        "utility",
+        "图标",
+        "svg"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:modelChoices",
+      "type": "function",
+      "name": "modelChoices",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        115,
+        125
+      ],
+      "summary": "按 kind（text/image/video）从 bootstrap 模型列表中筛选可用模型，结合正则关键字过滤并附兜底模型 id。",
+      "tags": [
+        "utility",
+        "模型选择",
+        "filter"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:statusBadge",
+      "type": "function",
+      "name": "statusBadge",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        181,
+        184
+      ],
+      "summary": "按状态值查映射表生成带语义色的状态徽章 HTML 片段。",
+      "tags": [
+        "utility",
+        "渲染",
+        "状态标签"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:esc",
+      "type": "function",
+      "name": "esc",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        187,
+        191
+      ],
+      "summary": "HTML 转义工具，所有拼接进 innerHTML 的动态文本都经它处理以防 XSS。",
+      "tags": [
+        "utility",
+        "安全",
+        "escaping"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:uid",
+      "type": "function",
+      "name": "uid",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        193,
+        195
+      ],
+      "summary": "由时间戳加随机数生成短临时 id，用于前端新建行的乐观标识。",
+      "tags": [
+        "utility",
+        "id生成",
+        "临时标识"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:fmtTime",
+      "type": "function",
+      "name": "fmtTime",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        197,
+        203
+      ],
+      "summary": "把 ISO 时间戳格式化为「年-月-日 时:分」本地时间字符串。",
+      "tags": [
+        "utility",
+        "日期格式化",
+        "时间"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:fmtDate",
+      "type": "function",
+      "name": "fmtDate",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        205,
+        211
+      ],
+      "summary": "把 ISO 时间戳格式化为仅日期的「年-月-日」字符串。",
+      "tags": [
+        "utility",
+        "日期格式化",
+        "时间"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:relTime",
+      "type": "function",
+      "name": "relTime",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        213,
+        225
+      ],
+      "summary": "把时间戳换算为「刚刚/几分钟前/几小时前/几天前」的相对时间文案，超过阈值回退到 fmtDate。",
+      "tags": [
+        "utility",
+        "日期格式化",
+        "本地化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:fmtBytes",
+      "type": "function",
+      "name": "fmtBytes",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        227,
+        232
+      ],
+      "summary": "把字节数换算为可读的 KB/MB/GB 字符串，供素材库与设置页容量展示使用。",
+      "tags": [
+        "utility",
+        "格式化",
+        "文件大小"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:repairJson",
+      "type": "function",
+      "name": "repairJson",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        242,
+        274
+      ],
+      "summary": "启发式修复模型输出 JSON 的常见毛病：字符串内未转义引号、相邻多余引号、尾逗号与裸换行/制表符，仅在正常解析失败后作兜底。",
+      "tags": [
+        "json修复",
+        "容错",
+        "llm-output",
+        "parser"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "逐字符状态机跟踪字符串上下文，靠「下一个非空白字符是否为结构符」判断引号是闭合还是内嵌。"
+    },
+    {
+      "id": "function:public/js/consts.js:sliceFirstJson",
+      "type": "function",
+      "name": "sliceFirstJson",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        284,
+        310
+      ],
+      "summary": "从任意文本中截取第一段括号配对的 JSON 片段，跳过字符串内部括号并容忍前后夹带的自然语言废话。",
+      "tags": [
+        "parser",
+        "json修复",
+        "utility"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/consts.js:extractJson",
+      "type": "function",
+      "name": "extractJson",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        316,
+        339
+      ],
+      "summary": "从模型输出中多级降级提取 JSON：```围栏块 → 全文直接 parse → sliceFirstJson 截括号 → repairJson 修复后重试。",
+      "tags": [
+        "json修复",
+        "llm-output",
+        "parser"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/consts.js:extractJsonArray",
+      "type": "function",
+      "name": "extractJsonArray",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        345,
+        353
+      ],
+      "summary": "要求模型返回数组时使用的统一入口，兼容裸数组、围栏数组与被 {shots:[...]} 包裹的三种形状。",
+      "tags": [
+        "json修复",
+        "llm-output",
+        "parser"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:copyText",
+      "type": "function",
+      "name": "copyText",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        355,
+        372
+      ],
+      "summary": "复制文本到剪贴板：安全上下文走 navigator.clipboard，http 访问时回退到隐藏 textarea + execCommand。",
+      "tags": [
+        "utility",
+        "clipboard",
+        "兼容性"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/consts.js:downloadUrl",
+      "type": "function",
+      "name": "downloadUrl",
+      "filePath": "public/js/consts.js",
+      "lineRange": [
+        374,
+        381
+      ],
+      "summary": "动态创建 a[download] 元素并点击，触发浏览器下载指定 URL 的素材。",
+      "tags": [
+        "utility",
+        "download",
+        "dom"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:public/js/pages/assets.js",
+      "type": "file",
+      "name": "assets.js",
+      "filePath": "public/js/pages/assets.js",
+      "summary": "素材库页面：图片/视频/文本三分栏（Apple Photos 风格栅格），支持项目筛选、仅看收藏、大图预览、复制提示词、删除与「图生视频」跳转。",
+      "tags": [
+        "component",
+        "页面",
+        "素材管理",
+        "grid"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/pages/assets.js:assets",
+      "type": "function",
+      "name": "assets",
+      "filePath": "public/js/pages/assets.js",
+      "lineRange": [
+        11,
+        244
+      ],
+      "summary": "素材库页入口：并行拉取图片/视频/脚本三类数据，按标签页过滤渲染卡片，并集中绑定收藏、预览、删除、复制提示词等交互。",
+      "tags": [
+        "页面",
+        "component",
+        "数据加载",
+        "event-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:public/js/pages/dashboard.js",
+      "type": "file",
+      "name": "dashboard.js",
+      "filePath": "public/js/pages/dashboard.js",
+      "summary": "工作台首页：Hero 链路引导 + 统计卡片 + 快速入口 + 最近项目 + 最近生成，是进入应用后的默认落地页。",
+      "tags": [
+        "页面",
+        "component",
+        "dashboard",
+        "概览"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/pages/dashboard.js:dashboard",
+      "type": "function",
+      "name": "dashboard",
+      "filePath": "public/js/pages/dashboard.js",
+      "lineRange": [
+        11,
+        146
+      ],
+      "summary": "工作台页入口：渲染 Hero 与统计概览，拉取最近项目/最近生成列表，并把快速操作按钮接到对应页面的路由。",
+      "tags": [
+        "页面",
+        "component",
+        "数据加载"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:public/js/pages/helpers.js",
+      "type": "file",
+      "name": "helpers.js",
+      "filePath": "public/js/pages/helpers.js",
+      "summary": "页面通用 HTML 片段工厂：统一页头、项目下拉选择器、批量任务进度条，以及 select/input/textarea 三类表单字段模板。",
+      "tags": [
+        "utility",
+        "component",
+        "模板片段",
+        "表单"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:public/js/pages/helpers.js:head",
+      "type": "function",
+      "name": "head",
+      "filePath": "public/js/pages/helpers.js",
+      "lineRange": [
+        6,
+        15
+      ],
+      "summary": "生成统一页头 HTML：标题、描述文案与右侧操作按钮区，所有页面共用同一版式。",
+      "tags": [
+        "utility",
+        "component",
+        "模板片段"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "function",
+      "name": "projectPicker",
+      "filePath": "public/js/pages/helpers.js",
+      "lineRange": [
+        18,
+        27
+      ],
+      "summary": "生成项目下拉选择框，带「全部/无」空选项与选中态，支持 small 变体。",
+      "tags": [
+        "utility",
+        "component",
+        "表单",
+        "选择器"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/pages/helpers.js:renderBatchBar",
+      "type": "function",
+      "name": "renderBatchBar",
+      "filePath": "public/js/pages/helpers.js",
+      "lineRange": [
+        30,
+        47
+      ],
+      "summary": "渲染批量任务进度条：显示总数、成功、失败与进行中计数和百分比，供分镜/图片批量出图出视频时展示队列状态。",
+      "tags": [
+        "utility",
+        "component",
+        "进度条",
+        "batch"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/pages/helpers.js:selectField",
+      "type": "function",
+      "name": "selectField",
+      "filePath": "public/js/pages/helpers.js",
+      "lineRange": [
+        50,
+        52
+      ],
+      "summary": "生成「label + select」表单字段片段，选项 HTML 由调用方传入。",
+      "tags": [
+        "utility",
+        "表单",
+        "模板片段"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/pages/helpers.js:inputField",
+      "type": "function",
+      "name": "inputField",
+      "filePath": "public/js/pages/helpers.js",
+      "lineRange": [
+        54,
+        59
+      ],
+      "summary": "生成「label + input」表单字段片段，支持占位符、提示说明与类型。",
+      "tags": [
+        "utility",
+        "表单",
+        "模板片段"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:public/js/pages/helpers.js:textareaField",
+      "type": "function",
+      "name": "textareaField",
+      "filePath": "public/js/pages/helpers.js",
+      "lineRange": [
+        61,
+        66
+      ],
+      "summary": "生成「label + textarea」多行文本字段片段，用于提示词与脚本正文录入。",
+      "tags": [
+        "utility",
+        "表单",
+        "模板片段"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:public/js/pages/images.js",
+      "type": "file",
+      "name": "images.js",
+      "filePath": "public/js/pages/images.js",
+      "summary": "图片生成页面：文生图 / 图生图双模式，选择尺寸、模型与参考图后提交，结果直接落盘到本地素材库并支持一键图生视频。",
+      "tags": [
+        "页面",
+        "component",
+        "图片生成",
+        "image-generation"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:public/js/pages/images.js:images",
+      "type": "function",
+      "name": "images",
+      "filePath": "public/js/pages/images.js",
+      "lineRange": [
+        11,
+        284
+      ],
+      "summary": "图片生成页入口：绑定项目与分镜上下文、维护 t2i/i2i 模式与表单状态，调用 api.genImage 出图、渲染结果网格并处理收藏/删除/生视频跳转。",
+      "tags": [
+        "页面",
+        "component",
+        "event-handler",
+        "生成"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:lib/agnes.js",
+      "type": "file",
+      "name": "agnes.js",
+      "filePath": "lib/agnes.js",
+      "summary": "Agnes API 客户端，封装文本（chat）、图片（image）与视频（createVideo/queryVideo/downloadVideo）三类生成接口的直连调用；API Key 只从本机 store 读取、绝不下发前端。内置统一请求层（超时/链路诊断/错误分类）、瞬时错误指数退避重试，以及 v2.0 与 2.5 两代视频协议的自动分流。",
+      "tags": [
+        "service",
+        "api-client",
+        "视频生成",
+        "重试",
+        "http-client"
+      ],
+      "complexity": "complex",
+      "languageNotes": "使用原生 fetch + AbortSignal.timeout 而非 HTTP 库；通过 module.exports 显式命名导出。chat 的 response_format=json_object 请求在遇到 4xx 时会自动降级重试一次，保证兼容性。"
+    },
+    {
+      "id": "function:lib/agnes.js:normalizeBase",
+      "type": "function",
+      "name": "normalizeBase",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        30,
+        34
+      ],
+      "summary": "归一化用户在设置中填写的 Agnes API base URL：去尾部斜杠、缺协议时自动补 https://，并提供默认官方地址。",
+      "tags": [
+        "utility",
+        "url-处理",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:rootBase",
+      "type": "function",
+      "name": "rootBase",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        36,
+        38
+      ],
+      "summary": "从 base URL 去掉结尾的 /v1 得到域名根路径，视频查询接口 agnesapi 使用根路径而非 /v1 前缀。",
+      "tags": [
+        "utility",
+        "url-处理",
+        "api-client"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:withV1",
+      "type": "function",
+      "name": "withV1",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        39,
+        42
+      ],
+      "summary": "确保 base URL 以 /v1 结尾（OpenAI 兼容端点统一挂在 /v1 下），已带则原样返回。",
+      "tags": [
+        "utility",
+        "url-处理",
+        "api-client"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:lib/agnes.js:AgnesError",
+      "type": "class",
+      "name": "AgnesError",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        45,
+        54
+      ],
+      "summary": "继承 Error 的 Agnes 专用错误类型，额外携带 errorType、HTTP status、responseData 与链路诊断信息（request_sent/response_received/response_status），供上层区分失败原因。",
+      "tags": [
+        "错误处理",
+        "data-model",
+        "诊断"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:isTransientError",
+      "type": "function",
+      "name": "isTransientError",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        69,
+        76
+      ],
+      "summary": "判断错误是否为「重试可能恢复」的瞬时拒绝（408/429/5xx、排队已满、限流、网络抖动文案），与 schema 错误、鉴权失败这类重试无意义的 4xx 区分开。",
+      "tags": [
+        "错误处理",
+        "重试",
+        "validation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:request",
+      "type": "function",
+      "name": "request",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        82,
+        142
+      ],
+      "summary": "全模块统一的 HTTP 请求层：带 Bearer 认证与超时中止发起 fetch，网络层异常与超时包装为带 diagnostics 的 AgnesError，非 2xx 响应解析错误消息并抛出；成功时返回 { data, diagnostics }。",
+      "tags": [
+        "http-client",
+        "api-handler",
+        "错误处理",
+        "诊断"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "diagnostics 记录 request_sent / response_received / response_status / duration_ms，是原版排查「Agnes 到底收没收到请求」的链路诊断字段。"
+    },
+    {
+      "id": "function:lib/agnes.js:chat",
+      "type": "function",
+      "name": "chat",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        152,
+        172
+      ],
+      "summary": "调用文本模型的 chat/completions 接口；json=true 时走 response_format=json_object 约束解码，遇到 4xx（非鉴权类）自动降级为普通请求重试一次，返回 { content, raw, diagnostics }。",
+      "tags": [
+        "api-client",
+        "文本生成",
+        "json-输出",
+        "降级重试"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/agnes.js:image",
+      "type": "function",
+      "name": "image",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        180,
+        197
+      ],
+      "summary": "调用 images/generations 生成图片，支持传入参考图 URL 数组做图生图；Agnes 经 LiteLLM 代理实际多返回 b64_json，由调用方负责落盘为本地文件。",
+      "tags": [
+        "api-client",
+        "图片生成",
+        "图生图"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:v25Body",
+      "type": "function",
+      "name": "v25Body",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        231,
+        255
+      ],
+      "summary": "把内部统一的视频参数翻译成 agnes-video-2.5 的 OpenAI-Videos 兼容新协议 body：按有无参考图推导 mode（text/keyframe/reference），折算 seconds、分辨率档位与画幅比例，negative_prompt 并入正向提示词。",
+      "tags": [
+        "协议适配",
+        "视频生成",
+        "data-transformation"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "2.5 协议下 v2.0 的 width/height/num_frames/frame_rate/negative_prompt 五个字段全部 forbidden；Flash 档固定 720P 且 reference 模式图片上限 5 张。"
+    },
+    {
+      "id": "function:lib/agnes.js:submitVideoOnce",
+      "type": "function",
+      "name": "submitVideoOnce",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        261,
+        322
+      ],
+      "summary": "单次提交视频生成任务（POST /v1/videos），按模型名在 v2.0 旧 body 与 2.5 新协议之间自动分流；拿到 video_id 即算成功，proxy_timeout 时不当失败丢弃而是返回 timed_out 结果（请求可能已被 Agnes 收单，需人工核对补录）。",
+      "tags": [
+        "api-client",
+        "视频生成",
+        "错误处理",
+        "超时兜底"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:lib/agnes.js:createVideo",
+      "type": "function",
+      "name": "createVideo",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        330,
+        350
+      ],
+      "summary": "对外的视频提交入口：命中排队满/限流等瞬时拒绝时按指数退避（封顶 60s + 随机抖动）自动重试，重试预算可由设置或 params.submit_retries 覆盖；超时不参与重试以避免重复扣费。",
+      "tags": [
+        "视频生成",
+        "重试",
+        "退避策略",
+        "api-client"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/agnes.js:queryVideo",
+      "type": "function",
+      "name": "queryVideo",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        357,
+        365
+      ],
+      "summary": "GET {rootBase}/agnesapi?video_id= 查询视频任务状态；2.5 系 keyframe/reference 模式必须附带 model_name 才能查到，v2.0 记录一并传也无副作用。",
+      "tags": [
+        "api-client",
+        "视频生成",
+        "状态查询"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:extractVideoUrl",
+      "type": "function",
+      "name": "extractVideoUrl",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        368,
+        371
+      ],
+      "summary": "从查询结果中提取成品视频地址，兼容 2.5 的 metadata.url 与 v2.0 的 remixed_from_video_id / video_url / output_url / url 多种字段形态。",
+      "tags": [
+        "utility",
+        "视频生成",
+        "兼容性"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:buildSafeStatusUpdate",
+      "type": "function",
+      "name": "buildSafeStatusUpdate",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        380,
+        413
+      ],
+      "summary": "状态机保护：把 Agnes 查询结果转成可安全写库的字段集——只有明确 failed 才标失败，completed 但缺地址标 video_url_missing，未知状态不动状态只存原始响应，避免误判把好任务标死。",
+      "tags": [
+        "状态机",
+        "validation",
+        "视频生成",
+        "容错"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/agnes.js:downloadVideo",
+      "type": "function",
+      "name": "downloadVideo",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        416,
+        430
+      ],
+      "summary": "带 Bearer 头下载成品视频到本地文件；2.5 任务刚完成时 CDN 会瞬时 401/404，等待 5 秒后自动重试一次再报错，5 分钟超时。",
+      "tags": [
+        "视频下载",
+        "api-client",
+        "重试"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:listModels",
+      "type": "function",
+      "name": "listModels",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        439,
+        450
+      ],
+      "summary": "读取 OpenAI 兼容的 GET /v1/models 动态模型目录；属可选能力，接口不存在或临时失败不影响已有模型与生成流程。",
+      "tags": [
+        "api-client",
+        "模型目录",
+        "可选能力"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/agnes.js:testConnection",
+      "type": "function",
+      "name": "testConnection",
+      "filePath": "lib/agnes.js",
+      "lineRange": [
+        453,
+        475
+      ],
+      "summary": "设置页的连通性测试：按 text/image/video 三种 kind 分别探测对应端点，视频接口只要不是 401 即使参数报错也视为可达。",
+      "tags": [
+        "诊断",
+        "api-client",
+        "连通性测试"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:lib/poller.js",
+      "type": "file",
+      "name": "poller.js",
+      "filePath": "lib/poller.js",
+      "summary": "服务端视频任务轮询调度器 + SSE 广播总线：把原版的浏览器轮询搬到本机，关页面也能继续查状态；通过 setTimeout 链按设置间隔轮询 agnes.queryVideo 并回写 store，完成时可自动落盘视频，重启后 resume() 捡回未跑完的任务。",
+      "tags": [
+        "service",
+        "轮询调度",
+        "sse",
+        "event-handler",
+        "后台任务"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "store 不在模块顶部 require，而是经 init(s) 依赖注入，避免与 store 初始化顺序耦合；定时器 t.unref() 保证轮询不阻止进程退出。"
+    },
+    {
+      "id": "function:lib/poller.js:bus",
+      "type": "function",
+      "name": "bus",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        23,
+        35
+      ],
+      "summary": "创建 SSE 事件广播总线：维护已连接的 res 响应集合，emit 时把事件序列化为 event/data 帧逐个写入，写失败即剔除断开的连接。",
+      "tags": [
+        "sse",
+        "event-handler",
+        "广播"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:pushLog",
+      "type": "function",
+      "name": "pushLog",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        39,
+        43
+      ],
+      "summary": "向日志环形缓冲（上限 200 条）追加带时间戳的条目，并同步通过 SSE 的 log 事件推给前端。",
+      "tags": [
+        "日志",
+        "sse",
+        "event-handler"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:stop",
+      "type": "function",
+      "name": "stop",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        59,
+        64
+      ],
+      "summary": "停止指定素材的轮询：清除其 setTimeout 定时器并删除计数，使任务退出调度。",
+      "tags": [
+        "轮询调度",
+        "清理",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:pollOnce",
+      "type": "function",
+      "name": "pollOnce",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        67,
+        77
+      ],
+      "summary": "对单个视频资产查询一次远端状态：调 agnes.queryVideo 取结果，经 buildSafeStatusUpdate 转成安全字段后 store.update 落库，并通过 SSE 的 video 事件广播合并后的记录。",
+      "tags": [
+        "轮询调度",
+        "状态查询",
+        "event-handler"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:run",
+      "type": "function",
+      "name": "run",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        85,
+        124
+      ],
+      "summary": "轮询主循环：校验资产仍在活跃状态否则停止；超过最大轮询次数标 poll_timeout；查询成功且 completed 有地址则停止并触发自动下载，failed/video_url_missing 即停；单次查询异常不改状态留待下一轮，末尾计数加一并按设置间隔排下一次。",
+      "tags": [
+        "轮询调度",
+        "状态机",
+        "后台任务",
+        "容错"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/poller.js:maybeAutoDownload",
+      "type": "function",
+      "name": "maybeAutoDownload",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        127,
+        142
+      ],
+      "summary": "设置开启「自动保存视频」时，把远端成品 URL 下载到 store.videosDir() 下的 {id}.mp4，回写 local_file 字段并广播；失败只记 warn 日志不中断流程，防止远端链接过期丢片。",
+      "tags": [
+        "视频下载",
+        "自动化",
+        "容错"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:watch",
+      "type": "function",
+      "name": "watch",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        144,
+        151
+      ],
+      "summary": "让某个视频资产进入轮询监控：仅当资产存在、状态活跃且尚未被跟踪时，重置计数并按间隔（immediate 则 500ms 后）排入首轮。",
+      "tags": [
+        "轮询调度",
+        "任务注册",
+        "api-handler"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:resume",
+      "type": "function",
+      "name": "resume",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        154,
+        158
+      ],
+      "summary": "服务启动时把 store 中所有仍处于活跃状态的视频资产重新纳入轮询，让上次没跑完的任务无缝续查，返回捡回的任务数。",
+      "tags": [
+        "轮询调度",
+        "恢复",
+        "启动"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/poller.js:init",
+      "type": "function",
+      "name": "init",
+      "filePath": "lib/poller.js",
+      "lineRange": [
+        160,
+        163
+      ],
+      "summary": "注入 store 实例完成 poller 初始化（打破与数据层的加载顺序耦合），并返回 resume/watch/stop/pollOnce/events/log 等操作句柄。",
+      "tags": [
+        "初始化",
+        "依赖注入",
+        "factory"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:lib/store.js",
+      "type": "file",
+      "name": "store.js",
+      "filePath": "lib/store.js",
+      "summary": "本地 JSON 数据层，替代原 Supabase 云端库：8 个集合（projects/scripts/storyboards/image_assets/video_assets 等）全内存读写，写盘走「临时文件 + rename」原子替换并留 .bak 备份可自动回滚，设置与模型目录各有独立文件。对外提供 CRUD、设置脱敏、模型清单归一化、全量导入导出与统计的完整 API。",
+      "tags": [
+        "data-model",
+        "持久化",
+        "serialization",
+        "storage",
+        "singleton"
+      ],
+      "complexity": "complex",
+      "languageNotes": "所有写盘通过 writeQueue promise 链串行化，避免并发请求互相覆盖；主文件 JSON 解析失败时自动读取 .bak 上一版回滚。"
+    },
+    {
+      "id": "function:lib/store.js:EMPTY",
+      "type": "function",
+      "name": "EMPTY",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        30,
+        39
+      ],
+      "summary": "构造全新的空数据集：为 8 个集合各返回一个空数组，是数据库初始化与测试重置的基准形状。",
+      "tags": [
+        "data-model",
+        "factory",
+        "初始化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:uid",
+      "type": "function",
+      "name": "uid",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        52,
+        58
+      ],
+      "summary": "生成 36 进制本地唯一 ID：时间戳 + 循环自增序号 + 随机段拼合，带集合前缀便于肉眼识别记录类型。",
+      "tags": [
+        "utility",
+        "唯一标识",
+        "序列化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:writeJsonAtomic",
+      "type": "function",
+      "name": "writeJsonAtomic",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        62,
+        71
+      ],
+      "summary": "原子写 JSON 文件：先写进程号后缀的 .tmp，把旧文件复制为 .bak，再 renameSync 一步替换，断电也不会留下半个文件。",
+      "tags": [
+        "持久化",
+        "原子写",
+        "可靠性"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:readJson",
+      "type": "function",
+      "name": "readJson",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        73,
+        87
+      ],
+      "summary": "读 JSON 文件，解析失败时自动回退读取 .bak 上一版备份，仍坏则返回 fallback——主文件损坏的自愈路径。",
+      "tags": [
+        "持久化",
+        "容错",
+        "回滚"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:init",
+      "type": "function",
+      "name": "init",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        90,
+        102
+      ],
+      "summary": "以 home 目录初始化数据层：建目录并加载 db.json / settings.json / models.json 三份文件到内存，补齐缺失集合与模型缓存的合法形状，返回内存句柄。",
+      "tags": [
+        "初始化",
+        "持久化",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:persist",
+      "type": "function",
+      "name": "persist",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        111,
+        116
+      ],
+      "summary": "把内存数据库 MEM 原子写入 db.json，所有写盘挂在同一条 writeQueue promise 链上串行执行，避免并发互相覆盖。",
+      "tags": [
+        "持久化",
+        "串行化",
+        "并发控制"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:list",
+      "type": "function",
+      "name": "list",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        131,
+        139
+      ],
+      "summary": "集合查询接口：支持 filter/sort/limit 选项，缺省按 created_at 倒序，返回副本数组防止调用方直接改内存。",
+      "tags": [
+        "crud",
+        "查询",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:get",
+      "type": "function",
+      "name": "get",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        141,
+        144
+      ],
+      "summary": "按 id 从集合内存数组中查找单条记录，找不到返回 null。",
+      "tags": [
+        "crud",
+        "查询",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:insert",
+      "type": "function",
+      "name": "insert",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        146,
+        158
+      ],
+      "summary": "向集合插入一条记录：自动补 uid 主键与 created_at/updated_at 时间戳，头插进内存数组后触发落盘并返回完整记录。",
+      "tags": [
+        "crud",
+        "写入",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:insertMany",
+      "type": "function",
+      "name": "insertMany",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        160,
+        171
+      ],
+      "summary": "批量插入：为每行补 id 与时间戳后整体前置拼入集合并一次落盘，返回插入的记录数组。",
+      "tags": [
+        "crud",
+        "批量写入",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:update",
+      "type": "function",
+      "name": "update",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        173,
+        182
+      ],
+      "summary": "按 id 定位记录并以 patch 浅合并出新对象替换原位置，原记录带 updated_at 时顺带刷新时间戳，返回合并后的新记录。",
+      "tags": [
+        "crud",
+        "更新",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:remove",
+      "type": "function",
+      "name": "remove",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        184,
+        190
+      ],
+      "summary": "按 id 删除集合中的一条记录并落盘，返回是否确实删除了记录。",
+      "tags": [
+        "crud",
+        "删除",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:removeWhere",
+      "type": "function",
+      "name": "removeWhere",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        192,
+        198
+      ],
+      "summary": "按谓词函数批量删除集合记录（如按 project_id 级联清理），返回删除条数。",
+      "tags": [
+        "crud",
+        "批量删除",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:count",
+      "type": "function",
+      "name": "count",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        200,
+        203
+      ],
+      "summary": "返回集合的记录数，可传 filterFn 做条件计数。",
+      "tags": [
+        "crud",
+        "统计",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:getSettings",
+      "type": "function",
+      "name": "getSettings",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        225,
+        229
+      ],
+      "summary": "读取运行时设置：用户已存值覆盖 SETTING_DEFAULTS 默认值后整体返回，是 agnes/poller 等模块取 API 地址、Key 与轮询参数的唯一入口。",
+      "tags": [
+        "配置",
+        "settings",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:getSettingsMasked",
+      "type": "function",
+      "name": "getSettingsMasked",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        232,
+        239
+      ],
+      "summary": "返回给前端的脱敏设置：API Key 永不下发明文，以 ***configured*** 标记加 maskKey 部分掩码替代，落实「Key 只存本机」的安全边界。",
+      "tags": [
+        "安全",
+        "配置",
+        "脱敏"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:maskKey",
+      "type": "function",
+      "name": "maskKey",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        241,
+        246
+      ],
+      "summary": "对密钥字符串做显示掩码：保留首 4 位与末 4 位、中间以 **** 代替，短 key 只留前 2 位。",
+      "tags": [
+        "安全",
+        "utility",
+        "脱敏"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:setSettings",
+      "type": "function",
+      "name": "setSettings",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        248,
+        255
+      ],
+      "summary": "更新设置：只接受 SETTING_DEFAULTS 中已声明的键、值统一转字符串存储，写入后原子落盘 settings.json 并返回最新全量设置。",
+      "tags": [
+        "配置",
+        "settings",
+        "validation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:normalizeModel",
+      "type": "function",
+      "name": "normalizeModel",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        264,
+        287
+      ],
+      "summary": "把 Agnes 返回的单条模型元数据归一为 {id, name, kind, owned_by, capabilities, modalities}；kind 缺失时用中英文正则启发式从 id/名称/能力字段推断 text/image/video 分类。",
+      "tags": [
+        "data-transformation",
+        "模型目录",
+        "启发式分类"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/store.js:normalizeModels",
+      "type": "function",
+      "name": "normalizeModels",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        289,
+        304
+      ],
+      "summary": "兼容裸数组与 data/models/items 三种包裹形态解析模型列表，逐条归一、按 id 去重并按字母序排序。",
+      "tags": [
+        "data-transformation",
+        "模型目录",
+        "兼容性"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:getModels",
+      "type": "function",
+      "name": "getModels",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        306,
+        314
+      ],
+      "summary": "返回本机模型目录缓存快照（version/updated_at/source/error/models），数组做拷贝防止外部改动内存缓存。",
+      "tags": [
+        "模型目录",
+        "缓存",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:setModels",
+      "type": "function",
+      "name": "setModels",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        316,
+        327
+      ],
+      "summary": "用远端拉回的 payload 重建模型缓存：归一化后连同更新时间与来源写入 MODEL_CACHE，异步串行落盘独立的 models.json（升级程序不会覆盖），返回最新快照。",
+      "tags": [
+        "模型目录",
+        "缓存",
+        "持久化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:setModelCacheError",
+      "type": "function",
+      "name": "setModelCacheError",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        329,
+        336
+      ],
+      "summary": "模型拉取失败时把错误信息写入 MODEL_CACHE.error 并落盘，保留既有模型清单不清空，供前端提示上次失败原因。",
+      "tags": [
+        "模型目录",
+        "错误处理",
+        "缓存"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:modelsNeedRefresh",
+      "type": "function",
+      "name": "modelsNeedRefresh",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        338,
+        346
+      ],
+      "summary": "按 auto_refresh_models 开关与 model_cache_ttl_hours（默认 24 小时）判断模型目录缓存是否过期需要重新拉取。",
+      "tags": [
+        "模型目录",
+        "缓存失效",
+        "ttl"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:exportAll",
+      "type": "function",
+      "name": "exportAll",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        349,
+        351
+      ],
+      "summary": "导出全库快照：version + 导出时间戳 + 全部集合成一个 JSON 对象，供用户备份或从本机迁移。",
+      "tags": [
+        "导入导出",
+        "备份",
+        "serialization"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:importAll",
+      "type": "function",
+      "name": "importAll",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        353,
+        376
+      ],
+      "summary": "从外部 payload 导入数据，merge 模式按 id 去重增量合并，replace 模式整表替换（未提供的集合也一并清空以支持「清空全部数据」），完成后落盘并返回新增条数。",
+      "tags": [
+        "导入导出",
+        "数据迁移",
+        "merge"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/store.js:exportProject",
+      "type": "function",
+      "name": "exportProject",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        379,
+        395
+      ],
+      "summary": "导出单个项目及其全部关联数据（剧本、分镜按集数与排序号排好、图片/视频资产、生成任务），用于「导出资料」打包分享。",
+      "tags": [
+        "导入导出",
+        "data-model",
+        "项目打包"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/store.js:stats",
+      "type": "function",
+      "name": "stats",
+      "filePath": "lib/store.js",
+      "lineRange": [
+        397,
+        416
+      ],
+      "summary": "汇总首页仪表盘统计：项目总数/活跃数、今日图片与视频产出、失败任务数、收藏数、分镜总数与在途视频数（按状态与 local_status 双口径判定）。",
+      "tags": [
+        "统计",
+        "仪表盘",
+        "data-access"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/knowledge-graph/README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "docs/knowledge-graph/README.md",
+      "summary": "知识图谱目录的说明与阅读入口：解释 knowledge-graph.json（唯一数据源）→ graph.data.js（由 tools/build-graph-data.mjs 生成）→ viewer.html（交互式图谱）三件套的工作流，并用四幅 mermaid 图概括后端模块依赖、前端 ESM 结构、创作链路数据流与持久化布局。",
+      "tags": [
+        "documentation",
+        "知识图谱",
+        "架构总览",
+        "阅读指南",
+        "entry-point"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "末节\"数据从哪里来\"给出 grep 路由表、require 链等可复核线索，声明图谱与代码注释同源，属于文档可追溯性（traceability）实践。"
+    },
+    {
+      "id": "config:docs/knowledge-graph/knowledge-graph.json",
+      "type": "config",
+      "name": "knowledge-graph.json",
+      "filePath": "docs/knowledge-graph/knowledge-graph.json",
+      "summary": "项目知识图谱的唯一数据源（机器可读数据文件）：含 meta 统计（73 节点 / 177 边）、11 种节点类型的图例配色定义，以及覆盖前端页面 → REST API → 后端 lib 模块 → JSON 数据层 → Agnes 云端接口完整链路的 nodes/edges 枚举。",
+      "tags": [
+        "configuration",
+        "data-source",
+        "知识图谱",
+        "serialization",
+        "data-pipeline"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "1434 行为平坦的节点/边数组枚举，内部条目不展开为分析节点；本批次仅为其建立单个 config 节点。"
+    },
+    {
+      "id": "file:docs/knowledge-graph/viewer.html",
+      "type": "file",
+      "name": "viewer.html",
+      "filePath": "docs/knowledge-graph/viewer.html",
+      "summary": "零依赖单文件交互式图谱浏览器：内嵌原生 Canvas 力导向模拟（O(n²) 斥力 + 弹簧 + 向心力），读取 graph.data.js 渲染知识图谱，支持拖拽平移、滚轮缩放、拖动节点、点击查看详情、双击聚焦一跳邻域、图例按类型过滤与节点搜索，双击即可在 file:// 下打开无需起服务。",
+      "tags": [
+        "visualization",
+        "force-directed-layout",
+        "canvas",
+        "standalone-viewer",
+        "无构建"
+      ],
+      "complexity": "complex",
+      "languageNotes": "通过 <script src=\"./graph.data.js\"> 以全局变量注入数据而非 fetch——因为 file:// 协议下浏览器禁止 fetch 本地 JSON；渲染循环用 requestAnimationFrame 驱动，并在首绘前预热 260 个物理 tick 让布局先收敛。"
+    },
+    {
+      "id": "file:.understand-anything/.understandignore",
+      "type": "file",
+      "name": ".understandignore",
+      "filePath": ".understand-anything/.understandignore",
+      "summary": "Understand-Anything 分析工具的忽略清单（.gitignore 语法），当前全部条目均为注释掉的建议项，未实际排除任何文件。",
+      "tags": [
+        "configuration",
+        "工具配置",
+        "ignore-list"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:.understand-anything/config.json",
+      "type": "config",
+      "filePath": ".understand-anything/config.json",
+      "summary": "Understand-Anything 工具的项目级配置，声明输出语言为中文（zh），控制知识图谱生成时所有文案的语言。",
+      "tags": [
+        "configuration",
+        "i18n",
+        "工具配置"
+      ],
+      "complexity": "simple",
+      "name": "config.json"
+    },
+    {
+      "id": "document:docs/issues.md",
+      "type": "document",
+      "filePath": "docs/issues.md",
+      "summary": "项目问题清单与修复记录：三轮审计（用户报告问题、UI/UX 走查、Agnes Video 2.5 新协议适配）的逐条根因、修复方式与验证数据，并附结构性观察（数据流、异步闭环、批量链路、SEA 形态、测试金字塔）。",
+      "tags": [
+        "documentation",
+        "问题追踪",
+        "审计记录",
+        "架构观察"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "第四节的结构性观察是理解本项目分层与异步链路的最佳入口：前端 api.js → routes.js dispatch → store.js 落盘，视频轮询经 poller 事件总线走 SSE 推给前端。",
+      "name": "issues.md"
+    },
+    {
+      "id": "file:docs/knowledge-graph/graph.data.js",
+      "type": "file",
+      "filePath": "docs/knowledge-graph/graph.data.js",
+      "summary": "由 tools/build-graph-data.mjs 从 knowledge-graph.json 生成的图谱数据文件，以 window.GRAPH 全局变量形式内嵌 JSON，供 viewer.html 在 file:// 协议下双击直接打开。",
+      "tags": [
+        "数据文件",
+        "知识图谱",
+        "生成产物"
+      ],
+      "complexity": "simple",
+      "languageNotes": "用 script 标签注入全局变量而非 fetch JSON，是为了绕开 file:// 协议下浏览器对本地 fetch 的 CORS 限制。",
+      "name": "graph.data.js"
+    },
+    {
+      "id": "file:lib/jobs.js",
+      "type": "file",
+      "filePath": "lib/jobs.js",
+      "summary": "批量生成任务队列：内存 Map 存任务，run() 以可配置并发上限（1–8）跑 worker 池，单项失败不中断整批，支持取消标记与保留最近 50 条历史的 prune 回收。",
+      "tags": [
+        "任务队列",
+        "并发",
+        "service",
+        "内存存储",
+        "tested"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "进度实时写入内存对象，前端通过 SSE 的 batch 事件或 /api/batch/:id 轮询双通道获取，进程重启即清空——批量任务是纯内存态。",
+      "name": "jobs.js"
+    },
+    {
+      "id": "file:lib/routes.js",
+      "type": "file",
+      "filePath": "lib/routes.js",
+      "summary": "全部 /api/* 接口的路由表：createRoutes(ctx) 工厂注入 store/agnes/poller/jobs 四个依赖，内部用 on(method, pattern, handler) 注册约 50 条 REST 路由，涵盖项目/剧本/分镜/图片/视频/任务/模板/批量/导入导出，末尾返回 dispatch 等运行时句柄。",
+      "tags": [
+        "api-handler",
+        "路由",
+        "entry-point",
+        "rest-api",
+        "tested"
+      ],
+      "complexity": "complex",
+      "languageNotes": "零框架手写路由：match() 按 / 分段做 :param 模式匹配；批量路由通过 fetchInternal 直接调用本文件其他 handler，避免 HTTP 自环。视频提交超时不判失败（标记 submit_timeout_unknown 让用户核对账单后补录 video_id），防止重复扣费。",
+      "name": "routes.js"
+    },
+    {
+      "id": "file:lib/seed.js",
+      "type": "file",
+      "filePath": "lib/seed.js",
+      "summary": "首次运行的种子数据：内置 9 类漫剧创作提示词模板（故事构思、分集大纲、分镜脚本、脚本优化等），seedTemplates() 按 key 幂等写入 prompt_templates 集合。",
+      "tags": [
+        "seed-data",
+        "提示词模板",
+        "data-model",
+        "tested"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "模板正文中的 {{变量}} 占位符由前端按 template_type 渲染成输入框，实现提示词集中管理、改文案不用翻代码。",
+      "name": "seed.js"
+    },
+    {
+      "id": "config:package.json",
+      "type": "config",
+      "filePath": "package.json",
+      "summary": "零运行时依赖的项目清单：入口 server.js，scripts 提供 start 与四套测试（selftest/apitest/uitest/browser-test）加 run-all 汇总及 exe 打包命令，要求 Node >= 20.6（SEA 能力）。",
+      "tags": [
+        "configuration",
+        "npm",
+        "build-system",
+        "entry-point"
+      ],
+      "complexity": "simple",
+      "name": "package.json"
+    },
+    {
+      "id": "file:public/css/app.css",
+      "type": "file",
+      "filePath": "public/css/app.css",
+      "summary": "全站设计系统：黑金配色（背景 #08090D + 金色渐变 #D6B56D/#F5D58A）的 CSS 变量令牌层，加侧边栏、卡片、按钮、表单、表格、弹窗、toast 等全部组件样式，走高端 Mac 创作软件（Final Cut Pro / Logic Pro）风格。",
+      "tags": [
+        "样式",
+        "design-system",
+        "css-variables",
+        "frontend",
+        "tested"
+      ],
+      "complexity": "complex",
+      "languageNotes": "灰阶文字令牌整体提亮以保证 11–13px 次要文字通过 WCAG AA 4.5 对比度；玻璃拟态（backdrop-filter: blur）与 prefers-reduced-motion 降级都在此文件统一处理。",
+      "name": "app.css"
+    },
+    {
+      "id": "file:public/index.html",
+      "type": "file",
+      "filePath": "public/index.html",
+      "summary": "SPA 页面外壳：内联 SVG favicon，挂载 sidebar、#view、#toasts、#modal-root 四个容器，以 type=\"module\" 加载 public/js/app.js，其余全部由前端路由渲染。",
+      "tags": [
+        "entry-point",
+        "html",
+        "spa-shell",
+        "frontend",
+        "tested"
+      ],
+      "complexity": "simple",
+      "name": "index.html"
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "filePath": "README.md",
+      "summary": "项目总览文档：功能清单、Windows 单文件版与源码运行两种启动方式、数据与安全边界（仅监听 127.0.0.1、Origin 校验、Key 脱敏）、动态模型目录协议、四套测试与 exe 打包命令、目录结构说明。",
+      "tags": [
+        "documentation",
+        "entry-point",
+        "overview",
+        "快速开始"
+      ],
+      "complexity": "moderate",
+      "name": "README.md"
+    },
+    {
+      "id": "file:server.js",
+      "type": "file",
+      "filePath": "server.js",
+      "summary": "本地 HTTP 服务入口（零依赖 node:http）：兼容源码运行与 Node SEA 单文件 exe 双形态（启动时把内嵌的 lib/、public/ 资源释放到可写数据目录），负责静态托管、/api/* 分发、SSE 事件通道、素材文件的防穿越下载与端口自动递增监听。",
+      "tags": [
+        "entry-point",
+        "http-server",
+        "middleware",
+        "sea",
+        "static-serving",
+        "tested"
+      ],
+      "complexity": "complex",
+      "languageNotes": "SEA 主脚本内相对 require 会被解析为内置模块名，因此用 createRequire(绝对路径) 动态加载 lib 模块；写操作强制校验 Origin 仅限本机，防止任意网页静默删数据；监听失败自动换端口最多重试 40 次。",
+      "name": "server.js"
+    },
+    {
+      "id": "file:tools/apitest.mjs",
+      "type": "file",
+      "filePath": "tools/apitest.mjs",
+      "summary": "接口端到端测试：自起一个 mock Agnes 服务（假文本/假图片/假视频任务，含 2.5 与 2.0 查询协议对照），spawn 真实 server.js 指向它，在不联网不花钱的前提下跑完「生成→落盘→轮询→完成→下载」全链路并断言重试、超时与路径穿越防护行为。",
+      "tags": [
+        "test",
+        "integration-test",
+        "mock-server",
+        "e2e"
+      ],
+      "complexity": "complex",
+      "name": "apitest.mjs"
+    },
+    {
+      "id": "file:tools/browser-test.mjs",
+      "type": "file",
+      "filePath": "tools/browser-test.mjs",
+      "summary": "真实浏览器冒烟测试：spawn server.js 与 headless Chrome/Edge，通过自实现的轻量 CDP WebSocket 客户端验证页面非白屏、九条路由可切换、创建项目真实落盘，并要求控制台错误与 unhandledrejection 为零；找不到浏览器则跳过不算失败。",
+      "tags": [
+        "test",
+        "browser-automation",
+        "cdp",
+        "smoke-test"
+      ],
+      "complexity": "complex",
+      "name": "browser-test.mjs"
+    },
+    {
+      "id": "file:tools/build-exe.mjs",
+      "type": "file",
+      "filePath": "tools/build-exe.mjs",
+      "summary": "Windows 单文件 exe 构建脚本（Node SEA 五步流程）：校验 Node >= 20.6，把 server.js 打进 blob 并内嵌 lib/、public/ 全部资源，生成 sea-config.json，用 postject 把 blob 注入托管 Node 运行时，产物输出到 dist/。",
+      "tags": [
+        "build-system",
+        "打包",
+        "node-sea",
+        "deployment"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "从 exe 副本中用 NODE_SEA_FUSE 十六进制模式定位 fuse 注入点；postject 依赖不在 package.json，而是从外部 workspace 路径 createRequire 加载。",
+      "name": "build-exe.mjs"
+    },
+    {
+      "id": "file:tools/build-graph-data.mjs",
+      "type": "file",
+      "filePath": "tools/build-graph-data.mjs",
+      "summary": "知识图谱数据转换器：读 docs/knowledge-graph/knowledge-graph.json，先做引用完整性体检（悬空边、重复节点 id、孤立节点），通过则生成 graph.data.js 并回写 stats 计数。",
+      "tags": [
+        "工具脚本",
+        "知识图谱",
+        "validation",
+        "code-generation"
+      ],
+      "complexity": "simple",
+      "name": "build-graph-data.mjs"
+    },
+    {
+      "id": "file:tools/run-all.mjs",
+      "type": "file",
+      "filePath": "tools/run-all.mjs",
+      "summary": "测试总入口：串行 spawn selftest、apitest、uitest、browser-test 四个脚本，汇总失败数决定退出码。",
+      "tags": [
+        "test",
+        "工具脚本",
+        "orchestration",
+        "ci-cd"
+      ],
+      "complexity": "simple",
+      "name": "run-all.mjs"
+    },
+    {
+      "id": "file:tools/selftest.mjs",
+      "type": "file",
+      "filePath": "tools/selftest.mjs",
+      "summary": "离线单元自检（约 113 条断言）：用临时目录初始化 store，覆盖数据层 CRUD、设置脱敏、导入导出、agnes URL 归一化与视频状态机、批量队列并发/取消、seedTemplates 幂等与 routes dispatch 全表路由。",
+      "tags": [
+        "test",
+        "unit-test",
+        "离线",
+        "validation"
+      ],
+      "complexity": "complex",
+      "name": "selftest.mjs"
+    },
+    {
+      "id": "file:tools/uitest.mjs",
+      "type": "file",
+      "filePath": "tools/uitest.mjs",
+      "summary": "前端静态一致性检查（约 390 条断言）：不依赖 jsdom，用正则扫描 public/ 抓四类静默失败——import 不存在的符号、icon() 名字写错、api.xxx() 方法拼错、index.html/CSS 资源 404，并校验设计令牌与九页路由齐全。",
+      "tags": [
+        "test",
+        "static-analysis",
+        "frontend",
+        "validation"
+      ],
+      "complexity": "complex",
+      "name": "uitest.mjs"
+    },
+    {
+      "id": "function:lib/jobs.js:create",
+      "type": "function",
+      "name": "create",
+      "filePath": "lib/jobs.js",
+      "lineRange": [
+        14,
+        25
+      ],
+      "summary": "创建批量任务：生成 job_时间戳_随机 形式的 id，初始化计数、状态与结果数组后存入内存 Map 并返回任务对象。",
+      "tags": [
+        "任务队列",
+        "factory",
+        "初始化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/jobs.js:get",
+      "type": "function",
+      "name": "get",
+      "filePath": "lib/jobs.js",
+      "lineRange": [
+        27,
+        27
+      ],
+      "summary": "按 id 从内存 Map 取任务，不存在返回 null。",
+      "tags": [
+        "任务队列",
+        "查询"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/jobs.js:list",
+      "type": "function",
+      "name": "list",
+      "filePath": "lib/jobs.js",
+      "lineRange": [
+        28,
+        28
+      ],
+      "summary": "列出内存中最近 50 个任务，供 /api/batch 接口展示历史。",
+      "tags": [
+        "任务队列",
+        "查询"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/jobs.js:run",
+      "type": "function",
+      "name": "run",
+      "filePath": "lib/jobs.js",
+      "lineRange": [
+        37,
+        73
+      ],
+      "summary": "队列核心：把并发钳制在 1–8，起等量个 loop 协程从共享游标取任务项跑 worker，单项异常只计失败不中断，每次完成回调 onProgress，结束后按取消标记落 done/cancelled 状态。",
+      "tags": [
+        "并发",
+        "任务队列",
+        "worker-pool"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:lib/jobs.js:cancel",
+      "type": "function",
+      "name": "cancel",
+      "filePath": "lib/jobs.js",
+      "lineRange": [
+        75,
+        80
+      ],
+      "summary": "按 id 置任务取消标记（跑完当前项即停），任务不存在返回 false。",
+      "tags": [
+        "任务队列",
+        "取消"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/jobs.js:prune",
+      "type": "function",
+      "name": "prune",
+      "filePath": "lib/jobs.js",
+      "lineRange": [
+        83,
+        89
+      ],
+      "summary": "只保留最近 50 个任务，删除更早且非 running 的条目，防止长时间运行堆积内存历史。",
+      "tags": [
+        "内存管理",
+        "任务队列",
+        "垃圾回收"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:createRoutes",
+      "type": "function",
+      "name": "createRoutes",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        20,
+        959
+      ],
+      "summary": "路由工厂：接收 { store, agnes, poller, jobs, version } 上下文，注册约 50 条 /api/* 路由（系统/设置/模型、项目、剧本、分镜、图片素材、视频任务、生成历史、模板、Agnes 文本图片直调、批量队列、导入导出、日志），返回 { dispatch, httpError, saveImageBase64, fetchRemoteImage, safeName, refreshModels }。",
+      "tags": [
+        "api-handler",
+        "factory",
+        "依赖注入",
+        "路由"
+      ],
+      "complexity": "complex",
+      "languageNotes": "依赖全部经 ctx 注入而非 require，使 selftest 能传 fake poller 做纯离线测试，也让 server.js 可用 createRequire 满足 SEA 加载。"
+    },
+    {
+      "id": "function:lib/routes.js:match",
+      "type": "function",
+      "name": "match",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        34,
+        44
+      ],
+      "summary": "手写路径模式匹配：按 / 分段对齐 pathname 与 pattern，:param 段解码后收集进 params，长度或字面段不符返回 null。",
+      "tags": [
+        "路由",
+        "utility",
+        "url-matching"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:safeName",
+      "type": "function",
+      "name": "safeName",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        54,
+        59
+      ],
+      "summary": "素材文件名清洗：剥目录、把 Windows/Linux 非法字符替换为下划线，空名退化成时间戳名，并按需补齐扩展名。",
+      "tags": [
+        "utility",
+        "sanitization",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:saveImageBase64",
+      "type": "function",
+      "name": "saveImageBase64",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        62,
+        70
+      ],
+      "summary": "把 base64 图片按 mime 推断扩展名落盘到本地 images 目录，返回 { file, url }（url 为 /assets/images/ 相对地址）。",
+      "tags": [
+        "filesystem",
+        "image",
+        "落盘"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:fetchRemoteImage",
+      "type": "function",
+      "name": "fetchRemoteImage",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        73,
+        89
+      ],
+      "summary": "把远端图片（Agnes 返回的会过期 URL）抓到本地落盘，60 秒超时，失败静默返回 null 由调用方退回用远端地址。",
+      "tags": [
+        "network",
+        "image",
+        "local-first"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:refreshModels",
+      "type": "function",
+      "name": "refreshModels",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        120,
+        135
+      ],
+      "summary": "刷新动态模型目录：调 agnes.listModels 并归一化，成功写 store 缓存；返回空或抛错时保留上一次成功目录并记录 modelCacheError，保证前端下拉框不清空。",
+      "tags": [
+        "模型目录",
+        "缓存",
+        "降级"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:storyboardRow",
+      "type": "function",
+      "name": "storyboardRow",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        288,
+        310
+      ],
+      "summary": "分镜行归一化：把任意来源的字段按类型 str/num 清洗并补默认值（默认负面提示词、pending 状态、sort_order），供单条与批量创建共用。",
+      "tags": [
+        "serialization",
+        "data-model",
+        "分镜",
+        "normalization"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:httpError",
+      "type": "function",
+      "name": "httpError",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        941,
+        945
+      ],
+      "summary": "构造带 statusCode 的 Error，由 server.js 顶层 catch 转成对应 HTTP 状态码的 JSON 响应。",
+      "tags": [
+        "utility",
+        "error-handling",
+        "http"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/routes.js:dispatch",
+      "type": "function",
+      "name": "dispatch",
+      "filePath": "lib/routes.js",
+      "lineRange": [
+        948,
+        956
+      ],
+      "summary": "路由分发器：顺序扫描路由表，match 命中且 method 相符就执行 handler 并返回其结果；全部不命中返回 undefined 让 server 层回 404。",
+      "tags": [
+        "路由",
+        "dispatcher",
+        "api-handler"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:lib/seed.js:seedTemplates",
+      "type": "function",
+      "name": "seedTemplates",
+      "filePath": "lib/seed.js",
+      "lineRange": [
+        182,
+        195
+      ],
+      "summary": "幂等种子写入：收集已有模板的 key 集合，只补插 DEFAULT_TEMPLATES 中缺失的条目并标记 is_builtin，返回新写入条数。",
+      "tags": [
+        "seed-data",
+        "幂等",
+        "初始化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:server.js:resolveHome",
+      "type": "function",
+      "name": "resolveHome",
+      "filePath": "server.js",
+      "lineRange": [
+        38,
+        50
+      ],
+      "summary": "解析 exe 形态的运行期可写数据目录：优先 AGNES_STUDIO_HOME 环境变量，exe 旁有 portable 文件则同级 data/，否则按 win32/darwin/Linux 各自的标准应用数据目录。",
+      "tags": [
+        "filesystem",
+        "platform",
+        "初始化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:server.js:materializeAssets",
+      "type": "function",
+      "name": "materializeAssets",
+      "filePath": "server.js",
+      "lineRange": [
+        58,
+        74
+      ],
+      "summary": "SEA 形态资源释放：比对 .assets-version 戳，把内嵌 blob 中 public/ 与 lib/ 前缀的资产写到数据目录并盖版本戳；源码形态直接跳过。",
+      "tags": [
+        "sea",
+        "资源释放",
+        "初始化"
+      ],
+      "complexity": "simple",
+      "languageNotes": "sea.getAsset() 返回 ArrayBuffer，必须 Buffer.from 包一层才能写文件；改前端后需递增 ASSETS_VERSION 否则 exe 用户拿不到新页面。"
+    },
+    {
+      "id": "function:server.js:readBody",
+      "type": "function",
+      "name": "readBody",
+      "filePath": "server.js",
+      "lineRange": [
+        138,
+        154
+      ],
+      "summary": "以 Promise 聚合请求体 chunk，超过字节上限立即 reject 并销毁连接，防大包打爆内存。",
+      "tags": [
+        "http",
+        "stream",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:server.js:originOk",
+      "type": "function",
+      "name": "originOk",
+      "filePath": "server.js",
+      "lineRange": [
+        160,
+        169
+      ],
+      "summary": "写操作 Origin 校验：只放行 localhost/127.0.0.1/::1 来源，无 Origin 头（curl、程序自身）放行，挡掉任意网页跨站静默删用户数据。",
+      "tags": [
+        "security",
+        "csrf",
+        "http"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:server.js:serveStatic",
+      "type": "function",
+      "name": "serveStatic",
+      "filePath": "server.js",
+      "lineRange": [
+        195,
+        217
+      ],
+      "summary": "托管 public/ 静态文件：safeResolve 钉死目录防路径穿越，未知路径回退 index.html 交给前端 hash 路由，按扩展名定 MIME 并以流式 pipe 发送。",
+      "tags": [
+        "static-serving",
+        "spa",
+        "security"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:server.js:serveAsset",
+      "type": "function",
+      "name": "serveAsset",
+      "filePath": "server.js",
+      "lineRange": [
+        219,
+        237
+      ],
+      "summary": "提供 /assets/images|videos/<name> 素材文件读取：解析 kind 段定位 store 目录，basename + safeResolve 双重防穿越，支持 Range 播放视频。",
+      "tags": [
+        "static-serving",
+        "media",
+        "security"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:server.js:listen",
+      "type": "function",
+      "name": "listen",
+      "filePath": "server.js",
+      "lineRange": [
+        308,
+        324
+      ],
+      "summary": "递归绑定 127.0.0.1 的指定端口：EADDRINUSE 时自动 +1 重试至多 40 次，成功后恢复 poller 在途任务、打印横幅并按需拉起浏览器。",
+      "tags": [
+        "http-server",
+        "启动",
+        "retry"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:server.js:banner",
+      "type": "function",
+      "name": "banner",
+      "filePath": "server.js",
+      "lineRange": [
+        326,
+        340
+      ],
+      "summary": "打印启动横幅：版本、访问地址、数据/素材目录与恢复轮询的任务数。",
+      "tags": [
+        "cli",
+        "output",
+        "启动"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:server.js:openBrowser",
+      "type": "function",
+      "name": "openBrowser",
+      "filePath": "server.js",
+      "lineRange": [
+        342,
+        352
+      ],
+      "summary": "跨平台自动打开默认浏览器访问本地页面（win32 cmd start / darwin open / Linux xdg-open），失败静默忽略。",
+      "tags": [
+        "platform",
+        "ux",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:tools/apitest.mjs:waitHealth",
+      "type": "function",
+      "name": "waitHealth",
+      "filePath": "tools/apitest.mjs",
+      "lineRange": [
+        120,
+        129
+      ],
+      "summary": "轮询被测服务的 /api/health 直到 200 或超时，替代固定 sleep 消除启动竞态。",
+      "tags": [
+        "test",
+        "polling",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:tools/apitest.mjs:api",
+      "type": "function",
+      "name": "api",
+      "filePath": "tools/apitest.mjs",
+      "lineRange": [
+        131,
+        140
+      ],
+      "summary": "测试用 HTTP 客户端：JSON 序列化请求体 fetch 被测服务，容错解析非 JSON 响应原文返回。",
+      "tags": [
+        "test",
+        "http-client",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:tools/browser-test.mjs:findBrowser",
+      "type": "function",
+      "name": "findBrowser",
+      "filePath": "tools/browser-test.mjs",
+      "lineRange": [
+        30,
+        51
+      ],
+      "summary": "按 NM_BROWSER 环境变量优先，扫描 Windows/macOS/Linux 的 Chrome/Edge/Chromium 常见安装路径取第一个存在的可执行文件；本轮修复补上了 macOS 路径，此前真实浏览器测试在 mac 上一直被静默跳过。",
+      "tags": [
+        "test",
+        "browser",
+        "platform"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:tools/browser-test.mjs:CDP",
+      "type": "class",
+      "name": "CDP",
+      "filePath": "tools/browser-test.mjs",
+      "lineRange": [
+        53,
+        98
+      ],
+      "summary": "不依赖 Playwright 的极简 Chrome DevTools Protocol 客户端：WebSocket 连接后以自增 id 维护 pending Promise 表做请求-响应配对，提供 send/eval/close，eval 自动包裹表达式并解包异常。",
+      "tags": [
+        "cdp",
+        "websocket",
+        "browser-automation",
+        "test"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:tools/build-exe.mjs:main",
+      "type": "function",
+      "name": "main",
+      "filePath": "tools/build-exe.mjs",
+      "lineRange": [
+        65,
+        133
+      ],
+      "summary": "SEA 打包主流程：校验 Node 版本与素材文件存在 → walk 收集 lib/、public/ 生成 assets 映射 → 写 sea-config.json 并生成 blob → node --experimental-sea-config 构建 → 复制宿主 node 并用 postject 注入 blob（先清旧 fuse）→ 输出 dist/ 产物与大小。",
+      "tags": [
+        "build-system",
+        "node-sea",
+        "打包",
+        "orchestration"
+      ],
+      "complexity": "complex"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "function:public/js/pages/projects.js:projects",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "function:public/js/pages/projects.js:projects",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/projects.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:public/js/pages/projects.js:projects",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/projects.js:projects",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/projects.js:projects",
+      "target": "function:public/js/ui.js:confirm",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/projects.js:projects",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/projects.js:projects",
+      "target": "function:public/js/app.js:softRefresh",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "function:public/js/pages/scripts.js:scripts",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "function:public/js/pages/scripts.js:scripts",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/scripts.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/consts.js:extractJson",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/consts.js:extractJsonArray",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/scripts.js:scripts",
+      "target": "function:public/js/consts.js:modelChoices",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "function:public/js/pages/settings.js:settings",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "function:public/js/pages/settings.js:settings",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/settings.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:public/js/pages/settings.js:settings",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/settings.js:settings",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/settings.js:settings",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/settings.js:settings",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/settings.js:settings",
+      "target": "function:public/js/app.js:refreshState",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/settings.js:settings",
+      "target": "function:public/js/consts.js:modelChoices",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "function:public/js/pages/storyboards.js:storyboards",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "function:public/js/pages/storyboards.js:storyboards",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/storyboards.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/pages/helpers.js:renderBatchBar",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/consts.js:extractJsonArray",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/storyboards.js:storyboards",
+      "target": "function:public/js/app.js:onEvent",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "function:public/js/pages/tasks.js:tasks",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "function:public/js/pages/tasks.js:tasks",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/tasks.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/ui.js:prompt",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/app.js:onEvent",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/tasks.js:tasks",
+      "target": "function:public/js/consts.js:statusBadge",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "function:public/js/pages/videos.js:videos",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "function:public/js/pages/videos.js:videos",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/videos.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/ui.js:prompt",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/ui.js:setBusy",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/videos.js:videos",
+      "target": "function:public/js/consts.js:modelChoices",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:toast",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:modal",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:confirm",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:prompt",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:on",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:dataOf",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:empty",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:spinner",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:options",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:setBusy",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:toast",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:modal",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:confirm",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:prompt",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:on",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:dataOf",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:empty",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:spinner",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:options",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/ui.js",
+      "target": "function:public/js/ui.js:setBusy",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:toast",
+      "target": "function:public/js/consts.js:icon",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:toast",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:modal",
+      "target": "function:public/js/consts.js:icon",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:modal",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:confirm",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:prompt",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:empty",
+      "target": "function:public/js/consts.js:icon",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:options",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/ui.js:setBusy",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/api.js",
+      "target": "function:public/js/api.js:req",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/assets.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/dashboard.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/images.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/projects.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/scripts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/settings.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/storyboards.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/tasks.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/pages/videos.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:navigate",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:render",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:renderSidebar",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:refreshState",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:softRefresh",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:onEvent",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:connectSSE",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:boot",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:navigate",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:refreshState",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:softRefresh",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/app.js",
+      "target": "function:public/js/app.js:onEvent",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:refreshState",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:boot",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/app.js:renderSidebar",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:renderSidebar",
+      "target": "function:public/js/consts.js:icon",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:renderSidebar",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/dashboard.js:dashboard",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/assets.js:assets",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/images.js:images",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/projects.js:projects",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/scripts.js:scripts",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/settings.js:settings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/storyboards.js:storyboards",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/tasks.js:tasks",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/app.js:render",
+      "target": "function:public/js/pages/videos.js:videos",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:icon",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:modelChoices",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:statusBadge",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:esc",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:uid",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:fmtTime",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:fmtDate",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:relTime",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:fmtBytes",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:repairJson",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:sliceFirstJson",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:extractJson",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:extractJsonArray",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:copyText",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:downloadUrl",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:icon",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:modelChoices",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:statusBadge",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:esc",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:uid",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:fmtTime",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:fmtDate",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:relTime",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:fmtBytes",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:repairJson",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:extractJson",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:extractJsonArray",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:copyText",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/consts.js",
+      "target": "function:public/js/consts.js:downloadUrl",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "function:public/js/pages/assets.js:assets",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/assets.js",
+      "target": "function:public/js/pages/assets.js:assets",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/assets.js:assets",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/assets.js:assets",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/assets.js:assets",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/assets.js:assets",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/assets.js:assets",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "function:public/js/pages/dashboard.js:dashboard",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/dashboard.js",
+      "target": "function:public/js/pages/dashboard.js:dashboard",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/dashboard.js:dashboard",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/dashboard.js:dashboard",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/dashboard.js:dashboard",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/dashboard.js:dashboard",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:renderBatchBar",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:selectField",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:inputField",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:textareaField",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:renderBatchBar",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:selectField",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:inputField",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/helpers.js",
+      "target": "function:public/js/pages/helpers.js:textareaField",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/helpers.js:head",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/helpers.js:projectPicker",
+      "target": "function:public/js/consts.js:esc",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/helpers.js:renderBatchBar",
+      "target": "function:public/js/consts.js:icon",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "file:public/js/api.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "file:public/js/app.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "file:public/js/consts.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "file:public/js/pages/helpers.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "file:public/js/ui.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "function:public/js/pages/images.js:images",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:public/js/pages/images.js",
+      "target": "function:public/js/pages/images.js:images",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/images.js:images",
+      "target": "function:public/js/pages/helpers.js:head",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/images.js:images",
+      "target": "function:public/js/pages/helpers.js:projectPicker",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/images.js:images",
+      "target": "function:public/js/ui.js:modal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/images.js:images",
+      "target": "function:public/js/ui.js:toast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/images.js:images",
+      "target": "function:public/js/api.js:req",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:public/js/pages/images.js:images",
+      "target": "function:public/js/consts.js:modelChoices",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:normalizeBase",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:rootBase",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:withV1",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "class:lib/agnes.js:AgnesError",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:isTransientError",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:request",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:chat",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:image",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:v25Body",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:submitVideoOnce",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:createVideo",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:queryVideo",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:extractVideoUrl",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:buildSafeStatusUpdate",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:downloadVideo",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:listModels",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:testConnection",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:bus",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:pushLog",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:pollOnce",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:maybeAutoDownload",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:watch",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:resume",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:init",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:EMPTY",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:uid",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:writeJsonAtomic",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:readJson",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:init",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:persist",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:list",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:get",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:insert",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:insertMany",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:update",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:remove",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:removeWhere",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:count",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:getSettings",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:getSettingsMasked",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:maskKey",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:setSettings",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:normalizeModel",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:normalizeModels",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:getModels",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:setModels",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:setModelCacheError",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:modelsNeedRefresh",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:exportAll",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:importAll",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:exportProject",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:stats",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:normalizeBase",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:rootBase",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:withV1",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "class:lib/agnes.js:AgnesError",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:isTransientError",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:chat",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:image",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:createVideo",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:queryVideo",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:extractVideoUrl",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:buildSafeStatusUpdate",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:downloadVideo",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:listModels",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "function:lib/agnes.js:testConnection",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:pushLog",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:stop",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:pollOnce",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:watch",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:resume",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "function:lib/poller.js:init",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:uid",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:init",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:persist",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:list",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:get",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:insert",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:insertMany",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:update",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:remove",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:removeWhere",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:count",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:getSettings",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:getSettingsMasked",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:maskKey",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:setSettings",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:normalizeModel",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:normalizeModels",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:getModels",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:setModels",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:setModelCacheError",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:modelsNeedRefresh",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:exportAll",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:importAll",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:exportProject",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/store.js",
+      "target": "function:lib/store.js:stats",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/agnes.js",
+      "target": "file:lib/store.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:lib/poller.js",
+      "target": "file:lib/agnes.js",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:lib/agnes.js:chat",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:image",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:submitVideoOnce",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:createVideo",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:queryVideo",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:downloadVideo",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:listModels",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/agnes.js:testConnection",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:pollOnce",
+      "target": "function:lib/agnes.js:queryVideo",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:pollOnce",
+      "target": "function:lib/agnes.js:buildSafeStatusUpdate",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:maybeAutoDownload",
+      "target": "function:lib/agnes.js:downloadVideo",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:run",
+      "target": "function:lib/store.js:get",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:run",
+      "target": "function:lib/store.js:update",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:pollOnce",
+      "target": "function:lib/store.js:get",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:pollOnce",
+      "target": "function:lib/store.js:update",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:watch",
+      "target": "function:lib/store.js:get",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:resume",
+      "target": "function:lib/store.js:list",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/poller.js:maybeAutoDownload",
+      "target": "function:lib/store.js:getSettings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "document:docs/knowledge-graph/README.md",
+      "target": "config:docs/knowledge-graph/knowledge-graph.json",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/knowledge-graph/README.md",
+      "target": "file:docs/knowledge-graph/viewer.html",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:docs/knowledge-graph/viewer.html",
+      "target": "config:docs/knowledge-graph/knowledge-graph.json",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:create",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:get",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:list",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:cancel",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:prune",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:createRoutes",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:match",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:safeName",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:saveImageBase64",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:fetchRemoteImage",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:refreshModels",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:storyboardRow",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:httpError",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:dispatch",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/seed.js",
+      "target": "function:lib/seed.js:seedTemplates",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:resolveHome",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:materializeAssets",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:readBody",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:originOk",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:serveStatic",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:serveAsset",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:listen",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:banner",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:openBrowser",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:tools/apitest.mjs",
+      "target": "function:tools/apitest.mjs:waitHealth",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:tools/apitest.mjs",
+      "target": "function:tools/apitest.mjs:api",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:tools/browser-test.mjs",
+      "target": "function:tools/browser-test.mjs:findBrowser",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:tools/browser-test.mjs",
+      "target": "class:tools/browser-test.mjs:CDP",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:tools/build-exe.mjs",
+      "target": "function:tools/build-exe.mjs:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:create",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:get",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:list",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:run",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:cancel",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "function:lib/jobs.js:prune",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "function:lib/routes.js:createRoutes",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:lib/seed.js",
+      "target": "function:lib/seed.js:seedTemplates",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:server.js:listen",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:lib/store.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:lib/agnes.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:lib/poller.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:lib/jobs.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:lib/seed.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:lib/routes.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/selftest.mjs",
+      "target": "file:lib/store.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/selftest.mjs",
+      "target": "file:lib/agnes.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/selftest.mjs",
+      "target": "file:lib/jobs.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/selftest.mjs",
+      "target": "file:lib/seed.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/selftest.mjs",
+      "target": "file:lib/routes.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/build-exe.mjs",
+      "target": "file:server.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/build-exe.mjs",
+      "target": "file:public/index.html",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:tools/build-graph-data.mjs",
+      "target": "file:docs/knowledge-graph/graph.data.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:public/index.html",
+      "target": "file:public/css/app.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:public/index.html",
+      "target": "file:public/js/app.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:lib/routes.js:createRoutes",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:lib/routes.js:dispatch",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:lib/routes.js:refreshModels",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:server.js",
+      "target": "function:lib/seed.js:seedTemplates",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/routes.js:createRoutes",
+      "target": "function:lib/jobs.js:create",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/routes.js:createRoutes",
+      "target": "function:lib/jobs.js:run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/routes.js:createRoutes",
+      "target": "function:lib/jobs.js:get",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/routes.js:createRoutes",
+      "target": "function:lib/jobs.js:list",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/routes.js:createRoutes",
+      "target": "function:lib/jobs.js:cancel",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:lib/routes.js:createRoutes",
+      "target": "function:lib/jobs.js:prune",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:server.js",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:server.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:lib/routes.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:lib/jobs.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:lib/seed.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:tools/build-exe.mjs",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:tools/selftest.mjs",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:tools/apitest.mjs",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:tools/uitest.mjs",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:tools/browser-test.mjs",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/issues.md",
+      "target": "file:server.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/issues.md",
+      "target": "file:lib/routes.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/issues.md",
+      "target": "file:lib/jobs.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/issues.md",
+      "target": "file:tools/browser-test.mjs",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:lib/jobs.js",
+      "target": "file:tools/selftest.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:lib/routes.js",
+      "target": "file:tools/selftest.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:lib/seed.js",
+      "target": "file:tools/selftest.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:tools/apitest.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:server.js",
+      "target": "file:tools/browser-test.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:public/index.html",
+      "target": "file:tools/uitest.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:public/css/app.css",
+      "target": "file:tools/uitest.mjs",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:docs/knowledge-graph/viewer.html",
+      "target": "file:docs/knowledge-graph/graph.data.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:frontend-pages",
+      "name": "前端页面层",
+      "description": "public/js/pages/ 下的十个 SPA 页面模块（仪表盘、项目、脚本、分镜、图片、视频、任务、素材、设置及共享模板片段），各自渲染一条漫剧制作工作流环节并统一调用 api.js 与 ui.js。",
+      "nodeIds": [
+        "file:public/js/pages/dashboard.js",
+        "file:public/js/pages/projects.js",
+        "file:public/js/pages/scripts.js",
+        "file:public/js/pages/storyboards.js",
+        "file:public/js/pages/images.js",
+        "file:public/js/pages/videos.js",
+        "file:public/js/pages/tasks.js",
+        "file:public/js/pages/assets.js",
+        "file:public/js/pages/settings.js",
+        "file:public/js/pages/helpers.js"
+      ]
+    },
+    {
+      "id": "layer:frontend-shell",
+      "name": "前端壳层与共享模块",
+      "description": "SPA 骨架与应用级共享设施：index.html 入口壳、app.js 路由与状态管理、api.js 统一 /api 请求信封、ui.js 通用 UI 原语、consts.js 常量枚举，以及 app.css 全站设计系统。",
+      "nodeIds": [
+        "file:public/index.html",
+        "file:public/js/app.js",
+        "file:public/js/api.js",
+        "file:public/js/ui.js",
+        "file:public/js/consts.js",
+        "file:public/css/app.css"
+      ]
+    },
+    {
+      "id": "layer:backend-api",
+      "name": "HTTP 接口与路由层",
+      "description": "本地 HTTP 服务入口与 REST 路由分发：server.js 启动原生 http 服务、托管静态文件并组装依赖，lib/routes.js 实现全部 /api 端点的请求解析与业务编排。",
+      "nodeIds": [
+        "file:server.js",
+        "file:lib/routes.js"
+      ]
+    },
+    {
+      "id": "layer:backend-service",
+      "name": "后端服务层",
+      "description": "核心领域服务：lib/agnes.js 封装 Agnes 云端 API 客户端（带重试），lib/jobs.js 提供内存任务队列与并发控制，lib/poller.js 后台轮询视频任务状态并经 SSE 推送。",
+      "nodeIds": [
+        "file:lib/agnes.js",
+        "file:lib/jobs.js",
+        "file:lib/poller.js"
+      ]
+    },
+    {
+      "id": "layer:data-persistence",
+      "name": "数据持久化层",
+      "description": "零数据库的本地 JSON 存储：lib/store.js 以 singleton 方式读写项目/分镜/设置等全部数据文件，lib/seed.js 提供提示词模板等示例种子数据。",
+      "nodeIds": [
+        "file:lib/store.js",
+        "file:lib/seed.js"
+      ]
+    },
+    {
+      "id": "layer:test",
+      "name": "测试层",
+      "description": "tools/ 下的自研测试体系：selftest 离线单元校验、apitest 内存 mock 服务端到端、uitest 前端静态断言、browser-test 经 CDP 的真浏览器冒烟，run-all 统一编排全部套件。",
+      "nodeIds": [
+        "file:tools/selftest.mjs",
+        "file:tools/apitest.mjs",
+        "file:tools/uitest.mjs",
+        "file:tools/browser-test.mjs",
+        "file:tools/run-all.mjs"
+      ]
+    },
+    {
+      "id": "layer:build-tooling",
+      "name": "构建与代码生成工具",
+      "description": "面向发布的构建脚本：build-exe.mjs 用 Node SEA 把 server.js 与 public/ 打包为单文件可执行程序，build-graph-data.mjs 生成 docs/knowledge-graph 的图谱数据。",
+      "nodeIds": [
+        "file:tools/build-exe.mjs",
+        "file:tools/build-graph-data.mjs"
+      ]
+    },
+    {
+      "id": "layer:documentation",
+      "name": "文档与知识图谱层",
+      "description": "项目文档与自包含的架构可视化：README.md 快速开始、docs/issues.md 架构审计记录，以及 docs/knowledge-graph/ 的说明、JSON 数据、生成产物与无构建 Canvas 查看器。",
+      "nodeIds": [
+        "document:README.md",
+        "document:docs/issues.md",
+        "document:docs/knowledge-graph/README.md",
+        "config:docs/knowledge-graph/knowledge-graph.json",
+        "file:docs/knowledge-graph/viewer.html",
+        "file:docs/knowledge-graph/graph.data.js"
+      ]
+    },
+    {
+      "id": "layer:config",
+      "name": "项目配置层",
+      "description": "工程级配置：package.json 声明零依赖的 npm scripts 构建入口，.understand-anything/ 下的 config.json 与 .understandignore 配置知识图谱分析工具。",
+      "nodeIds": [
+        "config:package.json",
+        "config:.understand-anything/config.json",
+        "file:.understand-anything/.understandignore"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "项目总览",
+      "description": "旅程从 README 开始：它把 Agnes 漫剧工坊定义为本地优先、零云端数据库的 AI 漫剧工作台——故事构思、分集大纲、分镜、图片/视频生成、任务轮询与素材管理串成一条纯本地创作链路。package.json 揭示了它最反常的工程决定：零运行时依赖，入口直指 server.js，scripts 提供四套自研测试与 exe 打包，并强制 Node >= 20.6（SEA 打包能力）。README 划出的安全边界——API Key 不出本机、服务只监听 127.0.0.1、写操作校验 Origin——是理解后面每个模块设计动机的钥匙。",
+      "nodeIds": [
+        "document:README.md",
+        "config:package.json"
+      ],
+      "languageLesson": "零依赖项目的 package.json 依然承担清单职责：engines 字段声明 Node >= 20.6 不是摆设，而是 SEA 单文件打包与原生 fetch 等运行时能力的硬性前提。"
+    },
+    {
+      "order": 2,
+      "title": "服务入口 server.js",
+      "description": "server.js 是唯一运行时入口：不用 Express/Koa，直接用内置 node:http 起本地服务，负责静态托管 public/、把 /api/* 分发给路由层、维护 SSE 事件通道、提供带路径穿越防护的素材下载，端口 5178 被占用时自动递增。它还兼容源码运行与 Node SEA 单文件 exe 双形态——启动时把内嵌的 lib/、public/ 资源释放到可写数据目录，让两种形态跑同一套代码。第 13 步会回来详解这个 exe 是怎么炼成的。",
+      "nodeIds": [
+        "file:server.js"
+      ],
+      "languageLesson": "Node 原生 http 模块只给你一个 (req, res) 回调：路由匹配、请求体解析、响应头、流式输出全靠手写。零依赖哲学下，本项目把中间件框架的职责逐一自建，代价是代码量，收益是单文件发布和极小的攻击面。"
+    },
+    {
+      "order": 3,
+      "title": "API 路由分发",
+      "description": "接住第 2 步收到的请求后，lib/routes.js 是全部 /api 端点的业务调度中枢：createRoutes(ctx) 工厂把 store、agnes、poller、jobs 四个依赖注入进来，内部用 on(method, pattern, handler) 注册约 50 条 REST 路由，覆盖项目/剧本/分镜/图片/视频/任务/模板/批量/导入导出，最后返回 dispatch 句柄交给 server.js。这张路由表等于系统能力的全量清单。它注入的四个依赖，正是接下来四步的主角。",
+      "nodeIds": [
+        "file:lib/routes.js"
+      ],
+      "languageLesson": "createRoutes(ctx) 是手写的依赖注入（DI）：把协作者收进一个上下文对象再构造路由表，测试时即可整体替换为 mock——第 12 步的 apitest 正是利用这个接缝注入假 Agnes 服务。"
+    },
+    {
+      "order": 4,
+      "title": "Agnes 云端客户端",
+      "description": "lib/agnes.js 是通往外部 Agnes 云服务的唯一出口：封装文本（chat）、图片（image）、视频（createVideo/queryVideo/downloadVideo）三类生成接口，内置统一请求层（超时、链路诊断、错误分类）与瞬时错误的指数退避重试，并自动在 v2.0 与 2.5 两代视频协议之间分流。安全核心在此落实：API Key 只从本机 store 读取、绝不下发前端，前端所有生成请求都必须经过第 3 步的路由层中转。fanOut 高达 32，是后端扇出最广的模块之一。",
+      "nodeIds": [
+        "file:lib/agnes.js"
+      ],
+      "languageLesson": "指数退避重试（exponential backoff）是网络瞬时故障的标准应对：每次失败后等待时间翻倍，避免重试风暴压垮上游；配合超时与错误分类，才能区分『该重试』与『该立刻报错给用户』。"
+    },
+    {
+      "order": 5,
+      "title": "本地 JSON 持久化",
+      "description": "lib/store.js 取代了传统数据库：projects、storyboards、settings 等 8 个集合全内存读写，写盘走「临时文件 + rename」原子替换并留 .bak 备份可自动回滚，设置与模型目录各有独立文件。它以 53 条出边高居全项目 fan-out 榜首，提供 CRUD、设置脱敏、全量导入导出与统计的完整 API——第 3 步路由层的每次读写都落到这里。lib/seed.js 在首次运行时幂等地写入 9 类漫剧创作提示词模板，它们是第 9 步脚本页所有提示词的来源。",
+      "nodeIds": [
+        "file:lib/store.js",
+        "file:lib/seed.js"
+      ],
+      "languageLesson": "「先写临时文件再 rename」是文件系统级的原子写入模式：rename 操作不可分割，即使写入中途断电或崩溃，磁盘上要么是完整旧文件、要么是完整新文件，绝不会留下半截损坏数据。"
+    },
+    {
+      "order": 6,
+      "title": "异步任务与 SSE",
+      "description": "生成的另一半真相是异步。lib/jobs.js 把批量出图/出视频变成内存任务队列：run() 以可配置的 1–8 并发跑 worker 池，单项失败不中断整批，支持取消标记并保留最近 50 条历史。lib/poller.js 则把轮询从浏览器搬到服务端——用 setTimeout 链按设置间隔轮询第 4 步的 agnes.queryVideo 并回写第 5 步的 store，视频完成时自动落盘，状态变化经第 2 步的 SSE 通道推给前端；重启后 resume() 还能捡回未跑完的任务。这就是「关掉页面生成照样继续」的实现。",
+      "nodeIds": [
+        "file:lib/jobs.js",
+        "file:lib/poller.js"
+      ],
+      "languageLesson": "SSE（Server-Sent Events）是基于 HTTP 的单向服务器推送：浏览器用 EventSource 一次长连接，服务端在状态变化时主动推事件。相比 WebSocket 更轻，任务进度这类「只出不进」的场景用它正合适。"
+    },
+    {
+      "order": 7,
+      "title": "前端外壳启动",
+      "description": "现在转到浏览器侧。public/index.html 是极简 SPA 外壳：只挂载 sidebar、#view、#toasts、#modal-root 四个容器，用 type=\"module\" 加载 app.js，其余全部由前端渲染。app.js 维护全局 state、基于 location.hash 实现极简路由、渲染侧边栏、分发 SSE 实时事件，并在 boot() 里把 10 个 page 模块挂上 NAV 导航表——它 fanIn/fanOut 双高（10/24），是前端名副其实的枢纽。public/css/app.css 提供黑金配色的设计令牌层与全部组件样式，走 Final Cut Pro 式的 Mac 创作软件质感。",
+      "nodeIds": [
+        "file:public/index.html",
+        "file:public/js/app.js",
+        "file:public/css/app.css"
+      ],
+      "languageLesson": "原生 ESM + hash 路由的组合完全不需要构建工具：浏览器直接 import 真实模块文件；hashchange 事件让 # 后的 URL 变化不触发页面重载，静态托管即可整站离线运行。"
+    },
+    {
+      "order": 8,
+      "title": "前端共享设施",
+      "description": "进入具体页面之前，先认识每个页面都依赖的共享层——它们是前端 fan-in 榜的常客。api.js 是唯一的后端接口封装：req() 把 HTTP 错误与业务 ok:false 统一收敛成 {ok, data, error} 信封，再以 api 对象暴露全部 /api 端点，正对应第 3 步的路由表。ui.js 提供 toast、modal（含焦点陷阱）、Promise 化 confirm/prompt 等 UI 原语；consts.js 以 12 条入边是全项目 fan-in 最高的节点，收录内联 SVG 图标、状态枚举徽章映射和 LLM 输出 JSON 容错解析；pages/helpers.js 则统一生产页头、项目下拉与表单字段片段。",
+      "nodeIds": [
+        "file:public/js/api.js",
+        "file:public/js/ui.js",
+        "file:public/js/consts.js",
+        "file:public/js/pages/helpers.js"
+      ],
+      "languageLesson": "响应信封（envelope）模式把「成功与否」变成显式返回值而非异常：每个调用点统一解构 {ok, data, error}，不会因漏写 catch 而埋下 unhandledrejection——uitest 甚至专门断言这一点。"
+    },
+    {
+      "order": 9,
+      "title": "从故事到脚本",
+      "description": "创作链路的前半段登场：dashboard.js 是默认落地页（Hero 链路引导 + 统计卡片 + 最近项目），projects.js 以卡片列表管理每部漫剧并提供级联删除与资料导出，scripts.js 则按「故事概念 → 剧情梗概 → 分集大纲 → 单集剧本 → 分镜脚本」五个标签收集变量、调用第 4 步的文本模型生成内容。关键设计：这些提示词全部来自 settings.js 管理、store/seed 落盘的模板，而非写死在代码里——改提示词不用改代码。生成结果可保存复用，并一键导入下一步的分镜表。",
+      "nodeIds": [
+        "file:public/js/pages/dashboard.js",
+        "file:public/js/pages/projects.js",
+        "file:public/js/pages/scripts.js",
+        "file:public/js/pages/settings.js"
+      ]
+    },
+    {
+      "order": 10,
+      "title": "分镜中枢与生成",
+      "description": "storyboards.js 是整条链路的中枢：分镜表可增删改排序、从第 9 步的脚本导入，并发起批量补提示词、批量出图、批量出视频——队列进度背后就是第 6 步的 jobs。images.js 提供文生图/图生图双模式，结果直接落盘进本地素材库；videos.js 支持文生视频、图生视频、多图参考、关键帧动画四种模式，提交后交由服务端 poller 接管，页面额外展示链路诊断，帮你区分超时出在 Agnes 侧还是本地侧。前端只管提交与展示，异步闭环全在第 6 步的后端。",
+      "nodeIds": [
+        "file:public/js/pages/storyboards.js",
+        "file:public/js/pages/images.js",
+        "file:public/js/pages/videos.js"
+      ]
+    },
+    {
+      "order": 11,
+      "title": "任务中心与素材库",
+      "description": "结果的查看端：tasks.js 并列展示视频记录与异步任务，显示状态/进度，支持补录 video_id、下载保存到本地、收藏与删除——状态变化全靠第 6/7 步打通的 SSE 推送实时刷新，无需手动操作。assets.js 是素材库，按图片/视频/文本三分栏做 Apple Photos 风格栅格，支持项目筛选、仅看收藏、大图预览与复制提示词，并提供「图生视频」跳转。生成的素材从这里回流进新一轮创作，链路形成闭环。",
+      "nodeIds": [
+        "file:public/js/pages/tasks.js",
+        "file:public/js/pages/assets.js"
+      ]
+    },
+    {
+      "order": 12,
+      "title": "四套自研测试",
+      "description": "零依赖意味着也上不了 jest/vitest，tools/ 下是四套手写的分层测试，由 run-all.mjs 串行编排并以失败数决定退出码。selftest.mjs 用临时目录跑约 113 条离线断言，覆盖 store 的 CRUD/脱敏/导入导出、agnes 重试与状态机、jobs 并发取消和 routes 全表分发；apitest.mjs 自起 mock Agnes 服务再 spawn 真实 server.js，不联网不花钱跑完「生成→落盘→轮询→完成→下载」全链路——正是第 3 步 DI 接缝的验证；uitest.mjs 用正则扫约 390 条前端静态一致性断言；browser-test.mjs 驱动 headless Chrome 做真浏览器冒烟。",
+      "nodeIds": [
+        "file:tools/selftest.mjs",
+        "file:tools/apitest.mjs",
+        "file:tools/uitest.mjs",
+        "file:tools/browser-test.mjs",
+        "file:tools/run-all.mjs"
+      ],
+      "languageLesson": "CDP（Chrome DevTools Protocol）是浏览器暴露的调试协议。不用 Playwright/Puppeteer，自己写一个最小 WebSocket 客户端连上 headless Chrome，就能验证白屏、路由切换与控制台零报错——这是零依赖哲学的测试侧延伸。"
+    },
+    {
+      "order": 13,
+      "title": "单文件 exe 打包",
+      "description": "交付形态的收尾：build-exe.mjs 用 Node SEA 五步流程产出 Windows 单文件 exe——校验 Node >= 20.6、把 server.js 打进 blob 并内嵌 lib/ 与 public/ 全部资源、生成 sea-config.json、用 postject 把 blob 注入托管的 Node 运行时、输出到 dist/。这解释了第 2 步 server.js 里那段「释放内嵌资源到可写数据目录」的逻辑为何存在：exe 形态没有源码目录可依赖，必须先在运行时里给自己造出一个。",
+      "nodeIds": [
+        "file:tools/build-exe.mjs"
+      ],
+      "languageLesson": "Node SEA（Single Executable Application）把 JS 入口与自定义资源段（assets）封进可执行文件，用户无需安装 Node 即可运行；代价是内嵌资源无法被 require/import 直接读取，需先释放（extract）到真实文件系统。"
+    },
+    {
+      "order": 14,
+      "title": "架构图谱与审计",
+      "description": "最后是两个「拉开看全局」的入口。docs/knowledge-graph/ 三件套：knowledge-graph.json 是唯一数据源（73 节点/177 边，覆盖前端页面 → REST API → 后端 lib → JSON 数据层 → Agnes 云端的完整链路），build-graph-data.mjs 先做悬空边/孤立节点体检再转换成数据文件，viewer.html 用零依赖 Canvas 力导向布局渲染可交互图谱，file:// 双击即开。docs/issues.md 则记录三轮架构审计的逐条根因与修复（含 Agnes Video 2.5 协议适配），附数据流、异步闭环、测试金字塔的结构性观察——是理解「为什么这样设计」的最佳伴侣读物。",
+      "nodeIds": [
+        "document:docs/knowledge-graph/README.md",
+        "config:docs/knowledge-graph/knowledge-graph.json",
+        "file:tools/build-graph-data.mjs",
+        "file:docs/knowledge-graph/viewer.html",
+        "document:docs/issues.md"
+      ]
+    }
+  ]
+}

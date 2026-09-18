@@ -1,0 +1,2544 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "2cf57976ddf979bb117e4bb774983116ba908ab7",
+  "generatedAt": "2026-09-18T04:13:40.576Z",
+  "files": {
+    ".understand-anything/.understandignore": {
+      "filePath": ".understand-anything/.understandignore",
+      "contentHash": "28a5b0e9e7edead9678da43424b115e38121f35236eee9914534d892f6083557",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 33,
+      "hasStructuralAnalysis": false
+    },
+    ".understand-anything/config.json": {
+      "filePath": ".understand-anything/config.json",
+      "contentHash": "5d2ff006cff22c68edd4776249d562ea8c73915a61c6214eb85933865a9402e7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 4,
+      "hasStructuralAnalysis": true
+    },
+    "docs/issues.md": {
+      "filePath": "docs/issues.md",
+      "contentHash": "0ced4bc2c943d45b8a3b1bcef0d071587ba281ec3892d1d05b7b078f1832cbe5",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 208,
+      "hasStructuralAnalysis": true
+    },
+    "docs/knowledge-graph/graph.data.js": {
+      "filePath": "docs/knowledge-graph/graph.data.js",
+      "contentHash": "6acb448df6f410ea71c223f89446e1b192e2d1cbe0ca24d3764961ebb1981231",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 3,
+      "hasStructuralAnalysis": true
+    },
+    "docs/knowledge-graph/knowledge-graph.json": {
+      "filePath": "docs/knowledge-graph/knowledge-graph.json",
+      "contentHash": "365515a4b6cc6df96768260ecdfe71b2f165c22080ac89d5f56c1f1635d1f0ee",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1435,
+      "hasStructuralAnalysis": true
+    },
+    "docs/knowledge-graph/README.md": {
+      "filePath": "docs/knowledge-graph/README.md",
+      "contentHash": "4d9a866ef6959b8fc4b9a7ca257928e9e59aa615f8a18c5ba847140c4477b754",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 111,
+      "hasStructuralAnalysis": true
+    },
+    "docs/knowledge-graph/viewer.html": {
+      "filePath": "docs/knowledge-graph/viewer.html",
+      "contentHash": "a7e9fa7e3e1480383bdb4073951793d78a3fa17c1e6b8e1ff147a44386929063",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 393,
+      "hasStructuralAnalysis": false
+    },
+    "lib/agnes.js": {
+      "filePath": "lib/agnes.js",
+      "contentHash": "ab4bf73b4d1c86a128f9d64ebc4b64a326407011b7e1dab4f0297bc2c773f66c",
+      "functions": [
+        {
+          "name": "normalizeBase",
+          "params": [
+            "raw"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "rootBase",
+          "params": [
+            "base"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "withV1",
+          "params": [
+            "base"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "noKey",
+          "params": [],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "isTransientError",
+          "params": [
+            "e"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "request",
+          "params": [
+            "url"
+          ],
+          "exported": false,
+          "lineCount": 61
+        },
+        {
+          "name": "chat",
+          "params": [
+            "messages"
+          ],
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "image",
+          "params": [],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "v25Seconds",
+          "params": [
+            "frames",
+            "fps"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "v25Size",
+          "params": [
+            "model",
+            "width",
+            "height"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "v25Aspect",
+          "params": [
+            "width",
+            "height"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "v25Body",
+          "params": [
+            "model",
+            "params"
+          ],
+          "exported": false,
+          "lineCount": 25
+        },
+        {
+          "name": "submitVideoOnce",
+          "params": [
+            "params"
+          ],
+          "exported": false,
+          "lineCount": 62
+        },
+        {
+          "name": "createVideo",
+          "params": [
+            "params"
+          ],
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "queryVideo",
+          "params": [
+            "videoId",
+            "modelName"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "extractVideoUrl",
+          "params": [
+            "result"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "buildSafeStatusUpdate",
+          "params": [
+            "result"
+          ],
+          "exported": false,
+          "lineCount": 34
+        },
+        {
+          "name": "downloadVideo",
+          "params": [
+            "videoUrl",
+            "destFile"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "listModels",
+          "params": [],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "testConnection",
+          "params": [],
+          "exported": false,
+          "lineCount": 23
+        }
+      ],
+      "classes": [
+        {
+          "name": "AgnesError",
+          "methods": [
+            "constructor"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 10
+        }
+      ],
+      "imports": [],
+      "exports": [],
+      "totalLines": 484,
+      "hasStructuralAnalysis": true
+    },
+    "lib/jobs.js": {
+      "filePath": "lib/jobs.js",
+      "contentHash": "9a0e8029e9178682027ce0f30ca015eb4f4c3ed9d6e4d9b8fc316058fd405ea2",
+      "functions": [
+        {
+          "name": "create",
+          "params": [
+            "type",
+            "total"
+          ],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "get",
+          "params": [
+            "id"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "list",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "run",
+          "params": [
+            "job",
+            "items",
+            "worker"
+          ],
+          "exported": false,
+          "lineCount": 37
+        },
+        {
+          "name": "cancel",
+          "params": [
+            "id"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "prune",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 92,
+      "hasStructuralAnalysis": true
+    },
+    "lib/poller.js": {
+      "filePath": "lib/poller.js",
+      "contentHash": "619108be026908994bee98d3bc0f3dde0865aa2dd87793bb41a690899baa90c8",
+      "functions": [
+        {
+          "name": "bus",
+          "params": [],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "pushLog",
+          "params": [
+            "entry"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "intervalMs",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "maxPolls",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "isActive",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "stop",
+          "params": [
+            "assetId"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "pollOnce",
+          "params": [
+            "assetId"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "schedule",
+          "params": [
+            "assetId",
+            "delay"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "run",
+          "params": [
+            "assetId"
+          ],
+          "exported": false,
+          "lineCount": 40
+        },
+        {
+          "name": "maybeAutoDownload",
+          "params": [
+            "asset"
+          ],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "watch",
+          "params": [
+            "assetId"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "resume",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "init",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 4
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 172,
+      "hasStructuralAnalysis": true
+    },
+    "lib/routes.js": {
+      "filePath": "lib/routes.js",
+      "contentHash": "e7ee539a9a19a6487af5e8dba0f2664b56dd95da4161d0928ebb3a803e805989",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 960,
+      "hasStructuralAnalysis": true
+    },
+    "lib/seed.js": {
+      "filePath": "lib/seed.js",
+      "contentHash": "c6d689b092806ab4aa9100618f2bba1342f01c973154a214cc8be93a11f6e6b4",
+      "functions": [
+        {
+          "name": "seedTemplates",
+          "params": [
+            "store"
+          ],
+          "exported": false,
+          "lineCount": 14
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 198,
+      "hasStructuralAnalysis": true
+    },
+    "lib/store.js": {
+      "filePath": "lib/store.js",
+      "contentHash": "7f46c513160337ada2af704a23fb82f4b2313255e8c18ebb1d1185b23c4d7bd8",
+      "functions": [
+        {
+          "name": "EMPTY",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "uid",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "now",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "writeJsonAtomic",
+          "params": [
+            "file",
+            "obj"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "readJson",
+          "params": [
+            "file",
+            "fallback"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "init",
+          "params": [
+            "home"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "home",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "assetsDir",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "imagesDir",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "videosDir",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "exportsDir",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "persist",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "persistSettings",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "assertColl",
+          "params": [
+            "coll"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "list",
+          "params": [
+            "coll"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "get",
+          "params": [
+            "coll",
+            "id"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "insert",
+          "params": [
+            "coll",
+            "row"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "insertMany",
+          "params": [
+            "coll",
+            "rows"
+          ],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "update",
+          "params": [
+            "coll",
+            "id",
+            "patch"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "remove",
+          "params": [
+            "coll",
+            "id"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "removeWhere",
+          "params": [
+            "coll",
+            "filterFn"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "count",
+          "params": [
+            "coll",
+            "filterFn"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "getSettings",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "getSettingsMasked",
+          "params": [],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "maskKey",
+          "params": [
+            "key"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "setSettings",
+          "params": [
+            "patch"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "getRawKey",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "normalizeModel",
+          "params": [
+            "item"
+          ],
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "normalizeModels",
+          "params": [
+            "payload"
+          ],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "getModels",
+          "params": [],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "setModels",
+          "params": [
+            "payload"
+          ],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "setModelCacheError",
+          "params": [
+            "error"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "modelsNeedRefresh",
+          "params": [],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "exportAll",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "importAll",
+          "params": [
+            "payload"
+          ],
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "exportProject",
+          "params": [
+            "projectId"
+          ],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "stats",
+          "params": [],
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "_resetForTest",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 436,
+      "hasStructuralAnalysis": true
+    },
+    "package.json": {
+      "filePath": "package.json",
+      "contentHash": "e1e66a9b4ed7de288362000af72ba96ce72aa84c3cd5294e09c14e0e92701e07",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 20,
+      "hasStructuralAnalysis": true
+    },
+    "public/css/app.css": {
+      "filePath": "public/css/app.css",
+      "contentHash": "7aabb003ca750e3a014f74cd20b687a55b9f87676e1ea8cd0fb3f3efd48d778c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 903,
+      "hasStructuralAnalysis": false
+    },
+    "public/index.html": {
+      "filePath": "public/index.html",
+      "contentHash": "1b6f13fe3eaf6fff1798f7dfbff0c2b30a16ad0c1f498719b283d1b607ec101c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 22,
+      "hasStructuralAnalysis": false
+    },
+    "public/js/api.js": {
+      "filePath": "public/js/api.js",
+      "contentHash": "373a80deaa535328646a06219d7128671c714cc87e7f0b814ba57bf2557a3b9e",
+      "functions": [
+        {
+          "name": "req",
+          "params": [
+            "method",
+            "url",
+            "body"
+          ],
+          "exported": false,
+          "lineCount": 23
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "api"
+      ],
+      "totalLines": 100,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/app.js": {
+      "filePath": "public/js/app.js",
+      "contentHash": "2a92583be533ee09d4cd61ec521ce4d9199ff9e2512707592410c2504b57dbe4",
+      "functions": [
+        {
+          "name": "parseHash",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "navigate",
+          "params": [
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "render",
+          "params": [],
+          "exported": false,
+          "lineCount": 27
+        },
+        {
+          "name": "renderSidebar",
+          "params": [],
+          "exported": false,
+          "lineCount": 28
+        },
+        {
+          "name": "refreshState",
+          "params": [],
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "softRefresh",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "onEvent",
+          "params": [
+            "kind",
+            "fn"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "connectSSE",
+          "params": [],
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "boot",
+          "params": [],
+          "exported": false,
+          "lineCount": 17
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./consts.js",
+          "specifiers": [
+            "icon",
+            "esc"
+          ]
+        },
+        {
+          "source": "./api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "./ui.js",
+          "specifiers": [
+            "toast"
+          ]
+        },
+        {
+          "source": "./pages/dashboard.js",
+          "specifiers": [
+            "dashboard"
+          ]
+        },
+        {
+          "source": "./pages/projects.js",
+          "specifiers": [
+            "projects"
+          ]
+        },
+        {
+          "source": "./pages/scripts.js",
+          "specifiers": [
+            "scripts"
+          ]
+        },
+        {
+          "source": "./pages/storyboards.js",
+          "specifiers": [
+            "storyboards"
+          ]
+        },
+        {
+          "source": "./pages/images.js",
+          "specifiers": [
+            "images"
+          ]
+        },
+        {
+          "source": "./pages/videos.js",
+          "specifiers": [
+            "videos"
+          ]
+        },
+        {
+          "source": "./pages/tasks.js",
+          "specifiers": [
+            "tasks"
+          ]
+        },
+        {
+          "source": "./pages/assets.js",
+          "specifiers": [
+            "assets"
+          ]
+        },
+        {
+          "source": "./pages/settings.js",
+          "specifiers": [
+            "settings"
+          ]
+        }
+      ],
+      "exports": [
+        "state",
+        "navigate",
+        "refreshState",
+        "softRefresh",
+        "onEvent"
+      ],
+      "totalLines": 179,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/consts.js": {
+      "filePath": "public/js/consts.js",
+      "contentHash": "6ed45cf9277363a123bcd4bdbc0693929da81e06d941d89e69b6614e5ae7048f",
+      "functions": [
+        {
+          "name": "P",
+          "params": [
+            "d"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "icon",
+          "params": [
+            "name"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "modelChoices",
+          "params": [
+            "directory",
+            "kind"
+          ],
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "statusBadge",
+          "params": [
+            "status"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "esc",
+          "params": [
+            "s"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "uid",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "fmtTime",
+          "params": [
+            "iso"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "fmtDate",
+          "params": [
+            "iso"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "relTime",
+          "params": [
+            "iso"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "fmtBytes",
+          "params": [
+            "n"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "repairJson",
+          "params": [
+            "src"
+          ],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "tryParse",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "sliceFirstJson",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 27
+        },
+        {
+          "name": "extractJson",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "extractJsonArray",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "copyText",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "downloadUrl",
+          "params": [
+            "url",
+            "filename"
+          ],
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "icon",
+        "PROJECT_TYPES",
+        "PLATFORMS",
+        "ASPECTS",
+        "SHOT_TYPES",
+        "IMAGE_SIZES",
+        "VIDEO_RESOLUTIONS",
+        "DURATION_PRESETS",
+        "IMAGE_USAGES",
+        "IMAGE_ROLES",
+        "VIDEO_MODES",
+        "SCRIPT_TYPES",
+        "modelChoices",
+        "TEMPLATE_TYPES",
+        "VIDEO_STATUS",
+        "REMOTE_STATUS",
+        "LOCAL_STATUS",
+        "STORYBOARD_STATUS",
+        "statusBadge",
+        "esc",
+        "uid",
+        "fmtTime",
+        "fmtDate",
+        "relTime",
+        "fmtBytes",
+        "repairJson",
+        "extractJson",
+        "extractJsonArray",
+        "copyText",
+        "downloadUrl"
+      ],
+      "totalLines": 382,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/assets.js": {
+      "filePath": "public/js/pages/assets.js",
+      "contentHash": "c88cf114e8f6e8a3947c11f890e25dd6ce4e6ea6d2e8a074d932f78876e049a8",
+      "functions": [
+        {
+          "name": "assets",
+          "params": [
+            "container",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 234
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "copyText",
+            "relTime",
+            "IMAGE_USAGES",
+            "statusBadge"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "empty",
+            "spinner",
+            "confirm",
+            "setBusy"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head",
+            "projectPicker"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "navigate",
+            "onEvent"
+          ]
+        }
+      ],
+      "exports": [
+        "assets"
+      ],
+      "totalLines": 245,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/dashboard.js": {
+      "filePath": "public/js/pages/dashboard.js",
+      "contentHash": "bbd7f3833fb3f19f0e15483aee38bdfd75de712190d2df503f9fdaa3fad33a1d",
+      "functions": [
+        {
+          "name": "dashboard",
+          "params": [
+            "container"
+          ],
+          "exported": true,
+          "lineCount": 136
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "relTime",
+            "fmtTime"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "empty",
+            "spinner",
+            "toast"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "navigate"
+          ]
+        }
+      ],
+      "exports": [
+        "dashboard"
+      ],
+      "totalLines": 147,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/helpers.js": {
+      "filePath": "public/js/pages/helpers.js",
+      "contentHash": "faa3ecb86fd9ddbb69a320338701d42d2df73afd217d618bb727fd10843ad134",
+      "functions": [
+        {
+          "name": "head",
+          "params": [
+            "o"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "projectPicker",
+          "params": [
+            "projects",
+            "selected"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "renderBatchBar",
+          "params": [
+            "el",
+            "job"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "selectField",
+          "params": [
+            "label",
+            "id",
+            "optionsHtml"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "inputField",
+          "params": [
+            "label",
+            "id"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "textareaField",
+          "params": [
+            "label",
+            "id"
+          ],
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc"
+          ]
+        }
+      ],
+      "exports": [
+        "head",
+        "projectPicker",
+        "renderBatchBar",
+        "selectField",
+        "inputField",
+        "textareaField"
+      ],
+      "totalLines": 67,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/images.js": {
+      "filePath": "public/js/pages/images.js",
+      "contentHash": "717b609604edeb08ab4da41a70c60a2fe88fc004ff5d0ffacf0a4c8baaaf6174",
+      "functions": [
+        {
+          "name": "images",
+          "params": [
+            "container",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 274
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "copyText",
+            "IMAGE_SIZES",
+            "IMAGE_USAGES",
+            "modelChoices"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "empty",
+            "spinner",
+            "confirm",
+            "options",
+            "setBusy"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head",
+            "projectPicker"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "navigate"
+          ]
+        }
+      ],
+      "exports": [
+        "images"
+      ],
+      "totalLines": 285,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/projects.js": {
+      "filePath": "public/js/pages/projects.js",
+      "contentHash": "2367a9d286942ed228c7c767a151ba5666f765173ede3587e0363f544cd71302",
+      "functions": [
+        {
+          "name": "projects",
+          "params": [
+            "container",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 167
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "fmtTime",
+            "relTime",
+            "PROJECT_TYPES",
+            "PLATFORMS",
+            "ASPECTS"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "confirm",
+            "toast",
+            "empty",
+            "spinner",
+            "options"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "navigate",
+            "softRefresh"
+          ]
+        }
+      ],
+      "exports": [
+        "projects"
+      ],
+      "totalLines": 178,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/scripts.js": {
+      "filePath": "public/js/pages/scripts.js",
+      "contentHash": "5122dbc1ef75db4e328cb2aa746641c38c27b9e0ca5faa39afd53054db653da3",
+      "functions": [
+        {
+          "name": "scripts",
+          "params": [
+            "container",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 341
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "relTime",
+            "extractJson",
+            "extractJsonArray",
+            "copyText",
+            "SCRIPT_TYPES",
+            "modelChoices"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "empty",
+            "spinner",
+            "options",
+            "confirm"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head",
+            "projectPicker"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "softRefresh"
+          ]
+        }
+      ],
+      "exports": [
+        "scripts"
+      ],
+      "totalLines": 361,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/settings.js": {
+      "filePath": "public/js/pages/settings.js",
+      "contentHash": "6804a1820521c2143f74743de12af8d7192c98a66ab1df7e731d00d3d0201632",
+      "functions": [
+        {
+          "name": "settings",
+          "params": [
+            "container"
+          ],
+          "exported": true,
+          "lineCount": 408
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "TEMPLATE_TYPES",
+            "modelChoices",
+            "fmtTime"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "spinner",
+            "confirm",
+            "options",
+            "setBusy"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "refreshState"
+          ]
+        }
+      ],
+      "exports": [
+        "settings"
+      ],
+      "totalLines": 428,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/storyboards.js": {
+      "filePath": "public/js/pages/storyboards.js",
+      "contentHash": "7fdfaf64c8a5e8ce504c6762ed8a4a93b9ad4c6ee65bcd4c328886baa176d669",
+      "functions": [
+        {
+          "name": "storyboards",
+          "params": [
+            "container",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 456
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "extractJsonArray",
+            "copyText",
+            "SHOT_TYPES",
+            "STORYBOARD_STATUS"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "empty",
+            "spinner",
+            "confirm",
+            "options",
+            "setBusy"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head",
+            "projectPicker",
+            "renderBatchBar"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "onEvent"
+          ]
+        }
+      ],
+      "exports": [
+        "storyboards"
+      ],
+      "totalLines": 470,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/tasks.js": {
+      "filePath": "public/js/pages/tasks.js",
+      "contentHash": "9bd6b74a0d43020f990e389377d45ce5992fe0eb9682a6c9e4de1557cdd67503",
+      "functions": [
+        {
+          "name": "tasks",
+          "params": [
+            "container"
+          ],
+          "exported": true,
+          "lineCount": 295
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "statusBadge",
+            "VIDEO_STATUS",
+            "REMOTE_STATUS",
+            "LOCAL_STATUS",
+            "relTime",
+            "fmtTime",
+            "copyText"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "empty",
+            "spinner",
+            "confirm",
+            "promptDlg",
+            "options",
+            "setBusy"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "onEvent"
+          ]
+        }
+      ],
+      "exports": [
+        "tasks"
+      ],
+      "totalLines": 319,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/pages/videos.js": {
+      "filePath": "public/js/pages/videos.js",
+      "contentHash": "0e19b5b78ad4a64251891c15141e0877eb7115fab6d21fff2317df486cbcb857",
+      "functions": [
+        {
+          "name": "videos",
+          "params": [
+            "container",
+            "params"
+          ],
+          "exported": true,
+          "lineCount": 390
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../consts.js",
+          "specifiers": [
+            "icon",
+            "esc",
+            "DURATION_PRESETS",
+            "VIDEO_RESOLUTIONS",
+            "VIDEO_MODES",
+            "IMAGE_ROLES",
+            "statusBadge",
+            "relTime",
+            "modelChoices"
+          ]
+        },
+        {
+          "source": "../api.js",
+          "specifiers": [
+            "api"
+          ]
+        },
+        {
+          "source": "../ui.js",
+          "specifiers": [
+            "modal",
+            "toast",
+            "empty",
+            "spinner",
+            "confirm",
+            "options",
+            "promptDlg",
+            "setBusy"
+          ]
+        },
+        {
+          "source": "./helpers.js",
+          "specifiers": [
+            "head",
+            "projectPicker"
+          ]
+        },
+        {
+          "source": "../app.js",
+          "specifiers": [
+            "state",
+            "navigate"
+          ]
+        }
+      ],
+      "exports": [
+        "videos"
+      ],
+      "totalLines": 405,
+      "hasStructuralAnalysis": true
+    },
+    "public/js/ui.js": {
+      "filePath": "public/js/ui.js",
+      "contentHash": "abdb278ff607d39f644d87dcf70b88bb718e1c0c7e1a95fc633e11798e087301",
+      "functions": [
+        {
+          "name": "toast",
+          "params": [
+            "message"
+          ],
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "modal",
+          "params": [
+            "o"
+          ],
+          "exported": true,
+          "lineCount": 59
+        },
+        {
+          "name": "confirm",
+          "params": [
+            "o"
+          ],
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "prompt",
+          "params": [
+            "o"
+          ],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "on",
+          "params": [
+            "root",
+            "selector",
+            "type",
+            "fn",
+            "opts"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "dataOf",
+          "params": [
+            "el",
+            "name"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "empty",
+          "params": [
+            "title",
+            "desc"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "spinner",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "options",
+          "params": [
+            "items",
+            "current"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "setBusy",
+          "params": [
+            "btn",
+            "busy"
+          ],
+          "exported": true,
+          "lineCount": 27
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./consts.js",
+          "specifiers": [
+            "icon",
+            "esc"
+          ]
+        }
+      ],
+      "exports": [
+        "toast",
+        "modal",
+        "confirm",
+        "prompt",
+        "on",
+        "dataOf",
+        "empty",
+        "spinner",
+        "options",
+        "setBusy"
+      ],
+      "totalLines": 244,
+      "hasStructuralAnalysis": true
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "c56bc0c95afd418e5c16f45c90f7cac93e00ed3d900f32d6237bb2224c101b73",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 124,
+      "hasStructuralAnalysis": true
+    },
+    "server.js": {
+      "filePath": "server.js",
+      "contentHash": "73d2e6b4697fb810c6c035e7644db0a57adb1968bb88b7a583c785157ecf05fd",
+      "functions": [
+        {
+          "name": "resolveHome",
+          "params": [],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "materializeAssets",
+          "params": [],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "sendJson",
+          "params": [
+            "res",
+            "status",
+            "obj"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "sendText",
+          "params": [
+            "res",
+            "status",
+            "text"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "readBody",
+          "params": [
+            "req"
+          ],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "originOk",
+          "params": [
+            "req"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "safeResolve",
+          "params": [
+            "base",
+            "relPath"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "serveStatic",
+          "params": [
+            "req",
+            "res",
+            "urlPath"
+          ],
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "serveAsset",
+          "params": [
+            "req",
+            "res",
+            "urlPath"
+          ],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "listen",
+          "params": [
+            "port"
+          ],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "banner",
+          "params": [
+            "url",
+            "port",
+            "resumed"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "openBrowser",
+          "params": [
+            "url"
+          ],
+          "exported": false,
+          "lineCount": 11
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 359,
+      "hasStructuralAnalysis": true
+    },
+    "tools/apitest.mjs": {
+      "filePath": "tools/apitest.mjs",
+      "contentHash": "59f28e8f6ee3cc4a0bbcf90ab756e7ea56b6300333535a179aec1a8bfbe5aa77",
+      "functions": [
+        {
+          "name": "ok",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "eq",
+          "params": [
+            "name",
+            "a",
+            "b"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "group",
+          "params": [
+            "t"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "freePort",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "listenAsync",
+          "params": [
+            "server",
+            "port"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "waitHealth",
+          "params": [
+            "base"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "api",
+          "params": [
+            "method",
+            "url",
+            "body"
+          ],
+          "exported": false,
+          "lineCount": 10
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "node:http",
+          "specifiers": [
+            "http"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawn"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 711,
+      "hasStructuralAnalysis": true
+    },
+    "tools/browser-test.mjs": {
+      "filePath": "tools/browser-test.mjs",
+      "contentHash": "aae21520b383ce5f45583b6a278fbe87c22b64e2501e0fd7f8e582f4e254b9b8",
+      "functions": [
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "ok",
+          "params": [
+            "name",
+            "condition"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "group",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "findBrowser",
+          "params": [],
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "waitFor",
+          "params": [
+            "fn",
+            "label"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "getTarget",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "CDP",
+          "methods": [
+            "constructor",
+            "connect",
+            "send",
+            "eval",
+            "close"
+          ],
+          "properties": [],
+          "exported": false,
+          "lineCount": 46
+        }
+      ],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawn"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 228,
+      "hasStructuralAnalysis": true
+    },
+    "tools/build-exe.mjs": {
+      "filePath": "tools/build-exe.mjs",
+      "contentHash": "f010a74fb355f487bd2b5429bc35da8e14e0412cc8c04212fc913b0a1bf1d7c6",
+      "functions": [
+        {
+          "name": "valueOf",
+          "params": [
+            "flag",
+            "fallback"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "log",
+          "params": [
+            "n",
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "size",
+          "params": [
+            "n"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "assert",
+          "params": [
+            "condition",
+            "message"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "walk",
+          "params": [
+            "dir"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "findFuse",
+          "params": [
+            "exePath"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "run",
+          "params": [
+            "command",
+            "args",
+            "label"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 69
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:module",
+          "specifiers": [
+            "createRequire"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 139,
+      "hasStructuralAnalysis": true
+    },
+    "tools/build-graph-data.mjs": {
+      "filePath": "tools/build-graph-data.mjs",
+      "contentHash": "6278c75b594b8ec8ba0e6381b94ff9ff8917dcb6dc8703331a2467203ea5098e",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": true
+    },
+    "tools/run-all.mjs": {
+      "filePath": "tools/run-all.mjs",
+      "contentHash": "1f814160062b26523dcc018bd850cc9588579b17b33a0b8b02f4a544e821bdac",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 17,
+      "hasStructuralAnalysis": true
+    },
+    "tools/selftest.mjs": {
+      "filePath": "tools/selftest.mjs",
+      "contentHash": "d51830420f14daa5d20fe4a431a12046556563465679f21c5e50de3bc9d088a6",
+      "functions": [
+        {
+          "name": "ok",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "eq",
+          "params": [
+            "name",
+            "actual",
+            "expected"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "group",
+          "params": [
+            "t"
+          ],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath",
+            "pathToFileURL"
+          ]
+        },
+        {
+          "source": "node:module",
+          "specifiers": [
+            "createRequire"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 377,
+      "hasStructuralAnalysis": true
+    },
+    "tools/uitest.mjs": {
+      "filePath": "tools/uitest.mjs",
+      "contentHash": "1bc70863c13e7c26afb26ca16aff4deaa89e36d49547a4b5fe3caa48290bf751",
+      "functions": [
+        {
+          "name": "ok",
+          "params": [
+            "name",
+            "cond"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "group",
+          "params": [
+            "t"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "read",
+          "params": [
+            "p"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "listJs",
+          "params": [
+            "dir"
+          ],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 251,
+      "hasStructuralAnalysis": true
+    }
+  }
+}
