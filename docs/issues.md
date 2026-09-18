@@ -515,3 +515,5 @@ run-all 全绿 128/207/452/69。图谱时效：9-12 轮对 poller.js（函数体
 - 基线：selftest **135** / apitest 212 / uitest 452 / browser-test 78，run-all 全绿。
 
 **B20 巡检轮·九（第 21 轮）**：设置健壮性面复审零发现——E8 钳制（唯一写入口 + 7 键区间 + 非法回落）与消费端三兜底（poller Math.max、jobs 并发上限 8、agnes timeout ||默认）均早有钉；models.json 走只读默认降级属正确设计（缓存可重取），不扩 rescueFile 面。顺带同步 audit-summary 至 135 基线并补 19-21 轮总账。
+
+**B21 巡检轮·十（第 22 轮）**：排序面审计。API 层本就三级数值排序（episode→sort_order→shot_number），"字符串镜号乱序"假设证伪；但发现**插队自愈行为零钉**——无 sort_order 的行靠 `Number()-Number()` 产 NaN、经 `||` 短路恰好退化到镜号序（正确但微妙）。补契约钉（apitest 212→213）：乱序插入 2,30,1,10 → 返回 1,2,10,30。防未来把 `||` 链改成减法链时悄悄破掉这条兜底。产品零缺陷。

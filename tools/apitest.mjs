@@ -381,6 +381,13 @@ group('分镜');
   await api('POST', '/api/storyboards/reorder', { ids });
   const after = await api('GET', `/api/storyboards?project_id=${PROJECT_ID}&episode=1`);
   eq('排序生效', after.data[0].id, ids[0]);
+  { // 插队自愈契约：乱序插入 + 无 sort_order（NaN 经 || 短路退化到镜号数值序）
+    const sp = await api('POST', '/api/projects', { name: '插队剧' });
+    for (const n of [2, 30, 1, 10]) await api('POST', '/api/storyboards', { project_id: sp.data.id, episode_number: 1, shot_number: n, video_prompt: `镜${n}` });
+    const got = await api('GET', `/api/storyboards?project_id=${sp.data.id}&episode_number=1`);
+    eq('乱序插入返回数值序 1,2,10,30', got.data.map((r) => r.shot_number).join(','), '1,2,10,30');
+    await api('DELETE', `/api/projects/${sp.data.id}?cascade=1`);
+  }
 
   const one = l1.data[0];
   const u = await api('PUT', `/api/storyboards/${one.id}`, { shot_type: '仰拍', duration_seconds: 5 });
