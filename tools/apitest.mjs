@@ -433,8 +433,10 @@ group('图片生成');
 let VID_ID = '';
 group('视频任务');
 {
+  const e2eSb = await api('POST', '/api/storyboards', { project_id: PROJECT_ID, episode_number: 99, shot_number: 991, scene_description: '回写验证镜头', video_prompt: 'hero turns' });
   const r = await api('POST', '/api/videos', {
     prompt: 'hero turns and smiles',
+    storyboard_id: e2eSb.data.id,
     project_id: PROJECT_ID,
     mode: 'text_to_video',
     num_frames: 121,
@@ -461,6 +463,10 @@ group('视频任务');
   ok('拿到视频地址', !!asset.video_url, asset.video_url);
   eq('本地状态完成', asset.local_status, 'completed');
   ok('记录了完成时间', !!asset.completed_at);
+  // E2E 轮实测修复的钉：首片完成必须同步把镜头推进到 video_ready（否则分镜徽章停在"有图片"）
+  const sbRow = await api('GET', `/api/storyboards?project_id=${PROJECT_ID}&episode=99`);
+  const linked = (sbRow.data || []).find((x) => x.id === e2eSb.data.id);
+  ok('首片完成回写镜头状态 video_ready', !!linked && linked.status === 'video_ready' && linked.linked_video_id === asset.id, JSON.stringify(linked && { s: linked.status, v: linked.linked_video_id }));
   ok('存了原始状态响应', !!asset.raw_status_response);
 
   // 开了自动保存，应该已经落盘

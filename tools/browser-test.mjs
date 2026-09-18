@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
+import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -329,6 +330,56 @@ try {
       const heap = await cdp.eval(`performance.memory ? Math.round(performance.memory.usedJSHeapSize/1048576) : -1`);
       console.log(`  [容量] JS 堆 ${heap}MB`);
       ok('JS 堆占用 <250MB（渲染 300 行后）', heap < 250, `${heap}MB`);
+    }
+
+    group('全链路 E2E（mock 上游 × 真实 UI）');
+    {
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      let mockHit = { img: 0, vid: 0, query: 0 };
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        if (u.pathname === '/pixel.png') { res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': PNG.length }); return res.end(PNG); }
+        if (u.pathname === '/done.mp4') { const b = Buffer.from('E2EMP4DATA'); res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length }); return res.end(b); }
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          if (u.pathname === '/v1/images/generations') { mockHit.img++; return send(200, { data: [{ url: `http://127.0.0.1:${mockPort}/pixel.png` }] }); }
+          if (u.pathname === '/v1/videos') { mockHit.vid++; return send(200, { id: 'e2e_vid_1', status: 'queued' }); }
+          if (u.pathname === '/agnesapi') { mockHit.query++; return send(200, { id: 'e2e_vid_1', status: 'completed', progress: 100, remixed_from_video_id: `http://127.0.0.1:${mockPort}/done.mp4` }); }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      try {
+        const jset = await (await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'e2e-mock-key', auto_download_video: '1', video_poll_interval: '2' }) })).json();
+        ok('E2E mock 上游接入设置', jset.ok === true);
+        const plist = await (await fetch(`http://127.0.0.1:${port}/api/projects`)).json();
+        const pid = (plist.find((x) => x.name === '浏览器验收剧') || {}).id;
+        const sb = await (await fetch(`http://127.0.0.1:${port}/api/storyboards`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, episode_number: 1, shot_number: 77, scene_description: 'E2E 贯穿镜头', image_prompt: 'e2e image prompt', video_prompt: 'e2e video prompt', duration_seconds: 4 }) })).json();
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await waitFor(() => cdp.eval(`[...document.querySelectorAll('#table tbody tr')].some((tr)=>tr.innerText.includes('#77'))`), 'E2E 镜头行出现');
+        await cdp.eval(`const tr=[...document.querySelectorAll('#table tbody tr')].find((t)=>t.innerText.includes('#77'));tr.querySelector('[data-img]').click();return true;`);
+        await waitFor(async () => {
+          const v = await (await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=${pid}&episode=1`)).json();
+          const row = v.find((x) => x.shot_number === 77);
+          return row && row.linked_image_id;
+        }, 'UI 出图链落库', 20000);
+        ok('E2E 一点出图：资产关联+mock 恰一发', mockHit.img === 1, JSON.stringify(mockHit));
+        ok('出图后分镜状态推进', await (await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=${pid}&episode=1`)).json().then((v) => (v.find((x) => x.shot_number === 77) || {}).status === 'image_ready'));
+        await cdp.eval(`const tr=[...document.querySelectorAll('#table tbody tr')].find((t)=>t.innerText.includes('#77'));tr.querySelector('[data-vid]').click();return true;`);
+        await waitFor(() => cdp.eval(`location.hash.startsWith('#/tasks')`), 'E2E 提交后跳任务页', 10000);
+        await waitFor(() => cdp.eval(`[...document.querySelectorAll('.task-row')].some((el)=>el.innerText.includes('e2e video prompt')&&el.innerText.includes('完成'))`), 'SSE 免刷新推进到完成（行级）', 25000);
+        ok('E2E 出视频链贯通（提交→轮询→SSE 免刷新）', mockHit.vid === 1 && mockHit.query >= 1, JSON.stringify(mockHit));
+        const vids = await (await fetch(`http://127.0.0.1:${port}/api/videos?project_id=${pid}`)).json();
+        const mine = vids.find((v) => String(v.video_prompt).includes('e2e video prompt'));
+        ok('自动下载落盘+状态双完成', !!mine && mine.status === 'completed' && mine.local_status === 'completed' && !!mine.local_file, JSON.stringify(mine && { s: mine.status, l: mine.local_status, f: !!mine.local_file }));
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await waitFor(() => cdp.eval(`[...document.querySelectorAll('#table tbody tr')].some((tr)=>tr.innerText.includes('#77')&&tr.innerText.includes('有视频'))`), '回分镜页见「有视频」回显');
+        ok('E2E 终点：分镜行回显视频态', true);
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '', video_poll_interval: '8' }) });
+      } finally { mock.close(); }
     }
 
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
