@@ -292,7 +292,7 @@ try {
       await post(`/api/storyboards?project_id=${pid}`, { project_id: pid, shot_number: 1, scene_description: X('scene'), characters: X('chars'), dialogue: X('dlg'), shot_type: X('type'), image_prompt: X('iprompt'), video_prompt: X('vprompt') });
       await post('/api/scripts', { project_id: pid, title: X('script'), content: '正文里也有 ' + X('body'), script_type: 'story_concept' });
       await post('/api/images', { project_id: pid, name: X('assetname'), notes: X('notes'), url: '/assets/none.png' });
-      await post('/api/templates', { name: X('tpl'), system: 's', content: '正文 {{变量}} 型' });
+      const evilTpl = await post('/api/templates', { name: X('tpl'), system: 's', content: '正文 {{变量}} 型' });
       for (const [hash, tag] of [['#/dashboard','dash'],['#/projects','projects'],[`#/storyboards?project=${pid}`,'sbs'],[`#/scripts?project=${pid}&tab=story_concept`,'scripts'],['#/assets','assets'],['#/settings?sec=template','settings']]) {
         await cdp.eval(`location.hash = '${hash}'; return true;`);
         await waitFor(() => cdp.eval(`!!document.querySelector('.page')`), `XSS 页 ${tag}`);
@@ -318,6 +318,13 @@ try {
       ok('弹窗标题毒名称原样转义', await cdp.eval(`!!document.querySelector('.modal') && document.querySelector('.modal').innerText.includes('<img src=x onerror=')`));
       await cdp.eval(`document.querySelector('.modal [data-close]')?.click(); document.querySelector('.modal [data-discard]')?.click(); return true;`);
       await fetch(`http://127.0.0.1:${port}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      // 探针模板必须一并清掉：它没写 template_type → 落库时被填成默认类型（story_concept），
+      // 于是"故事构思"页签会渲染这个只含 {{变量}} 的毒模板，污染后面所有读模板的分组
+      // （批 4 的剧本链路分组就是这么被污染的：门禁报"缺字段：变量"）。
+      // 教训：探针数据不只是项目——**任何被后续分组按类型取用的全局集合都要收尾**。
+      if (evilTpl && evilTpl.id) await fetch(`http://127.0.0.1:${port}/api/templates/${evilTpl.id}`, { method: 'DELETE' });
+      const tplLeft = await (await fetch(`http://127.0.0.1:${port}/api/templates`)).json();
+      ok('毒模板探针已清理（不再污染后续分组的模板列表）', !tplLeft.some((t) => t.id === (evilTpl && evilTpl.id)));
     }
 
     group('宣告与图像替代文本契约（A11y：live region 与 img alt）');
@@ -1158,6 +1165,111 @@ try {
       for (const h of after2.filter((p) => p.name === '连点对照剧')) await fetch(`http://127.0.0.1:${port}/api/projects/${h.id}?cascade=1`, { method: 'DELETE' });
       const cleaned = (await Jget('/api/projects')).length;
       ok('连点探针已清理（项目数复原）', cleaned === before, `before=${before} cleaned=${cleaned}`);
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
+    group('剧本链路契约（批 4：就地编辑 → 带入下一步 → 门禁 → 计数）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      // 门禁在"没有 API Key"时会先提示配 Key（更根本的问题），所以这里配一个假 Key 让流程走到门禁。
+      // base_url 指向一个关闭的端口：万一有调用漏过门禁，会立刻连接失败而不是打真实上游。
+      await J('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agnes_api_key: 'chain-probe-key', agnes_api_base_url: 'http://127.0.0.1:1/v1' }),
+      });
+      // 前端 state.settings 是启动时取的快照：改完 Key 必须让页面重新 bootstrap，
+      // 否则页面里那个空 Key 会让 generate() 在门禁之前就退出（第一次跑就是这么假红的）。
+      // 门禁的"拦住"路径要用真有长文本字段的页签：故事构思那 8 个都是短参数，
+      // 空着只该"确认"不该"拦住"。单集脚本的长文本字段是「本集大纲」。
+      await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#gen');`), '脚本页就绪', 12000);
+      await cdp.eval(`location.reload(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#gen');`), '重载后脚本页就绪', 15000);
+      await sleep(500);
+      // 自证：故事构思页签渲染的必须是真种子模板（含"题材"等 8 个变量）。
+      // 若这里只剩一个"变量"，说明模板集合被别的探针污染了——那种情况下后面的断言全是假象。
+      const tplFields = await cdp.eval(`return Array.from(document.querySelectorAll('#fields [data-var]')).map((x) => x.getAttribute('data-var'));`);
+      ok('页签渲染的是真种子模板（自证未被污染）',
+        Array.isArray(tplFields) && tplFields.includes('本集大纲'), JSON.stringify(tplFields));
+      ok('R18 长文本字段是多行输入框（故事想法/本集大纲这类不该是单行 input）',
+        await cdp.eval(`return document.querySelector('#fields textarea') !== null;`));
+
+      // 门禁第一条：长文本空着时点生成必须被拦住，且**一次 API 都不发**（没有 Key 也不会走到调用）
+      await cdp.eval(`document.querySelector('#gen').click(); return true;`);
+      const blocked = await waitFor(() => cdp.eval(`const m = document.querySelector('.modal'); return m ? m.innerText : '';`), '缺素材告知弹窗', 6000).catch(() => '');
+      ok('R16 门禁：长文本空着时拦住生成并说明原因',
+        String(blocked).includes('还缺生成素材') && String(blocked).includes('本集大纲') && String(blocked).includes('带入下一步'),
+        String(blocked).replace(/\n/g, ' ').slice(0, 110));
+      ok('R16 拦住时只给一个"知道了"（不是假装有选择）', await cdp.eval(`return document.querySelectorAll('.modal-foot button').length === 1;`));
+      await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+
+      // 用后端直接塞一条结果？不行——结果区是前端状态。改为走「已保存脚本 → 载入」这条真实路径，
+      // 它同时验证了"载入的脚本也进入可编辑/可带入的状态"。
+      await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=story_concept'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#gen');`), '回到故事构思页签', 8000);
+      const saved = await J('/api/scripts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: pid, script_type: 'story_concept', title: '链路探针·故事构思',
+          content: '{"logline":"一个女孩在天台上等一场不会来的雨。","tone":"克制的孤独"}',
+          model_name: 'probe', generation_prompt: '',
+        }),
+      });
+      await cdp.eval(`document.querySelector('#reload').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('[data-use="${saved.id}"]');`), '已保存脚本列表', 8000);
+      await cdp.eval(`document.querySelector('[data-use="${saved.id}"]').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#r-edit-box');`), '结果区可编辑', 6000);
+      ok('R17 载入的历史脚本也进入可编辑结果区', await cdp.eval(`return !!document.querySelector('#r-edit-box');`));
+      ok('R17 结果区显示 JSON 可解析与字数', /JSON 可解析/.test(await cdp.eval(`return document.querySelector('#r-stat').innerText;`)));
+
+      // 就地编辑：改一个字段 → 结果区标"已改动" → 撤销能回到原样
+      await cdp.eval(`const b = document.querySelector('#r-edit'); b.click(); const t = document.querySelector('#r-edit-box'); t.value = t.value.replace('不会来的雨', '终于落下的雨'); t.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+      ok('R17 就地编辑标记"已改动"', await cdp.eval(`return Array.from(document.querySelectorAll('.badge')).some((x) => x.innerText.includes('已改动'));`));
+      ok('R17 编辑后的内容进入唯一事实来源（复制/保存/带入都读它）',
+        await cdp.eval(`return document.querySelector('#r-edit-box').value.includes('终于落下的雨');`));
+      ok('R17 提供撤销改动（改坏了不用重新烧配额）', await cdp.eval(`return !!document.querySelector('#r-undo');`));
+      await cdp.eval(`document.querySelector('#r-undo').click(); return true;`);
+      await sleep(300);
+      ok('R17 撤销回到模型原样', await cdp.eval(`const t = document.querySelector('#r-edit-box'); return !t || !t.value.includes('终于落下的雨');`));
+
+      // R16 核心：带入下一步
+      await cdp.eval(`document.querySelector('#r-next').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#upstream .upstream-strip');`), '上游带入提示条', 6000);
+      const carry = await cdp.eval(`const s = document.querySelector('#upstream .upstream-strip');
+        const ta = document.querySelector('#fields textarea');
+        return { strip: s.innerText.replace(/\s+/g, ' ').trim(), active: document.querySelector('#tabs .on').innerText.trim(),
+          carried: !!document.querySelector('#fields textarea.carried'), val: ta ? ta.value.slice(0, 30) : '', step: document.querySelector('#step-no').innerText.trim() };`);
+      ok('R16 带入后自动切到下一步（剧情梗概）', carry.active === '剧情梗概', JSON.stringify(carry.active));
+      ok('R16 带入内容写进了下游的长文本字段并被高亮', carry.carried && String(carry.val).includes('logline'), JSON.stringify(carry));
+      ok('R16 提示条说清来源与字段名', String(carry.strip).includes('已从') && String(carry.strip).includes('故事构思') && String(carry.strip).includes('带入'), carry.strip);
+      ok('R16 步骤指示器显示第 2/5 步', carry.step === '第 2/5 步', carry.step);
+      ok('R18 下游字段显示字数', /\d+ 字/.test(await cdp.eval(`return document.querySelector('#fields .counter').innerText;`)));
+
+      // 撤销带入 → 字段清空、提示条消失
+      await cdp.eval(`document.querySelector('#up-undo').click(); return true;`);
+      await sleep(300);
+      ok('R16 撤销带入后提示条消失且字段清空',
+        await cdp.eval(`return !document.querySelector('#upstream .upstream-strip') && document.querySelector('#fields textarea').value === '';`));
+
+      // R18 超软上限 → 确认弹窗（先取消，不真的调用模型）
+      await cdp.eval(`const t = document.querySelector('#fields textarea'); t.value = '字'.repeat(6200); t.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+      const overHint = await cdp.eval(`const c = document.querySelector('#fields .counter'); return { txt: c.innerText, over: c.classList.contains('over') };`);
+      ok('R18 超软上限时计数变琥珀色并提示上限', overHint.over && overHint.txt.includes('6,000 字'), JSON.stringify(overHint));
+      await cdp.eval(`document.querySelector('#gen').click(); return true;`);
+      const confirmTxt = await waitFor(() => cdp.eval(`const m = document.querySelector('.modal'); return m ? m.innerText : '';`), '超长确认弹窗', 6000).catch(() => '');
+      ok('R18 超软上限时生成前要确认（不静默截断、也不硬拦）',
+        String(confirmTxt).includes('生成前确认') && String(confirmTxt).includes('6,200 字'), String(confirmTxt).replace(/\n/g, ' ').slice(0, 120));
+      await cdp.eval(`document.querySelector('.modal-foot [data-no]').click(); return true;`);
+      await sleep(300);
+      ok('R18 取消确认后没有发起生成（按钮未被禁用）', await cdp.eval(`return !document.querySelector('#gen').disabled;`));
+
+      await fetch(`http://127.0.0.1:${port}/api/scripts/${saved.id}`, { method: 'DELETE' }).catch(() => {});
+      // 收尾：把探针 Key 收回（后续分组各自配自己的，不依赖这里）
+      await fetch(`http://127.0.0.1:${port}/api/settings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agnes_api_key: '', agnes_api_base_url: '' }),
+      });
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 

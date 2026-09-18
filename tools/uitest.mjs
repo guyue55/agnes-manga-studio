@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -23,6 +23,13 @@ function ok(name, cond, extra = '') {
   if (cond) { pass++; return true; }
   fail++; failures.push(`${name}${extra ? ` — ${extra}` : ''}`);
   return false;
+}
+// 期望值比对：失败时把"期望/实际"打出来。纯函数断言靠它才有可读的失败信息
+// （只看 "false" 无法判断是差一格还是完全错了）。
+function eq(name, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  return ok(name, a === e, `期望 ${e}，实际 ${a}`);
 }
 function group(t) { console.log(`\n── ${t} ──`); }
 
@@ -650,6 +657,78 @@ group('共享符号使用必须先导入（防白屏）');
   ok('页面调用共享函数前必须导入（否则整页白屏）', bad.length === 0, bad.join(' | '));
   ok('共享导出清单已解析（自证非空跑）', shared.length >= 30, `shared=${shared.length}`);
   ok('灵敏度对照：未导入的调用会被检出', /(?<![.\w$])skeleton\s*\(/.test('el.innerHTML = `${skeleton(1)}`'));
+}
+
+group('批 4：剧本链路（R16 带入下一步 / R17 就地编辑 / R18 计数）');
+{
+  // 纯函数直接动态 import 进来测边界——只做源级棘轮的话，"5999/6000/6001 到底算不算超限"
+  // 这种最容易写错一格的逻辑只能靠真机间接覆盖。
+  // public/js/*.js 是浏览器 ESM 而 package.json 没有 type 字段，Node 会打 MODULE_TYPELESS 警告；
+  // 去掉 warning 监听即可（本脚本不依赖 warning）。
+  process.removeAllListeners('warning');
+  const ts = await import(pathToFileURL(path.join(PUB, 'js', 'textstats.js')).href);
+  eq('按码点计数：中文 1 字算 1', ts.charCount('你好世界'), 4);
+  eq('按码点计数：emoji 算 1 个字（不是 UTF-16 的 2）', ts.charCount('😀'), 1);
+  eq('计数含换行与空格（用户看到多少就是多少）', ts.charCount('a\nb c'), 5);
+  eq('空值/undefined 安全', ts.charCount(undefined), 0);
+  eq('千分位展示', ts.countLabel(1234567), '1,234,567 字');
+  eq('软上限边界：恰好 6000 不算超', ts.limitState(6000).over, false);
+  eq('软上限边界：6001 才算超（差一格都要测）', ts.limitState(6001).over, true);
+  eq('超限文案带出具体字数与上限', ts.limitState(7000).text.includes('7,000 字') && ts.limitState(7000).text.includes('6,000 字'), true);
+  // 覆盖真实种子模板里的长文本字段名（故事想法/本集大纲/剧情梗概/脚本内容 都必须是多行输入框）
+  ok('长文本判定覆盖真实模板字段（故事想法/本集大纲/剧情梗概/脚本内容）',
+    ['故事想法', '本集大纲', '剧情梗概', '脚本内容', '小说原文'].every((x) => ts.isLongVar(x))
+    && !['标题', '风格要求', '目标集数', '单集时长', '题材'].some((x) => ts.isLongVar(x)));
+  eq('提示词总长 = 各条消息 content 之和', ts.promptLength([{ content: 'abc' }, { content: 'de' }]), 5);
+
+  // R16 门禁判据
+  const v = ts.checkPromptVars(['单集脚本', '标题'], { 单集脚本: '  ', 标题: 'x' });
+  eq('长文本空白 → 判定为"缺素材"（空格不算填了）', v.blocked, true);
+  eq('长文本空白时列出的就是它', v.emptyLong.join(','), '单集脚本');
+  eq('短变量空着不算拦住', ts.checkPromptVars(['标题'], {}).blocked, false);
+  eq('超软上限的字段被点名并带字数',
+    ts.checkPromptVars(['单集脚本'], { 单集脚本: '字'.repeat(6001) }).over[0].chars, 6001);
+  const gb = ts.promptGate({ emptyLong: ['单集脚本'] });
+  eq('缺素材 → blocked（不是"确认后继续"）', gb.kind, 'blocked');
+  eq('缺素材的文案给出去哪找素材（带入下一步）', /带入下一步/.test(gb.lines.join('')), true);
+  const gc = ts.promptGate({ emptyShort: ['标题'], total: 13000 });
+  eq('只是缺短变量/超长 → confirm（可继续）', gc.kind, 'confirm');
+  ok('确认文案列出具体字段与字数', /标题/.test(gc.lines.join('')) && /13,000 字/.test(gc.lines.join('')));
+  eq('一切正常 → 不打扰用户（null）', ts.promptGate({ total: 100 }), null);
+
+  // 源级棘轮
+  const sc = read(path.join(PUB, 'js', 'pages', 'scripts.js'));
+  const sbs = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const consts = read(path.join(PUB, 'js', 'consts.js'));
+  ok('链路步骤顺序是显式单一事实来源（5 步，首尾固定）',
+    /export const SCRIPT_STEPS = \['story_concept', 'plot_summary', 'episode_outline', 'episode_script', 'storyboard_script'\]/.test(consts)
+    && /export function nextScriptStep/.test(consts));
+  ok('R17 结果区可编辑（textarea 绑 result，不是只读 pre）',
+    /id="r-edit-box"/.test(sc) && /result = box\.value/.test(sc) && /id="r-undo"/.test(sc));
+  ok('R17 编辑落在唯一事实来源上（复制/保存/导入都读 result）',
+    /copyText\(result\)/.test(sc) && /content: result/.test(sc));
+  ok('R17 格式化视图保持只读（就地改格式化 JSON 极易改坏结构）',
+    /<pre class="json-out" id="r-out"/.test(sc) && /JSON\.stringify\(p2, null, 2\)/.test(sc));
+  ok('R16 带入下一步写明目标步骤名（用户知道去哪）',
+    /带入下一步：\$\{esc\(nextLabel\)\}/.test(sc) && /function carryToNext/.test(sc));
+  ok('R16 带入只写长文本变量（不把 2000 字塞进单行输入框）',
+    /varsOf\(tpl\)\.find\(isLongVar\)/.test(sc));
+  ok('R16 带入可见可撤销（提示条 + 撤销带入 + 字段高亮）',
+    /upstream-strip/.test(sc) && /撤销带入/.test(sc) && /carried/.test(sc) && /textarea\.carried/.test(read(path.join(PUB, 'css', 'app.css'))));
+  ok('R16 生成前门禁接在 generate 开头（不是生成后才提示）',
+    /if \(!\(await gateBeforeGenerate\(tpl\)\)\) return;/.test(sc));
+  ok('R16 缺素材走单按钮告知（notice），有选项才用 confirm',
+    /kind === 'blocked'/.test(sc) && /await notice\(/.test(sc));
+  ok('R16 门禁文案对模板变量名做 esc（模板可编辑，属用户数据）', /g\.lines\.map\(\(x\) => esc\(x\)\)/.test(sc));
+  ok('R18 逐字段计数 + 整条提示词计数都在界面上',
+    /data-count="\$\{esc\(v\)\}"/.test(sc) && /本次提示词合计/.test(sc));
+  ok('R18 计数与发送共用同一份请求体（避免两套算法）', /function buildMessages/.test(sc) && /messages,/.test(sc));
+  ok('R18 分镜页粘贴框也有计数与软上限确认',
+    /id="script-in-stat"/.test(sbs) && /st\.over && !\(await confirm\(/.test(sbs));
+  ok('R18 超限不静默截断（全项目不得出现对用户输入的 slice 截断）',
+    !/\.value\.slice\(0,/.test(sc) && !/\.value\.slice\(0,/.test(sbs));
+  ok('R17 每个页签各自保留产物（切页签不再丢中间产物）',
+    /const results = new Map\(\)/.test(sc) && /function stashResult/.test(sc) && /function loadResultFor/.test(sc));
 }
 
 group('角色库（R14：档案 + 绑定 + 引用守卫）');

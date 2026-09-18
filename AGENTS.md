@@ -8,8 +8,8 @@ Agnes 漫剧工坊 · 本地版（`agnes-studio`）：本地优先、零云端�
 Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.js`（监听 127.0.0.1:5178），前端为 `public/` 下 vanilla JS ESM（无构建步骤），支持 Node SEA 单文件 Windows exe。数据持久化在本机 `data/`（JSON 文件）。
 
 - 后端链路：`server.js` → `lib/routes.js`（全部 /api 端点）→ `lib/agnes.js`（Agnes 云 API 客户端）→ 外部 API；异步任务链 `lib/jobs.js` + `lib/poller.js`（后台轮询 + SSE 推送）；持久化基石 `lib/store.js`
-- 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（10 个页面模块）；共享设施 `api.js` / `ui.js` / `consts.js` / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 172 / apitest 309 / uitest 585 / browser-test 218），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁
+- 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（10 个页面模块）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
+- 测试：`tools/` 下四套断言脚本（selftest 172 / apitest 309 / uitest 637 / browser-test 240），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
 ---
@@ -65,7 +65,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 | layer id | 名称 | 文件数 |
 |---|---|---|
 | `layer:frontend-pages` | 前端页面层 | 10 |
-| `layer:frontend-shell` | 前端壳层与共享模块 | 6 |
+| `layer:frontend-shell` | 前端壳层与共享模块 | 7（含批 4 新增的 `public/js/textstats.js`：长文本计数/软上限/门禁判据的纯函数层） |
 | `layer:backend-api` | HTTP 接口与路由层 | 2 |
 | `layer:backend-service` | 后端服务层（agnes/jobs/poller） | 3 |
 | `layer:data-persistence` | 数据持久化层（store/seed） | 2 |

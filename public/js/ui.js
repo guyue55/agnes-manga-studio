@@ -175,6 +175,33 @@ export function twoClick(btn, run, opts = {}) {
  * 仅用于内部**没有**按钮的卡片——内部已有按钮的卡片不要再加 role="button"，
  * 否则形成「按钮里嵌按钮」的 ARIA 违规（键盘用户用内部按钮即可）。
  */
+/**
+ * 单按钮告知弹窗：给"必须让用户看清、不能 3 秒就飘走"的说明用。
+ * toast 会飘走（用户可能正低头看别处），confirm 又假装给了选择——这类场合两者都不合适。
+ * 注意：lines 按 **HTML** 插入（方便调用方加粗重点），**用户数据必须由调用方 esc**。
+ */
+export function notice({ title = '提示', lines = [], okText = '知道了' } = {}) {
+  const body = (Array.isArray(lines) ? lines : [lines])
+    .filter(Boolean)
+    .map((x) => `<div>${x}</div>`)
+    .join('');
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (close) => { if (done) return; done = true; if (close) close(); resolve(true); };
+    modal({
+      title,
+      body: `<div style="font-size:13.5px;line-height:1.75;color:var(--text-2)">${body}</div>`,
+      footer: `<button class="btn btn-primary" data-yes>${esc(okText)}</button>`,
+      onDismiss: () => finish(null),
+      onMount(root, close) {
+        const b = root.querySelector('[data-yes]');
+        b.onclick = () => finish(close);
+        b.focus();
+      },
+    });
+  });
+}
+
 export function clickableCard(el, fn) {
   el.tabIndex = 0;
   el.setAttribute('role', 'button');

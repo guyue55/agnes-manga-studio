@@ -1119,3 +1119,11 @@ body.sb-collapsed .sb-toggle .lbl { display: none; }
 
 /* 提示词单元格的注入徽标（+角色 / +画风）：样式进 CSS 而不是页面里写裸 font-size */
 .prompt-tag { flex: none; color: var(--gold-light); font-size: 11px; cursor: help; }
+
+/* ── 剧本链路（批 4：R16 带入下一步 / R17 就地编辑 / R18 计数）─────
+   样式一律进 CSS，不在页面里写裸 font-size —— uitest 有"裸字号棘轮"卡着（≤44 处）。 */
+.counter { margin-top: 4px; color: var(--text-4); }
+.counter.over, .hint-xs.over { color: #FCD34D; }          /* 超软上限：琥珀色提醒，不是红色报错 */
+.upstream-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+textarea.carried { border-color: rgba(214, 181, 109, 0.55); box-shadow: 0 0 0 3px rgba(214, 181, 109, 0.08); }
+#r-edit-box { width: 100%; min-height: 300px; resize: vertical; line-height: 1.55; }

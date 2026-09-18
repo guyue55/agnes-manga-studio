@@ -131,6 +131,32 @@ export const SCRIPT_TYPES = [
   { value: 'storyboard_script', label: '分镜脚本' },
 ];
 /**
+ * R16 剧本链路的**步骤顺序**（单一事实来源）：故事构思 → 剧情梗概 → 分集大纲 → 单集脚本 → 分镜脚本。
+ * 为什么要显式写出来而不是靠 SCRIPT_TYPES 的数组顺序：这个顺序是"两段式"的骨架——
+ * 「带入下一步」按它找下游，「上游已带入」按它找上游；数组顺序被后人调整（比如按字母排序）时，
+ * 链路会静默错位，而这种错位极难从界面上看出来。
+ */
+export const SCRIPT_STEPS = ['story_concept', 'plot_summary', 'episode_outline', 'episode_script', 'storyboard_script'];
+
+/** 下一步的 type；已是最后一步返回 null */
+export function nextScriptStep(tab) {
+  const i = SCRIPT_STEPS.indexOf(String(tab || ''));
+  return i >= 0 && i < SCRIPT_STEPS.length - 1 ? SCRIPT_STEPS[i + 1] : null;
+}
+
+/** 上一步的 type；已是第一步返回 null */
+export function prevScriptStep(tab) {
+  const i = SCRIPT_STEPS.indexOf(String(tab || ''));
+  return i > 0 ? SCRIPT_STEPS[i - 1] : null;
+}
+
+/** 步骤序号（1 起）与总步数，用于界面上标「第 2/5 步」 */
+export function stepNo(tab) {
+  const i = SCRIPT_STEPS.indexOf(String(tab || ''));
+  return i < 0 ? 0 : i + 1;
+}
+
+/**
  * 把服务端模型目录转换成下拉项。
  * Agnes 新模型可能还没被正确标注 kind，所以 unknown 也允许作为候选；
  * 只排除明显属于其它模态的名字，避免新模型被误藏起来。

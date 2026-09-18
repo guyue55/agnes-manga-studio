@@ -9,6 +9,7 @@ import {
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
+import { charCount, limitState, FIELD_SOFT_LIMIT } from '../textstats.js';
 import { state, onEvent, syncViewParams, loadCharacters } from '../app.js';
 
 export default async function storyboards(container, params) {
@@ -34,6 +35,7 @@ export default async function storyboards(container, params) {
     <div class="card" style="margin-bottom:18px">
       <div class="card-title">${icon('wand', 15)}从脚本一键生成分镜表</div>
       <textarea class="textarea mono" id="script-in" aria-label="脚本内容" rows="4" placeholder="粘贴单集脚本或分镜脚本内容，点「生成分镜」由 Agnes 拆成镜头表…"></textarea>
+      <div class="hint-xs" id="script-in-stat" style="margin-top:6px"></div>
       <div class="row wrap" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" id="gen-sb">${icon('wand', 14)}生成第 ${episode} 集分镜</button>
         <button class="btn btn-sm" id="add-shot">${icon('plus', 14)}手动添加镜头</button>
@@ -61,6 +63,18 @@ export default async function storyboards(container, params) {
     </div>
 
     <div id="table">${skeleton('row', 6)}</div>`;
+
+  // R18：粘贴/输入时实时显示字数与软上限提醒（生成前就知道要发多少字）
+  const syncScriptStat = () => {
+    const el = container.querySelector('#script-in-stat');
+    if (!el) return;
+    const ta = container.querySelector('#script-in');
+    const st = limitState(charCount(ta.value), FIELD_SOFT_LIMIT);
+    el.textContent = ta.value.trim() ? st.text : '';
+    el.classList.toggle('over', st.over);
+  };
+  container.querySelector('#script-in').oninput = syncScriptStat;
+  syncScriptStat();
 
   const picker = container.querySelector('#p-picker');
   const epSel = container.querySelector('#ep');
@@ -277,6 +291,14 @@ export default async function storyboards(container, params) {
     const text = container.querySelector('#script-in').value.trim();
     if (!text) { toast.err('请先粘贴脚本内容'); return; }
     if (!projectId) { toast.err('请先选择项目——右上角下拉选一个，或去「项目管理」新建'); return; }
+    // R18：超软上限不静默截断，也不硬拦——把"这次要发多少字、可能变慢"摆出来让用户决定
+    const st = limitState(charCount(text), FIELD_SOFT_LIMIT);
+    if (st.over && !(await confirm({
+      title: '文本较长，确认要生成吗',
+      text: `脚本 ${esc(st.text)}。<br>Agnes 侧可能变慢甚至超时（超时会保留已生成的部分或直接报错）。<br>建议先压缩，或分段生成。`,
+      okText: '继续生成',
+      cancelText: '先压缩一下',
+    }))) return;
     const btn = container.querySelector('#gen-sb');
     genBusy = true;
     setBusy(btn, true, '分镜生成中');

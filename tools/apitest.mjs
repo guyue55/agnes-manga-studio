@@ -899,17 +899,30 @@ group('B6 请求体闸门（413 契约）');
   // 120MB 上限（API 体唯一显式限）：超限必须"先送 413 再断流"，客户端要能读到 JSON 错误而非连接重置
   const portNum = Number(new URL(BASE).port);
   const outcome = await new Promise((resolve) => {
+    let settled = false;
+    let stop = false; // 响应一到就停手
+    const finish = (v) => { if (!settled) { settled = true; resolve(v); } };
     const req = http.request({ host: '127.0.0.1', port: portNum, path: '/api/agnes/text', method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+      // 服务端是"先送 413 再断流"（B6 修复）。客户端如果继续猛灌 121MB，
+      // 后续写入会在已关闭的 socket 上抛 ECONNRESET，把已经回来的 413 挤掉——
+      // 那不是服务端违约，是探针自己的行为不像个正常客户端。真实浏览器/fetch 收到响应就会停。
+      stop = true;
       let body = '';
       res.on('data', (c) => { body += c; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      res.on('end', () => finish({ status: res.statusCode, body }));
     });
-    // 分块灌过 120MB 真限（readBody 唯一调用点的显式值），让服务端在读流中途触发上限
-    req.on('error', (e) => resolve({ connError: String(e.code || e.message) }));
+    req.on('error', (e) => finish({ connError: String(e.code || e.message) }));
     const MB = 'x'.repeat(1024 * 1024);
     req.write('{\"prompt\":\"');
-    for (let i = 0; i < 121; i++) req.write(MB);
-    req.end('\"}');
+    // 分块灌过 120MB 真限（readBody 唯一调用点的显式值），每 8MB 让出一次事件循环，
+    // 好让服务端回上来的 413 有机会被读到（不让出的话响应永远排在写队列后面）
+    (async () => {
+      for (let i = 0; i < 121 && !stop; i++) {
+        req.write(MB);
+        if (i % 8 === 7) await new Promise((r) => setTimeout(r, 0));
+      }
+      if (!stop) req.end('\"}');
+    })();
   });
   ok('超限请求收到 413（非连接重置）', outcome.status === 413 && String(outcome.body).includes('请求体过大'), JSON.stringify(outcome).slice(0, 160));
   const after = await api('GET', '/api/settings');

@@ -3,9 +3,15 @@
  * 提示词全部来自「提示词模板」（设置页可改），页面只负责收集变量、展示结果。
  * 这样改提示词不用动代码 —— 原版把提示词写死在组件里，改一个字要重新打包。
  */
-import { icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices } from '../consts.js';
+import {
+  icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices,
+  nextScriptStep, stepNo,
+} from '../consts.js';
+import {
+  charCount, countLabel, limitState, promptLength, checkPromptVars, promptGate, isLongVar,
+} from '../textstats.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, skeleton, options, confirm, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, options, confirm, setBusy, notice } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, softRefresh, syncViewParams } from '../app.js';
 
@@ -28,6 +34,16 @@ export default async function scripts(container, params) {
   let resultCtx = null; // E4：结果诞生时的项目/页签上下文，跨语境保存前必须过问
   let generating = false;
   let saved = [];
+  // R17：模型刚产出/刚载入的原文。结果区可编辑后必须有"回到原样"的退路，
+  // 否则用户改坏了就只能重新烧一次配额。
+  let pristine = '';
+  // R17：每个页签各自保留自己的结果。切页签不再丢弃中间产物——"抽取出来的东西"必须回得去，
+  // 否则两段式里的"确认"环节没有对象可确认（旧行为：切走即清空，模型产出只能靠手动保存留住）。
+  const results = new Map(); // tab -> { text, pristine }
+  // R16：本页签当前"已带入"的上游（来自上一步的确认产物）
+  let upstream = null; // { from, field, chars }
+  // fields 是跨页签共享的一张表（历史行为：同名变量在页签间延续）。
+  // 带入下一步正是靠这个语义把上游写进下游模板的变量里，不另造一套存储。
   const fields = new Map();
 
   container.innerHTML = `
@@ -44,13 +60,19 @@ export default async function scripts(container, params) {
           ${SCRIPT_TYPES.map((t) => `<button data-tab="${t.value}" class="${t.value === tab ? 'on' : ''}">${esc(t.label)}</button>`).join('')}
         </div>
         <div class="card">
-          <div class="card-title">${icon('wand', 15)}生成输入</div>
+          <div class="row" style="margin-bottom:10px">
+            <div class="card-title" style="margin:0">${icon('wand', 15)}生成输入</div>
+            <div class="spacer"></div>
+            <span class="hint-xs" id="step-no"></span>
+          </div>
+          <div id="upstream"></div>
           <div id="fields">${skeleton('form', 1)}</div>
           <div class="divider"></div>
           <div class="row wrap">
             <select class="select select-sm" id="model" style="width:190px"></select>
             <button class="btn btn-primary" id="gen" style="flex:1;min-width:160px">${icon('wand', 15)}生成内容</button>
           </div>
+          <div class="hint-xs" id="prompt-size" style="margin-top:8px"></div>
           <div id="gen-status"></div>
         </div>
 
@@ -64,10 +86,18 @@ export default async function scripts(container, params) {
     </div>`;
 
   const picker = container.querySelector('#p-picker');
-  picker.onchange = () => { projectId = picker.value; clearResult(); loadSaved(); };
+  picker.onchange = () => { projectId = picker.value; results.clear(); clearResult(); loadSaved(); };
   container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); };
   container.querySelector('#tabs').querySelectorAll('[data-tab]').forEach((b) => {
-    b.onclick = () => { tab = b.getAttribute('data-tab'); clearResult(); syncTabs(); renderFields(); syncViewParams({ tab }); };
+    b.onclick = () => {
+      stashResult();                       // 先把当前页签的产物存起来（含未保存的编辑）
+      tab = b.getAttribute('data-tab');
+      upstream = null;                     // 上游提示条属于"某一步的输入"，切走即失效
+      syncTabs();
+      renderFields();
+      loadResultFor(tab);
+      syncViewParams({ tab });
+    };
   });
   container.querySelector('#gen').onclick = generate;
 
@@ -94,26 +124,30 @@ export default async function scripts(container, params) {
     const box = container.querySelector('#fields');
     if (!tpl) {
       box.innerHTML = `<div class="note orange">这个类型还没有模板，去「设置 → 提示词模板」新建一个。</div>`;
+      renderUpstream();
       return;
     }
     const vs = varsOf(tpl);
     box.innerHTML = `
-      <div style="font-size:11.5px;color:var(--text-3);margin-bottom:14px">
+      <div class="hint-xs" style="margin-bottom:14px">
         模板：${esc(tpl.name)}${tpl.notes ? ` · ${esc(tpl.notes)}` : ''}
       </div>
       <div class="grid g2" style="gap:0 14px">
         ${vs.map((v) => {
-          const long = /脚本|内容|梗概|大纲/.test(v);
+          // 长文本判定与 textstats 同源：两处各写一份正则，迟早会出现"这里算长、那里算短"
+          const long = isLongVar(v);
           const val = fields.get(v) || '';
+          const carried = upstream && upstream.field === v ? ' carried' : '';
           return long
             ? `<div class="field" style="grid-column:1/-1"><label>${esc(v)}</label>
-                 <textarea class="textarea" data-var="${esc(v)}" aria-label="${esc(v)}" rows="5" placeholder="粘贴${esc(v)}…">${esc(val)}</textarea></div>`
+                 <textarea class="textarea${carried}" data-var="${esc(v)}" aria-label="${esc(v)}" rows="5" placeholder="粘贴${esc(v)}…">${esc(val)}</textarea>
+                 <div class="hint-xs counter" data-count="${esc(v)}"></div></div>`
             : `<div class="field"><label>${esc(v)}</label>
                  <input class="input" data-var="${esc(v)}" aria-label="${esc(v)}" value="${esc(val)}" /></div>`;
         }).join('')}
       </div>`;
     box.querySelectorAll('[data-var]').forEach((el) => {
-      el.oninput = () => fields.set(el.getAttribute('data-var'), el.value);
+      el.oninput = () => { fields.set(el.getAttribute('data-var'), el.value); syncCounters(); };
     });
 
     // 模型下拉
@@ -121,6 +155,88 @@ export default async function scripts(container, params) {
     const models = modelChoices(state.models, 'text', [state.settings.default_text_model || 'agnes-2.0-flash', 'agnes-2.0-pro', 'agnes-2.0-flash']);
     const current = ms.value || models[0]?.value;
     ms.innerHTML = options(models, 'value', 'label', current);
+    renderUpstream();
+    syncCounters();
+  }
+
+  /** R18：逐字段字数 + 整条提示词字数。生成前"要发出去多少字"必须可见 */
+  function syncCounters() {
+    const tpl = tplOf(TAB_TPL[tab]);
+    const vs = tpl ? varsOf(tpl) : [];
+    const box = container.querySelector('#fields');
+    if (box) {
+      box.querySelectorAll('[data-count]').forEach((el) => {
+        const name = el.getAttribute('data-count');
+        const st = limitState(charCount(fields.get(name) || ''));
+        el.textContent = st.text;
+        el.classList.toggle('over', st.over);
+      });
+    }
+    const size = container.querySelector('#prompt-size');
+    if (size) {
+      const total = tpl ? promptLength(buildMessages(tpl)) : 0;
+      const st = limitState(total, 12000);
+      size.textContent = total ? `本次提示词合计 ${countLabel(total)}（变量已替换）` : '';
+      size.classList.toggle('over', st.over);
+    }
+    const stepEl = container.querySelector('#step-no');
+    if (stepEl) stepEl.textContent = `第 ${stepNo(tab)}/5 步`;
+  }
+
+  /** R16：把"上游已带入"这件事显式化——用户必须能看见带入的是哪一步、多少字、填进了哪个字段 */
+  function renderUpstream() {
+    const el = container.querySelector('#upstream');
+    if (!el) return;
+    if (!upstream) { el.innerHTML = ''; return; }
+    const fromLabel = SCRIPT_TYPES.find((t) => t.value === upstream.from)?.label || upstream.from;
+    el.innerHTML = `<div class="note gold upstream-strip">
+      ${icon('arrowRight', 13)} 已从「${esc(fromLabel)}」带入 ${esc(countLabel(upstream.chars))} 到字段「${esc(upstream.field)}」——确认无误后再生成
+      <button class="btn btn-xs" id="up-undo" style="margin-left:8px">撤销带入</button>
+    </div>`;
+    const b = el.querySelector('#up-undo');
+    if (b) b.onclick = () => {
+      fields.set(upstream.field, '');
+      upstream = null;
+      renderFields();
+      toast('已撤销带入', 'info');
+    };
+  }
+
+  /** 变量替换后的实际请求体：计数与发送共用同一份，避免"显示的字数"和"发出的字数"两套算法 */
+  function buildMessages(tpl) {
+    let prompt = tpl.content || '';
+    for (const [k, v] of fields) prompt = prompt.split(`{{${k}}}`).join(v || '');
+    prompt = prompt.replace(/\{\{[^}]+\}\}/g, '（未填写）');
+    return [
+      { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。请用中文回答。' },
+      { role: 'user', content: prompt },
+    ];
+  }
+
+  /**
+   * R16 生成前门禁（两段式的"确认"环节）：
+   *  · 长文本变量空着 → **拦住**（没有素材的生成必然跑偏，还照样扣一次配额）
+   *  · 短变量空着 / 超软上限 → 列出具体字段与字数，要用户明确点"继续生成"
+   * 判据全在 textstats.js 的纯函数里，这里只负责呈现与中止。
+   */
+  async function gateBeforeGenerate(tpl) {
+    const vs = varsOf(tpl);
+    const values = {};
+    for (const v of vs) values[v] = fields.get(v) || '';
+    const g = promptGate({ ...checkPromptVars(vs, values), total: promptLength(buildMessages(tpl)) });
+    if (!g) return true;
+    // lines 按 HTML 插入 → 变量名来自用户可编辑的模板，必须 esc
+    const lines = g.lines.map((x) => esc(x));
+    if (g.kind === 'blocked') {
+      await notice({ title: g.title, lines, okText: g.okText });
+      return false;
+    }
+    return await confirm({
+      title: g.title,
+      text: lines.join('<br>'),
+      okText: g.okText,
+      cancelText: '先改一改',
+    });
   }
 
   async function generate() {
@@ -131,9 +247,8 @@ export default async function scripts(container, params) {
       toast.err('还没配置 Agnes API Key，请到「设置」页填写。');
       return;
     }
-    let prompt = tpl.content || '';
-    for (const [k, v] of fields) prompt = prompt.split(`{{${k}}}`).join(v || '');
-    prompt = prompt.replace(/\{\{[^}]+\}\}/g, '（未填写）');
+    if (!(await gateBeforeGenerate(tpl))) return;
+    const messages = buildMessages(tpl);
 
     generating = true;
     const st = container.querySelector('#gen-status');
@@ -148,10 +263,7 @@ export default async function scripts(container, params) {
     let r;
     try {
       r = await api.genText({
-        messages: [
-          { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。请用中文回答。' },
-          { role: 'user', content: prompt },
-        ],
+        messages,
         model: container.querySelector('#model').value,
         project_id: projectId || null,
         note: tpl.name,
@@ -167,37 +279,75 @@ export default async function scripts(container, params) {
 
     if (!r.ok) { toast.err(r.error); return; }
     result = r.data.content || '';
+    pristine = result;      // R17：留一份"原样"，供撤销改动
     resultCtx = { projectId, tab };
+    upstream = null;        // 新结果 = 本页签自己的产物，上游带入标记功成身退
+    stashResult();
     renderResult();
+    renderUpstream();
   }
   function clearResult() {
-    result = ''; resultCtx = null;
+    result = ''; resultCtx = null; pristine = '';
     const w = container.querySelector('#result-wrap');
     if (w) w.innerHTML = '';
   }
 
+  /** 把当前页签的工作副本存回 per-tab 表（空结果 = 删除条目，别留空壳） */
+  function stashResult() {
+    if (result) results.set(tab, { text: result, pristine });
+    else results.delete(tab);
+  }
+
+  /** 切到某页签时取出它自己的产物（没有就是空结果区） */
+  function loadResultFor(t) {
+    const r = results.get(t);
+    result = r ? r.text : '';
+    pristine = r ? r.pristine : '';
+    resultCtx = r ? { projectId, tab: t } : null;
+    renderResult();
+  }
+
+  /** 结果区当前视图：'json' 格式化（只读，用来看）| 'raw' 原文（可编辑，用来改） */
+  let resultView = 'json';
+
+  /**
+   * R17：结果区可编辑。设计取舍——
+   *  · 「格式化」视图保持**只读**：那是给眼睛看的，就地编辑格式化后的 JSON 极易改坏结构；
+   *  · 「原文」视图是 textarea，改的是唯一事实来源 `result`，所以复制/保存/导入/带入下一步全都跟着变；
+   *  · 实时回填"JSON 能否解析 + 镜头数"，改坏了立刻知道，而不是等点导入才报错。
+   */
   function renderResult() {
     const wrap = container.querySelector('#result-wrap');
     if (!result) { wrap.innerHTML = ''; return; }
     const parsed = extractJson(result);
     // json_object 模式下数组会被包成 {"shots":[...]}，导入按钮按解包后的判断
     const shotArr = extractJsonArray(result);
+    const next = nextScriptStep(tab);
+    const nextLabel = next ? (SCRIPT_TYPES.find((t) => t.value === next)?.label || next) : '';
+    const dirty = result !== pristine;
     wrap.innerHTML = `
       <div class="card">
         <div class="row wrap" style="margin-bottom:12px">
           <div class="card-title" style="margin:0">${icon('fileText', 15)}生成结果</div>
+          ${dirty ? '<span class="badge gold">已改动</span>' : ''}
           <div class="spacer"></div>
+          <button class="btn btn-xs" id="r-edit">${icon('edit', 12)}编辑原文</button>
+          ${dirty ? `<button class="btn btn-xs" id="r-undo">${icon('refresh', 12)}撤销改动</button>` : ''}
           <button class="btn btn-xs" id="r-copy">${icon('copy', 12)}复制</button>
           <button class="btn btn-xs" id="r-save">${icon('save', 12)}保存到项目</button>
           ${shotArr && shotArr.length
             ? `<button class="btn btn-xs" id="r-storyboard">${icon('film', 12)}导入分镜表</button>` : ''}
+          ${next
+            ? `<button class="btn btn-xs btn-primary" id="r-next">${icon('arrowRight', 12)}带入下一步：${esc(nextLabel)}</button>`
+            : '<button class="btn btn-xs" id="r-next" title="已是最后一步">复制结果备用</button>'}
         </div>
-        ${parsed ? `
-          <div class="tabs" style="margin-bottom:12px">
-            <button class="on" data-view="json">格式化</button>
-            <button data-view="raw">原文</button>
-          </div>` : ''}
-        <pre class="json-out" id="r-out">${esc(parsed ? JSON.stringify(parsed, null, 2) : result)}</pre>
+        <div class="tabs" style="margin-bottom:12px">
+          <button class="${resultView === 'json' ? 'on' : ''}" data-view="json">格式化</button>
+          <button class="${resultView === 'raw' ? 'on' : ''}" data-view="raw">原文${dirty ? '（已改）' : ''}</button>
+        </div>
+        <pre class="json-out" id="r-out"${resultView === 'raw' ? ' hidden' : ''}>${esc(parsed ? JSON.stringify(parsed, null, 2) : result)}</pre>
+        <textarea class="textarea mono" id="r-edit-box" rows="14" aria-label="结果原文（可编辑）"${resultView === 'raw' ? '' : ' hidden'}>${esc(result)}</textarea>
+        <div class="hint-xs" id="r-stat"></div>
       </div>
       <div class="card" style="margin-top:14px">
         <div class="section-label">脚本优化</div>
@@ -205,16 +355,76 @@ export default async function scripts(container, params) {
       </div>`;
 
     const out = wrap.querySelector('#r-out');
-    wrap.querySelectorAll('[data-view]').forEach((b) => {
-      b.onclick = () => {
-        wrap.querySelectorAll('[data-view]').forEach((x) => x.classList.remove('on'));
-        b.classList.add('on');
-        out.textContent = b.getAttribute('data-view') === 'json' ? JSON.stringify(parsed, null, 2) : result;
-      };
-    });
+    const box = wrap.querySelector('#r-edit-box');
+    const stat = wrap.querySelector('#r-stat');
+    const refreshStat = () => {
+      const st = limitState(charCount(result));
+      const p2 = extractJson(result);
+      const arr = extractJsonArray(result);
+      const bits = [st.text];
+      if (p2) bits.push(arr ? `JSON 可解析 · ${arr.length} 个镜头` : 'JSON 可解析');
+      else bits.push('不是合法 JSON（可照样保存/复制，但「导入分镜表」不可用）');
+      stat.textContent = bits.join(' · ');
+      stat.classList.toggle('over', st.over);
+    };
+    refreshStat();
+
+    const setView = (v) => {
+      resultView = v;
+      wrap.querySelectorAll('[data-view]').forEach((x) => x.classList.toggle('on', x.getAttribute('data-view') === v));
+      out.hidden = v !== 'json';
+      box.hidden = v !== 'raw';
+      if (v === 'json') out.textContent = (() => { const p2 = extractJson(result); return p2 ? JSON.stringify(p2, null, 2) : result; })();
+      if (v === 'raw') { box.focus(); }
+    };
+    wrap.querySelectorAll('[data-view]').forEach((b) => { b.onclick = () => setView(b.getAttribute('data-view')); });
+    wrap.querySelector('#r-edit').onclick = () => setView(resultView === 'raw' ? 'json' : 'raw');
+
+    const doUndo = () => {
+      result = pristine;
+      stashResult();
+      renderResult(); // 重渲染以同步按钮组（撤销钮自己会消失）
+      toast('已回到模型原样', 'info');
+    };
+    /**
+     * "已改动"状态的两个信号（徽标 + 撤销钮）必须能**不重渲染**地出现/消失：
+     * 重渲染会让 textarea 失焦、光标跳回开头——打字打到一半界面自己重置，比没有撤销还糟。
+     * 所以这里走 DOM 增删，而不是 `renderResult()`。
+     */
+    const syncDirty = () => {
+      const isDirty = result !== pristine;
+      const badge = wrap.querySelector('.badge');
+      if (isDirty && !badge) {
+        const b2 = document.createElement('span');
+        b2.className = 'badge gold';
+        b2.textContent = '已改动';
+        wrap.querySelector('.card-title').after(b2);
+      } else if (!isDirty && badge) badge.remove();
+      const undo = wrap.querySelector('#r-undo');
+      if (isDirty && !undo) {
+        const u = document.createElement('button');
+        u.className = 'btn btn-xs';
+        u.id = 'r-undo';
+        u.innerHTML = `${icon('refresh', 12)}撤销改动`;
+        u.onclick = doUndo;
+        wrap.querySelector('#r-edit').after(u);
+      } else if (!isDirty && undo) undo.remove();
+    };
+
+    // 就地编辑：改的就是 result 本身，任何下游动作都跟着走
+    box.oninput = () => {
+      result = box.value;
+      stashResult(); // 编辑立即落到 per-tab 表：切页签再回来，改动还在
+      refreshStat();
+      syncDirty();
+    };
+    const undoBtn = wrap.querySelector('#r-undo');
+    if (undoBtn) undoBtn.onclick = doUndo;
     wrap.querySelector('#r-copy').onclick = () => {
       copyText(result).then(() => toast.ok('已复制')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
     };
+    const nextBtn = wrap.querySelector('#r-next');
+    if (nextBtn) nextBtn.onclick = () => carryToNext(next);
     const saveBtn = wrap.querySelector('#r-save');
     saveBtn.onclick = async () => {
       if (!projectId) { toast.err('先在右上角选择项目'); return; }
@@ -245,6 +455,41 @@ export default async function scripts(container, params) {
     });
   }
 
+  /**
+   * R16 的核心动作：把**已确认的上游产物**带进下一步的模板变量，然后切到那一步。
+   *  · 目标字段：下游模板里的第一个长文本变量（顺序即模板作者的意图）；找不到就退化为复制并说清原因，
+   *    绝不"静默什么都没做"。
+   *  · 带入是**可见可撤销**的（上游提示条 + 撤销带入 + 字段高亮），否则用户不知道东西去哪了。
+   *  · 不带入到短变量（标题/风格这类）：把 2000 字塞进单行输入框是灾难。
+   */
+  function carryToNext(next) {
+    if (!result.trim()) { toast.err('结果是空的，没有可带入的内容'); return; }
+    if (!next) {
+      copyText(result).then(() => toast.ok('已是最后一步，结果已复制到剪贴板')).catch(() => toast.err('复制失败——请手动选中文本复制'));
+      return;
+    }
+    const tpl = tplOf(next);
+    if (!tpl) {
+      toast.err(`「${SCRIPT_TYPES.find((t) => t.value === next)?.label || next}」还没有提示词模板，去「设置 → 提示词模板」新建一个`);
+      return;
+    }
+    const target = varsOf(tpl).find(isLongVar);
+    if (!target) {
+      copyText(result).then(() => toast.ok('下一步模板没有长文本字段，结果已复制到剪贴板')).catch(() => toast.err('复制失败——请手动选中文本复制'));
+      return;
+    }
+    const from = tab;
+    fields.set(target, result);
+    upstream = { from, field: target, chars: charCount(result) };
+    stashResult();           // 上游产物留在它自己的页签里，随时能回去改
+    tab = next;
+    syncTabs();
+    renderFields();          // 会读到刚写进 fields 的值并高亮该字段
+    loadResultFor(tab);      // 下游自己的结果区（首次进来是空的）
+    syncViewParams({ tab });
+    toast.ok(`已带入「${target}」，确认无误后点生成`);
+  }
+
   async function optimize(tpl) {
     if (!tpl || !result || generating) return;
     generating = true;
@@ -268,7 +513,9 @@ export default async function scripts(container, params) {
     }
     if (!r.ok) { toast.err(r.error); return; }
     result = r.data.content || result;
+    pristine = result; // 润色产出的也是一份"原样"，撤销改动回到这里而不是更早的版本
     resultCtx = { projectId, tab }; // 润色后同样盖上下文戳
+    stashResult();
     renderResult();
     toast.ok(`已${tpl.name}`);
   }
@@ -358,7 +605,7 @@ export default async function scripts(container, params) {
     el.querySelectorAll('[data-use]').forEach((b) => {
       b.onclick = () => {
         const s = saved.find((x) => x.id === b.getAttribute('data-use'));
-        if (s) { result = s.content; resultCtx = { projectId, tab: s.script_type || tab }; renderResult(); toast.ok('已载入'); }
+        if (s) { result = s.content; pristine = s.content; resultCtx = { projectId, tab: s.script_type || tab }; stashResult(); renderResult(); toast.ok('已载入'); }
       };
     });
     el.querySelectorAll('[data-del]').forEach((b) => {
