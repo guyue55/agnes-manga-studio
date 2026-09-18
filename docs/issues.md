@@ -401,3 +401,13 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 **明确不修（威胁模型内可接受/收益不抵风险，留档）**：X4 无文件锁强约束（sameAppAlive 有 1.5s 探测窗与路径字符串比较的边界，锁file 方案留作后续）；413 后慢客户端吊连接（本机模型）；`uncaughtException` 吞而续跑（对单用户本地工具是利大于弊的取舍）；`readBody` 默认参死码；import"手改 JSON 追加"工作流牺牲（skipped 已显式上报）；sameAppAlive 不 realpath/大小写。
 
 **最终基线（1.0.2 工作区）**：selftest **123** / apitest **179** / uitest **409** / browser-test **29**，0 失败；安全面实时探针累计 12 项全过（Host×3、Origin×3、/%zz、非对象体×2、local_file 越界×2、%zz 路径参数 + 钓鱼 Key 泄漏 + 导入投毒）。评审工件（/tmp/review.diff）已弃用——**以工作树为准**。
+
+## 十、UI/UX 优化批（竞品逆向 → B1 设计语言 + B2 体验批 + T9，2026-09-19）
+
+调研工件：`docs/research/ui-manjugongfang-hosted.md`（681 行，含 §6 借鉴排序/§7 不抄清单）、`ui-other-competitors.md`、`ui-our-baseline.md`、总计划 `ui-optimization-plan.md`（逐项状态位）。竞品源码在 `reference/`（已 gitignore，绝不入库）。
+
+**B1 设计语言（纯 CSS + token，2503d2f）**：状态四色柔化（#4FBE8B/#F0616B/#E8A23C/#6FBEEA+soft 底，PRD 硬值的变更在 uitest 断言内注明主张）；文字四级暖中性梯度（AA 通过）；金色交互语言三件套 token（hover 边框/glow 双影/focus-ring）；圆角四档收敛（24/16/12/8——拒收竞品的 999px 胶囊，与"Mac pro 工具"定位冲突）；hover 金边框覆盖 8 族选择器；revealIn 45ms 入场级联+减动效兜底。
+**B2 体验批（12 项，735ec22 等四提交）**：SE-1 replace 导入二段确认｜R6 残留清零（settings save 共享锁、projects 复制/保存、scripts 保存、导入钮 inflight）｜D-1/A-1 四页 load() 失败分支（errBox 红字+重试，杜绝永久 spinner 与"故障谎报空态"）｜T-1 画幅全链路（sizeForAspect 映射，分镜图/视频、视频页 i2v/multi/kf、图页默认选择共 11 处硬编码清零，t2v 分辨率随画幅预选）｜2.5 modal 脏守卫（未提交拦截+放弃确认条）与 ⌘/Ctrl+↵ 提交｜2.6 全选半选态｜2.7 空态出口钮 ×7｜2.8 视频页 SSE 订阅｜2.9 syncViewParams 五页视图态进 hash（replaceState 不重挂）｜2.10 任务状态候选随 tab｜2.11 十处错误文案补"下一步"（竞品五段式精简应用）｜2.12 素材筛选 localStorage 持久化｜2.14 后台页签 SSE 挂起/回前台放流。
+**T9 测试卫生（96feabf）**：两测试套端口改 net.connect 实测扫描（此前 pid 拍死/随机撞车→run-all 偶发假红：apitest 178/1 中断、browser「等待超时」各抓获一次）；browser 页面等待 12→30s；finally 自清 build/ui-* 目录。修复后 run-all 连绿两轮 + 单套 6 轮 0 失败。
+**测试基线**：selftest 128 / apitest 181 / uitest **438**（B1 钉 6 + B2 钉 12 + 断言修正 4）/ browser 29，全绿。
+**开放项交接**：B3（select 质感/侧栏折叠/任务卡节奏文案+前导点/两段式就地确认/引用守卫删除/预设速查库）、B4（4.1 画风分层注入+4.2 计算态提示词预览——竞品 N2S 最高杠杆项；4.5 批量找回接 /api/batch）与旧开放项 E4/E5/E7/T4/T5 维持原状态。

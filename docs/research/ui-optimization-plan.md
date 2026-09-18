@@ -20,18 +20,18 @@
 
 | # | 项 | 依据 | 内容 | 验收 |
 |---|---|---|---|---|
-| 2.1 · | 导入 replace 零确认 | 基线 SE-1 | replace 模式 danger confirm 两段式 | uitest 断言确认钮存在 |
-| 2.2 · | 四处 load() 错误分支 | 基线 D-1/A-1（dashboard/assets/tasks/settings） | 失败→red note+重试钮，杜绝永久 spinner/谎报空态 | browser-test 加 1 例 |
-| 2.3 · | aspect_ratio 接通 | 基线 T-1：写死 1152×768/1024² | 项目比例→各模式宽高映射，分镜出图/出视频/视频页全接 | apitest 参数落库断言 |
-| 2.4 · | R6 残留防双击 | 基线：projects dup/save、scripts 保存、settings 保存/导入 | 统一 setBusy | 代码审查 |
-| 2.5 · | 表单脏守卫+⌘↵ | 基线 G 系列 + 托管版 | ui.js modal 加 dirty 比较钩子；模态内 ⌘/Ctrl+Enter 提交 | 浏览器实测 |
-| 2.6 · | 全选 indeterminate | 基线：分镜页选择器撒谎 | 半选态 + 双向同步 | 浏览器实测 |
-| 2.7 · | 空态带出口 | 基线 Top-10 #10 + 托管版文案纪律 | `empty(text, action?)`；5 高频空态一键直达 | uitest 签名检查 |
-| 2.8 · | videos 订阅 SSE | 基线 V-1（提交后状态永不更新） | onEvent('video') + 防抖重挂（避弹窗/播放） | browser-test |
-| 2.9 · | 视图状态进 hash | 基线 G-12（F5/回退丢 tab/集数/分节） | scripts?tab、assets?tab、settings?sec、storyboards?ep 统一 navigate 写回 | uitest 断言 |
-| 2.10 · | tasks 过滤器候选修正 | 基线：状态词表不匹配静默筛空 | 按 tab 提供对应状态词 | 浏览器实测 |
-| 2.11 · | 错误文案带下一步 | 托管版最强项（N2S 错误映射表同） | 高频 10 条 toast/错误文案审改：每句含动作 | 人工审读 |
-| 2.12 · | 素材筛选持久化 | 托管版 localStorage filter 记忆 | 素材库 mode/keyword 记忆+恢复 | 浏览器实测 |
+| 2.1 ✔ | 导入 replace 零确认 | 基线 SE-1 | replace 模式 danger confirm 两段式 | uitest 断言确认钮存在 |
+| 2.2 ✔ | 四处 load() 错误分支 | 基线 D-1/A-1（dashboard/assets/tasks/settings） | 失败→red note+重试钮，杜绝永久 spinner/谎报空态 | browser-test 加 1 例 |
+| 2.3 ✔ | aspect_ratio 接通 | 基线 T-1：写死 1152×768/1024² | 项目比例→各模式宽高映射，分镜出图/出视频/视频页全接 | apitest 参数落库断言 |
+| 2.4 ✔ | R6 残留防双击 | 基线：projects dup/save、scripts 保存、settings 保存/导入 | 统一 setBusy | 代码审查 |
+| 2.5 ✔ | 表单脏守卫+⌘↵ | 基线 G 系列 + 托管版 | ui.js modal 加 dirty 比较钩子；模态内 ⌘/Ctrl+Enter 提交 | 浏览器实测 |
+| 2.6 ✔ | 全选 indeterminate | 基线：分镜页选择器撒谎 | 半选态 + 双向同步 | 浏览器实测 |
+| 2.7 ✔ | 空态带出口 | 基线 Top-10 #10 + 托管版文案纪律 | `empty(text, action?)`；5 高频空态一键直达 | uitest 签名检查 |
+| 2.8 ✔ | videos 订阅 SSE | 基线 V-1（提交后状态永不更新） | onEvent('video') + 防抖重挂（避弹窗/播放） | browser-test |
+| 2.9 ✔ | 视图状态进 hash | 基线 G-12（F5/回退丢 tab/集数/分节） | scripts?tab、assets?tab、settings?sec、storyboards?ep 统一 navigate 写回 | uitest 断言 |
+| 2.10 ✔ | tasks 过滤器候选修正 | 基线：状态词表不匹配静默筛空 | 按 tab 提供对应状态词 | 浏览器实测 |
+| 2.11 ✔ | 错误文案带下一步 | 托管版最强项（N2S 错误映射表同） | 高频 10 条 toast/错误文案审改：每句含动作 | 人工审读 |
+| 2.12 ✔ | 素材筛选持久化 | 托管版 localStorage filter 记忆 | 素材库 mode/keyword 记忆+恢复 | 浏览器实测 |
 
 ## B3 组件升级（中等）
 
