@@ -7,7 +7,7 @@ import { icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYP
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, options, confirm, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, softRefresh } from '../app.js';
+import { state, softRefresh, syncViewParams } from '../app.js';
 
 const TAB_TPL = {
   story_concept: 'story_concept',
@@ -63,7 +63,7 @@ export default async function scripts(container, params) {
   picker.onchange = () => { projectId = picker.value; loadSaved(); };
   container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); };
   container.querySelector('#tabs').querySelectorAll('[data-tab]').forEach((b) => {
-    b.onclick = () => { tab = b.getAttribute('data-tab'); syncTabs(); renderFields(); };
+    b.onclick = () => { tab = b.getAttribute('data-tab'); syncTabs(); renderFields(); syncViewParams({ tab }); };
   });
   container.querySelector('#gen').onclick = generate;
 
@@ -203,7 +203,7 @@ export default async function scripts(container, params) {
       };
     });
     wrap.querySelector('#r-copy').onclick = () => {
-      copyText(result).then(() => toast.ok('已复制')).catch(() => toast.err('复制失败'));
+      copyText(result).then(() => toast.ok('已复制')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
     };
     const saveBtn = wrap.querySelector('#r-save');
     saveBtn.onclick = async () => {
@@ -264,8 +264,8 @@ export default async function scripts(container, params) {
 
   /** 把分镜脚本 JSON 一次性写入分镜表 */
   async function importStoryboard(parsed) {
-    if (!Array.isArray(parsed) || !parsed.length) { toast.err('结果不是镜头数组，无法导入'); return; }
-    if (!projectId) { toast.err('请先选择项目'); return; }
+    if (!Array.isArray(parsed) || !parsed.length) { toast.err('结果不是镜头数组，无法导入——可点「复制」把文本交给聊天工具改写后再导'); return; }
+    if (!projectId) { toast.err('请先选择项目——右上角下拉选一个，或去「项目管理」新建'); return; }
     const epRaw = await modalEp();
     if (epRaw === null) return; // R1：取消/ESC/点遮罩 = 明确中止，绝不"以第 1 集导入"
     const ep = Math.max(1, Number(epRaw) || 1);

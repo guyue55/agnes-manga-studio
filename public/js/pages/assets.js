@@ -6,12 +6,12 @@ import { icon, esc, copyText, relTime, IMAGE_USAGES, statusBadge } from '../cons
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, setBusy, errBox } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, navigate, onEvent } from '../app.js';
+import { state, navigate, onEvent, syncViewParams } from '../app.js';
 
 export default async function assets(container, params) {
-  let tab = params.tab || 'image';
-  let projectId = '';
-  let favOnly = false;
+  let tab = ['image', 'video', 'script'].includes(params.tab) ? params.tab : 'image';
+  let projectId = localStorage.getItem('agnes.assets.project') || ''; // 2.12：筛选跨会话记忆
+  let favOnly = localStorage.getItem('agnes.assets.favOnly') === '1';
   let images = [];
   let videos = [];
   let scripts = [];
@@ -22,27 +22,30 @@ export default async function assets(container, params) {
       desc: '生成出来的图片、视频、剧本都在这里，全部存在本机',
       actions: `
         ${projectPicker(state.projects, '', { id: 'p-picker', allOption: true })}
-        <button class="btn btn-sm" id="fav-only">${icon('star', 13)}只看收藏</button>
+        <button class="btn btn-sm${favOnly ? ' btn-primary' : ''}" id="fav-only">${icon('star', 13)}只看收藏</button>
         <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="tabs" id="tabs" style="margin-bottom:16px">
-      <button data-tab="image" class="on">图片素材</button>
+      <button data-tab="image">图片素材</button>
       <button data-tab="video">视频素材</button>
       <button data-tab="text">文本素材</button>
     </div>
     <div id="grid" class="asset-grid">${spinner()}</div>`;
 
-  container.querySelector('#p-picker').onchange = (e) => { projectId = e.target.value === '__all__' ? '' : e.target.value; load(); };
+  container.querySelector('#p-picker').onchange = (e) => { projectId = e.target.value === '__all__' ? '' : e.target.value; localStorage.setItem('agnes.assets.project', projectId); load(); };
   container.querySelector('#reload').onclick = load;
   container.querySelector('#fav-only').onclick = (e) => {
     favOnly = !favOnly;
+    localStorage.setItem('agnes.assets.favOnly', favOnly ? '1' : '0');
     e.currentTarget.classList.toggle('btn-primary', favOnly);
     render();
   };
-  container.querySelectorAll('#tabs [data-tab]').forEach((b) => {
+  container.querySelectorAll('#tabs [data-tab]').forEach((b) => { // 初始高亮跟随还原出的 tab
+    b.classList.toggle('on', b.getAttribute('data-tab') === tab);
     b.onclick = () => {
       tab = b.getAttribute('data-tab');
       container.querySelectorAll('#tabs [data-tab]').forEach((x) => x.classList.toggle('on', x === b));
+      syncViewParams({ tab });
       render();
     };
   });
@@ -74,7 +77,7 @@ export default async function assets(container, params) {
     const el = container.querySelector('#grid');
     if (tab === 'image') {
       const list = filtered(images);
-      if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有图片素材', '去「图片生成」生成一张', 'image')}</div>`; return; }
+      if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有图片素材', '去「图片生成」生成一张', 'image', { label: '去图片生成', go: '#/images' })}</div>`; return; }
       el.innerHTML = list.map((img) => `
         <div class="asset-card" data-id="${esc(img.id)}">
           ${img.is_favorited ? `<span class="flag">${icon('star', 14)}</span>` : ''}
@@ -95,7 +98,7 @@ export default async function assets(container, params) {
       bindImage(el);
     } else if (tab === 'video') {
       const list = filtered(videos);
-      if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有视频素材', '去「视频生成」提交一个任务', 'video')}</div>`; return; }
+      if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有视频素材', '去「视频生成」提交一个任务', 'video', { label: '去视频生成', go: '#/videos' })}</div>`; return; }
       el.innerHTML = list.map((v) => `
         <div class="asset-card" data-vid="${esc(v.id)}">
           ${v.is_favorited ? `<span class="flag">${icon('star', 14)}</span>` : ''}
@@ -121,7 +124,7 @@ export default async function assets(container, params) {
       bindVideo(el);
     } else {
       const list = filtered(scripts);
-      if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有文本素材', '去「故事脚本」生成并保存', 'script')}</div>`; return; }
+      if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有文本素材', '去「故事脚本」生成并保存', 'script', { label: '去故事脚本', go: '#/scripts' })}</div>`; return; }
       el.innerHTML = list.map((s) => `
         <div class="card" data-sid="${esc(s.id)}" style="aspect-ratio:auto;cursor:pointer">
           <div class="row" style="align-items:flex-start">
@@ -160,7 +163,7 @@ export default async function assets(container, params) {
     el.querySelectorAll('[data-cp]').forEach((b) => b.onclick = (e) => {
       e.stopPropagation();
       const img = images.find((x) => x.id === b.getAttribute('data-cp'));
-      copyText(img.generation_prompt || '').then(() => toast.ok('已复制提示词')).catch(() => toast.err('复制失败'));
+      copyText(img.generation_prompt || '').then(() => toast.ok('已复制提示词')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
     });
     el.querySelectorAll('[data-vid]').forEach((b) => b.onclick = (e) => {
       e.stopPropagation();

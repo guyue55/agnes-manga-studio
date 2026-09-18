@@ -48,6 +48,15 @@ function parseHash() {
   return { id: path || 'dashboard', params };
 }
 
+/** 2.9：静默同步视图状态进 hash（replaceState 不触发 hashchange/不重挂载），刷新与分享链接可还原 */
+export function syncViewParams(patch) {
+  const { id, params } = parseHash();
+  const next = { ...params, ...patch };
+  for (const k of Object.keys(next)) if (next[k] == null || next[k] === '') delete next[k];
+  const qs = new URLSearchParams(next).toString();
+  history.replaceState(null, '', '#/' + id + (qs ? '?' + qs : ''));
+}
+
 export function navigate(path, params = {}) {
   const qs = new URLSearchParams(params).toString();
   location.hash = `#/${path}${qs ? `?${qs}` : ''}`;
@@ -130,6 +139,15 @@ export async function softRefresh() {
 
 // ── SSE：视频状态与批量任务进度 ─────────────────────────────
 const listeners = { video: [], batch: [] };
+const hiddenLive = { video: null, batch: null }; // 2.14：hidden 期间的事件快照缓冲
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  const { video, batch } = hiddenLive;
+  hiddenLive.video = hiddenLive.batch = null;
+  if (video) listeners.video.forEach((f) => { try { f(video); } catch { /* ignore */ } });
+  if (batch) listeners.batch.forEach((f) => { try { f(batch); } catch { /* ignore */ } });
+  if (video || batch) debouncedRefresh();
+});
 export function onEvent(kind, fn) {
   listeners[kind].push(fn);
   return () => { listeners[kind] = listeners[kind].filter((f) => f !== fn); };
@@ -159,15 +177,19 @@ function connectSSE() {
       }
       hadOpen = true;
     };
+    // 2.14：后台页签不派发、不刷新（省电、回前台不再闪一堆过期渲染）；
+    // 每 kind 只留最新一份快照，可见时放流 + 补一次状态刷新。
     es.addEventListener('video', (e) => {
       let d = null;
       try { d = JSON.parse(e.data); } catch { return; }
+      if (document.hidden) { hiddenLive.video = d; return; }
       listeners.video.forEach((f) => { try { f(d); } catch { /* ignore */ } });
       if (state.current === 'dashboard') debouncedRefresh();
     });
     es.addEventListener('batch', (e) => {
       let d = null;
       try { d = JSON.parse(e.data); } catch { return; }
+      if (document.hidden) { hiddenLive.batch = d; return; }
       listeners.batch.forEach((f) => { try { f(d); } catch { /* ignore */ } });
     });
     es.onerror = () => { /* 断线由浏览器自动重连，恢复后 onopen 里 resync */ };

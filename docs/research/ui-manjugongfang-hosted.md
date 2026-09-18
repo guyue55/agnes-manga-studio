@@ -11,10 +11,10 @@
 | 维度 | 托管版的事实 | 我们该做的判断 |
 |---|---|---|
 | 视觉基调 | 暗底 + **单一金色品牌色**（`#e8c989` 一支），全站靠"白色低透明叠加"造层级，不靠多色 | 与我们同方向，**但要学它把"层级"交给 alpha 而不是彩色** |
-| 质感手法 | 玻璃拟态 4 档（`glass` / `glass-heavy` / `surface-card` / `surface-elevated`）+ 一张固定背景图 + 顶部渐变压暗 | 我们已有 blur，缺的是**分档语义**与**背景层** |
+| 质感手法 | 内容区实际只靠 **`surface-card` + `surface-elevated` + `glass-input`** 三个类撑起来（18/9/17 个文件在用）；`.glass*` 家族是**壳层与 toast 专用**。层级来自"白色低透明 alpha 阶梯"，不是彩色 | 我们不用复制整套玻璃家族，**做 5 个类 + 令牌表就够**（见 §1.6） |
 | 布局骨架 | 左栏 216px（可收成 68px 图标轨，状态存 localStorage）+ 顶部**浮动胶囊 header** + 内容 `max-w-[1320px]` **内层滚动** + 移动端底部 5 tab | 我们侧栏是固定 260px 且整页滚动；**滚动容器划分**是最大结构差 |
-| 组件库 | Radix（Dialog/Select/Popover/Tabs/Tooltip）+ cva 变体表 + 自研 `GlassSelect` | 我们用原生 `<select>`；**下拉与弹层的质感差是第一眼差距** |
-| 动效 | 入场级联（GSAP 或纯 CSS 60ms 步进）、conic 金色流光描边、3D tilt + 鼠标光斑、hover 缩放、`prefers-reduced-motion` 全量降级 | 我们只有 `pageEnter`；**入场级联 + hover 微交互性价比最高** |
+| 组件库 | Radix（Dialog/Select/Popover/Tabs/Tooltip）+ cva 变体表 + 自研 `GlassSelect`（导出面只有 6 个 props）；品牌质感靠 **5 个全局 CSS 类**而非组件 | 本地版 25 处原生 `<select>`；**下拉与弹层是第一眼差距**，但那 5 个 CSS 类才是更高性价比的入手点 |
+| 动效 | 入场级联（GSAP 或纯 CSS 60ms 步进）、conic 金色流光描边、3D tilt + 鼠标光斑、hover 缩放、`prefers-reduced-motion` 全量降级 | 本地已有同曲线 `revealIn`（320ms / `cubic-bezier(.22,1,.36,1)` / 45ms 步进 / ≤8 档，`app.css:950–958`）+ `pageEnter`；**缺的是 hover 微交互与卡片质感分档** |
 | 文案 | 错误必带下一步动作（「隔几分钟再点」「关掉先思考会明显更快」「Ctrl+Shift+R」），破坏性操作用**两段式就地确认 + 3 秒失效** | 这是竞品最强的地方，**且几乎零实现成本** |
 | 长任务 | task_id 落 localStorage、轮询 2500ms、404/断网分型退避、720s 软超时、重进页面自动接续 | 我们 SSE 已有基础，**"可离开可回来"的状态持久化**值得抄 |
 
@@ -137,12 +137,14 @@
 
 **saturate 一起加**（150%/160%）是它"玻璃不发灰"的原因。移动端（≤767px）统一**降档**：blur 8px / saturate 110%、圆角 24→20（@2624–2638）——性能与观感双兜底。
 
+**⚠ 这张表不要照抄成"必做清单"**——按逐 chunk 精确计数，真实用量是：`surface-card` **18 文件** · `glass-input` **17** · `btn-accent-gradient` **17** · `btn-ghost-soft` **16** · `surface-elevated` **9** · `glass-heavy` **5**（就是那 5 处 toast）· `glass-card`/`glass`/`glass-footer` 各 **2 且只在壳层 index chunk**。**页面内容区几乎只用 `surface-card` + `surface-elevated`（浮层）+ `glass-input`**，"玻璃拟态"里的 `.glass*` 家族实际是**壳层专用**。本地版只要实现 `surface-card / surface-elevated / glass-input / btn-accent-gradient / btn-ghost-soft` 这 5 个类，就拿到绝大部分观感。
+
 ### 1.7 暗色 / 亮色模式策略（@572–592、@2592–2596、@2624）
 
 - **只有暗色**：`:root{color-scheme:dark}` + `--lightningcss-light:;--lightningcss-dark:initial`（@221–223，lightningcss 的 light-dark 脚手架，**未实际使用**）。
 - `@media (prefers-color-scheme:light)` 只做一件事：`html,body,#root{background-color:transparent}`（@2592）——即"系统亮色时不覆盖成黑底，仍露出背景图"。
 - `@media (prefers-reduced-motion:reduce)` 是**完整降级表**：关掉 `reveal-in`/`reveal-stagger`、把 `gold-flow-card:before` 停成静态 55% 透明、`tilt-card` transform:none、`mouse-glow` display:none、`parallax` 取消（@572–592）。
-- 结论：不要为对齐竞品去做亮色主题；**但必须补 `prefers-reduced-motion` 全量降级**（我们有 1 条，不成体系）。
+- 结论：不要为对齐竞品去做亮色主题。降级方面本地已有 2 块（`app.css:779` 全局 `.01ms` 抹平、`:964` 清 `nth-child` 延迟），但是**一把梭式**；竞品是**逐效果点名降级且保留静态态**（流光停成 .55 静态描边而非删掉），后者更值得对齐。
 
 ---
 
@@ -200,7 +202,7 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 - 面板分栏模板（全在 CSS 里，可直接当规格用）：
   `lg:grid-cols-[minmax(340px,410px)_minmax(0,1fr)]`（出图参数|结果）、`[…430px…]`（出片）、`lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_150px]`（分镜镜号栏|内容|缩略）、`lg:grid-cols-[2fr_3fr]`（Home 双栏）、`lg:grid-cols-[minmax(0,1fr)_280px]`（主内容+右 rail）、`sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]`（写稿台 1:1.6）。
 - 栅格列数惯用：`grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6`（Home 6 统计卡）、`grid gap-4 sm:grid-cols-2 lg:grid-cols-4`（4 统计/快速入口）、`grid gap-5 md:grid-cols-2 xl:grid-cols-3`（项目卡）、`grid-cols-2 gap-3 md:grid-cols-3`（图/视频结果）。
-- 表格用 `min-w-[820px]/[920px]/[960px]` + 外层横向滚动（Tasks/Admin）；`lg:hidden` 的卡片列表与 `hidden lg:block` 的表格**成对出现**——移动看卡、桌面看表。
+- 表格用最小宽 + 外层横向滚动：**Tasks 表 `min-w-[820px]`**（逐文件核实：920/960 两档只出现在 `Admin-Dse82uZl.js`，那是**导航里没有的管理页**，不算用户面）；`lg:hidden` 的卡片列表与 `hidden lg:block` 的表格**成对出现**——移动看卡、桌面看表。
 
 ---
 
@@ -264,7 +266,9 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 
 **适配到我们 vanilla JS 的做法**：不做 Radix。用 `<button aria-haspopup="listbox">` + 一个 `position:fixed` 的 `<div role="listbox">`（按 trigger rect 定位、`getBoundingClientRect` 判上下翻转、`max-height:min(288px, 视口余量)`），列表项 `padding-left:32px` 预留勾位，键盘 `↑↓/Enter/Esc/Home/End` + 首字符跳转，进出场 `opacity+scale(.95→1)`+`transform-origin` 按翻转方向切。**成本：中。**
 
-### 3.4 弹窗 / 抽屉（`dialog-CeL5rpcU.js` L1876–1879）
+### 3.4 弹窗 / 遮罩层（`dialog-CeL5rpcU.js` L1876–1879）
+
+**重要事实：全站没有 Sheet / Drawer 组件**（无 vaul、无 `slide-in-from-right`；唯一的"抽屉"是移动端**导航**左滑面板，见 §2.2）。详情/编辑一律用居中 Dialog 或**行内展开**。所以"右侧抽屉"不是这个设计系统的必要部分。
 
 | 部位 | 规格 |
 |---|---|
@@ -275,12 +279,19 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 | Header | `text-xs font-medium tracking-wider text-[var(--text-muted)]`（eyebrow）→ `mt-2 text-lg font-medium text-foreground`（标题）→ `mt-3 text-sm leading-relaxed text-muted-foreground`（说明），内容区 `max-w-2xl` |
 | Footer 按钮 | 主 `btn-accent-gradient inline-flex h-10 items-center px-4/px-5 text-sm font-medium`；次 `btn-ghost-soft inline-flex h-10 items-center px-4 text-sm`；危险 `inline-flex h-10 items-center rounded-md bg-destructive px-4 text-sm font-medium hover:brightness-110 focus-visible:shadow-[var(--focus-ring)]` |
 
-**其它浮层的 z 阶梯**：header `z-30` → 移动吸底条/浮层 `z-20` → toast pill `z-50` → dialog `z-50` → **mention 菜单 `z-[70]`**（必须盖过 dialog，因为写稿台可在弹窗内）。
+**尺寸档位（同一 Dialog 用 `className` 覆盖）**：`max-w-lg`(默认) / `max-w-md`(备份恢复、QuickCreate) / `max-w-2xl`(素材编辑、AI 优化对照) / `max-w-3xl`(镜头参考、提示词大屏) / `max-w-5xl`(图片预览，`p-0`) / 全屏编辑 `h-screen max-h-screen w-screen max-w-full rounded-none`。**"抽屉"这件事由 `max-w-*` + `rounded-none` 承担，不需要第二套组件。**
+
+**自研遮罩层（不走 Dialog）**：仅灯箱类用 `fixed inset-0 z-50 flex items-center justify-center bg-black/{55,60,70} backdrop-blur-sm p-6` + `onClick=close` + 内层 `stopPropagation`；三档黑度分别对应 预览(60) / 提示词大屏(60 py-8 px-4) / 其它(55,70)。
+
+**Radix 给的免费能力（vanilla 需自己补）**：`FocusScope trapped+loop`、关闭后 `triggerRef.focus({preventScroll:true})`、其余 body `aria-hidden`、`RemoveScroll` 锁 body 并**补偿滚动条宽度**（`removeScrollBar`，防抖动）、Esc 只关最顶层（layer index === size-1）、右键/`ctrl+左键` 外点**豁免不关闭**。最后一条尤其容易漏。
+
+**其它浮层的 z 阶梯**：header `z-30` → 移动吸底条/浮层 `z-20` → 批量命令栏 `z-40` → toast pill / dialog / 遮罩 `z-50` → **mention 菜单 `z-[70]`**（必须盖过 dialog，因为写稿台可在弹窗内）。
+
 
 ### 3.5 Toast / 内联反馈（两条通道，分工明确）
 
 1. **浮起 pill toast**（仅 4 处：Images/Videos/AssetManager/Library）：
-   `glass-heavy fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 rounded-lg px-4 py-2.5 text-xs font-medium duration-300` — 小、玻璃、右下、从下 16px 淡入、0.3s。**缺陷**：`bottom-6`(24px) 与移动底部 tab(56px + safe-area) **重叠**，全站只有 tab bar 写了 `padding-bottom:env(safe-area-inset-bottom)`，toast 没有。
+   `glass-heavy fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 rounded-lg px-4 py-2.5 text-xs font-medium duration-300` — 小、玻璃、右下、从下 16px 淡入、0.3s。**没有 sonner / react-hot-toast**：每页自己 `setToast` + `setTimeout` 复位，时长 2400ms（Images/Library）/ 2600ms（Assets）。**位置也不统一**（Assets 是 `bottom-6 left-1/2 -translate-x-1/2` 居中）。**缺陷**：`bottom-6`(24px) 与移动底部 tab(56px + safe-area) **重叠**，全站只有 tab bar 写了 `padding-bottom:env(safe-area-inset-bottom)`，toast 没有。
 2. **`actionHint` 内联横幅**（Projects 9 处 / Story 21 处 / Storyboard **57 处**）：state 变量 + `actionKind:'ok'|'err'|'idle'`，渲染在页面顶部固定位置，不自动消失。成功/失败都写在这里，**长文案（带下一步动作）不会被 toast 定时冲掉**。
 3. 卡片级错误：`surface-card border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]`；行内小错误 `rounded-md bg-[var(--danger-soft)] px-3 py-2 text-xs`；警告条 `border-l-2 border-l-[var(--warning)]`（**只加左边 2px 色条**，其余保持卡样式）。
 4. 按钮内反馈：复制成功 → **按钮文案自己变**「正文已复制」+ `setTimeout(…,1600)` 复位。
@@ -308,8 +319,10 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 
 ### 3.8 标签页 / 分段器 / chips
 
-- Tabs（Radix）：`data-[state=active]:bg-secondary/25 data-[state=active]:text-foreground data-[state=active]:shadow-sm`（`shadow-sm`→`--elev-ring` 内描边）——**激活态是"轻底 + 内描边"，没有下划线**。
-- Library 的类型 tab：`全部/图片/视频/文本`，`inline-flex h-8 items-center rounded-full bg-primary/10 px-3 text-xs font-medium text-primary`（选中）vs `btn-ghost-soft inline-flex h-8 items-center border border-border px-3 text-xs`（未选）。
+- 两种页签，别混为一谈：
+  - **Radix Tabs（低频，内容型）**：`data-[state=active]:bg-secondary/25 data-[state=active]:text-foreground data-[state=active]:shadow-sm`（`shadow-sm`→`--elev-ring` 内描边）——激活态是"轻底 + 内描边"，**没有下划线**。
+  - **分段器 segmented（高频，筛选型，Assets 三类型页签逐字实读）**：容器 `surface-card flex items-center gap-1 p-1`（**用卡本身当槽**），按钮 `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition`（**`flex-1` = 等宽分段**），激活 `bg-primary text-primary-foreground shadow-md`，未选 `text-muted-foreground hover:bg-secondary/15`，计数尾标 `rounded-full px-1.5 text-[10px]`。
+- Library 的类型 tab（实测 L 逐字）：`全部/图片/视频/文本/资产素材`，选中 `inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground`（**实心金底 + r6，不是胶囊**），未选 `btn-ghost-soft inline-flex h-8 items-center border border-border px-3 text-xs`。切换时 `setType + setPage(1)` —— **换页签必回第 1 页**。同一 `btn-ghost-soft h-8 border` 样式也复用于「上一页/下一页」，**全站分页按钮与未选页签长得一样**。
 - 单选型选择（草稿类型、画风预设、素材类型）：**chip 组**`rounded-full border px-2.5 py-1 text-xs transition` + 选中 `border-primary bg-primary/10 text-primary`；分组标题 `text-[10px] font-medium text-[var(--gold-bright)]`（收藏/自定义用金色标）。
 - **ReferenceAssetChips**：`inline-flex items-center gap-0.5 rounded-full border border-[var(--border-default)] py-0.5 pl-2 pr-1 text-xs` + 尾部 × 按钮 `hover:text-[var(--danger)]`（**删除才变红，平时中性**），hover 整枚 `hover:border-[var(--brand)]`；空态加一枚 `border-dashed border-primary/40 text-[11px] text-primary hover:bg-primary/10` 的"＋添加"胶囊。
 
@@ -319,15 +332,32 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 - 角标：`absolute right-1.5 top-1.5 z-10 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground shadow`。
 - 次级缩略：`h-20 w-32 object-cover transition duration-300 group-hover:scale-[1.04]` + 居中浮层 `absolute inset-0 bg-background/45 opacity-0 transition group-hover:opacity-100`（桌面 hover 出现，移动 `hidden sm:flex` 换成长按/点击预览）。
 - 历史/参考行缩略：`h-20 w-32`（128×80）与 `h-7 w-7`（mention 行内）两种尺寸反复出现，可当"缩略图标准档"。
-- 卡底工具行：`flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-xs`，动作按钮统一 `inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition hover:bg-white/[0.06] hover:text-foreground`（**图标按钮不画边框，hover 才有底**）+ 危险 `text-destructive hover:bg-destructive/10` + 分页 `ml-auto rounded bg-destructive px-1.5 py-1 text-[10px]`。
+- 卡底工具行：`flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-xs`，动作按钮统一 `inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition hover:bg-white/[0.06] hover:text-foreground`（**图标按钮不画边框，hover 才有底**）+ 危险 `text-destructive hover:bg-destructive/10` + 批量条右端的 `ml-auto rounded bg-destructive px-1.5 py-1 text-[10px] font-medium text-destructive-foreground`（title「再点一次确认删除」）**不是分页，而是两段式确认里已被武装的那颗按钮**；真正的分页是 `btn-ghost-soft h-8 border border-border px-3 text-xs`「上一页 N / M 下一页」。
 
 ### 3.10 虚拟滚动？分页？
 
-- Storyboard：**整集全量渲染，无虚拟滚动、无分页**（`mt-4 space-y-3`）。分镜量级（每集几十条）下 DOM 可承受。
-- Library：**真分页**（「上一页 / 下一页」+「共 ${total} 条」）；资产素材区默认折叠，只展开前若干条 +「还有 N 个资产素材，全部展开」。
-- Tasks：桌面表格 `min-w-[920px]` 横向滚动 + 移动卡列表；服务端分页 `page/perPage`。
+- **全站零虚拟滚动、零 react-window**。分镜几十条、素材几百条的量级下作者选择整量渲染 + 分页。
+- Storyboard：整集全量渲染（`mt-4 space-y-3`），无分页。
+- Library：`pageSize=24`，**服务端拉全量后前端 `slice()` 分页**（不是游标分页）；「资产素材」嵌在「全部」页签时 compact 只显 6 张 +「全部展开」。
+- Images：24 张/页传统分页；Videos：无分页（客户端过滤全量）。
+- Tasks：服务端 `perPage:200` 一次拉完 → 客户端按筛选结果**每页 20 条**；桌面表格 `min-w-[820px]` 横向滚动 + 移动卡片流双形态。
 - Projects：无分页 UI，取 `perPage:100`。
-- 搜索/筛选状态持久化到 localStorage：`agnes.filter.image.mode/.keyword`、`agnes.filter.video.mode/.keyword`（**下次进页面记得你上次的筛选**）——托管版有这个，值得我们抄。
+- ⭐ **筛选状态持久化**（我们完全没有）：`agnes.filter.image.mode/.keyword`、`agnes.filter.video.mode/.keyword` — 下次进页面记得你上次的筛选；配合 `agnes.composer.collapsed.*`（面板折叠）、`agnes.prompt.h.*`（输入高度）、`agnes.draft.*.prompt/batch/shots.${项目}`（**草稿按项目分键**）构成"记忆层"。
+
+### 3.11 组件清单小结（对本地版的直接映射）
+
+| 他们的组件 | 我们现在的对应物 | 差距 |
+|---|---|---|
+| `button` cva 6×4 + `btn-accent-gradient`/`btn-ghost-soft` | `.btn`/`.btn-primary`/`.btn-ghost`（`app.css`） | 缺 `icon` 档、缺全圆角一致性和 `[&_svg]:size-4` |
+| `GlassSelect`（Radix Select 薄封装） | 原生 `<select>`（**全站 25 处**，散在 8 个页面模块） | 最大的一处观感落差 |
+| `Dialog` + 尺寸覆写 | `ui.js/modal()` | 缺 `max-h-[90dvh]` + `rounded-[24px]` + zoom/slide 入场 |
+| toast pill + `actionHint` 内联横幅 | 只有 `ui.js/toast()` | 缺"结果性长文案"通道 |
+| `glass-input` / MentionTextarea | 原生 input/textarea，固定高 | 缺 focus 金环、缺高度记忆、缺 @ 引用 |
+| `StatusBadge` 8 态双表 | 各处散写文字 | 缺统一状态语言 |
+| `Skeleton`（同构骨架） | 无 | 缺 |
+| `EmptyState`（icon+title+desc+action）+ 卡级错误条 | `ui.js/empty()` + `ui.js/errBox()` | 已有雏形，缺"含页面名的指路出路" |
+| 两段式确认 `useTwoClickConfirm` | `ui.js/confirm()` 阻塞弹窗 | 慢一拍且打断心流 |
+| 提示词工具栏（@素材/AI 优化/最终提示词/大屏编辑/高度档） | 无 | 一整块能力空缺 |
 
 ---
 
@@ -426,22 +456,52 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 
 ### 4.7 Assets 资产设定（`Assets-qRRIcoW9.js`）／ AssetManager 素材管理 ／ Library 素材库
 
-**三页职责**：`/assets`=角色·场景·道具**设定卡**（可 @ 引用）；`/asset-manager`=生成产物的**落盘与预览抽屉**；`/library`=**按项目浏览**的全量素材库。
+**三页职责**：`/assets`=角色·场景·道具**设定**（左 chips 列表 + 行内编辑表单 + 右参考图栏）；`/asset-manager`=**单项目内**素材运营台（改名/换类型/换参考图/设主图/批量整理/拿去生成）；`/library`=**跨项目**历史产出浏览 + 导出 + 移动。
 
-- Assets：页头「资产设定」+「管理角色、场景与道具的参考图与设定，生成时会自动带入。」；**三 tab = 角色/场景/道具**（选中 `border-[var(--gold-border)] bg-[var(--gold-soft)] text-[var(--gold-bright)]`，未选 `btn-ghost-soft`）+ 搜索「搜索名称…」+ 视图切换（**网格/列表两套并存**，`aria-label="切换视图"`）；工具条「提取 / 上传素材 / 批量出图」+ 折叠后浮出「提取资产设定（从文稿）」胶囊。
-  - 网格：`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4`，卡 `surface-card group relative overflow-hidden`（**卡本体就是 `<button>`，点卡=开抽屉**）；缩略 `aspect-[3/4]`（角色竖构图），视频 `aspect-video` 居中卡 `max-w-[260px]`；右上收藏 ☆（激活 `text-[var(--gold)]`+描边，常显不 hover-out）；底部蒙层 `opacity-0 group-hover:opacity-100` 内藏**两个均分大按钮「生图 / 生视频」**+ 右下「参考 N」计数 pill；卡底 meta 条：名称 + 「主图 / 缺参考图」+ mono 变体词 + 红点（缺参考图）+ 删除（**两步式，3s**）。
-  - ⭐ **「从文稿提取资产设定」**：Dialog 内 文稿/类型/集数 三下拉（集数 `第 ${e} 集 · ${titles.length} 条镜头`）→「开始提取」→ 进度行「提取中，请稍候…」+ 阶段文案（**`extract_progress` 为 0 时显示「正在排队或解析文稿…」而非 0% 假进度**）+ 条 `h-1.5 bg-[var(--brand)]` +「取消提取」（`cancelled` 态）→ 结果**差异预览表**（新增/更新/未变 +「${n} 张（新增 ${m}」）→「确认入库」→ `提取完成：新增 a 项，更新 b 项`。**AI 写入本地数据前先看 diff 再确认**——这是全站最重要的模式。
-  - ⭐ **批量出图三态**（`BATCH_ALL=1 / BATCH_MISSING_ONLY=2 / BATCH_SELECTED=3`）+「重跑失败项」+ 完成汇总「批量出图完成：共 n 项，成功 x，失败 y」+ 逐条 `名称 · 变体词 → 状态（失败带原因）`；「已选 n / 本页 m」+ 全选本页 / 清空。
-  - **AssetDrawer**（点卡滑出）：`fixed inset-y-0 right-0 z-50 w-[min(420px,100%)] … surface-elevated animate-in slide-in-from-right duration-300` + 遮罩 `bg-black/60 backdrop-blur-sm`；内容 = `aspect-[3/4] max-h-[46vh] object-contain` 主图（点击开 Lightbox）+ **参考图网格 `aspect-square` 内嵌 `<video preload="metadata" muted>`（视频缩略即视频首帧）** + 虚线「+ 添加参考图」+ 名称 inline-edit + 类型 chip + 设定 textarea（placeholder「性格、外形、服装、标志性特征…（支持 @素材 看图写稿）」）+ 变体行（折叠/展开，chip「自定义变体」，新增 `regen_*` 异步落库）。
-  - ⭐ **Lightbox = 完整键盘工作台**：`fixed inset-0 z-60 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm`，`img max-h-[78vh] max-w-[92vw] object-contain`，`tabIndex={-1} + autoFocus` 后 `onKeyDown` 处理 **←/→ 切换（带循环）、Esc 关闭、Space 切换视频播放/暂停**（视频 `max-h-[70vh] max-w-[80vw] autoplay loop muted playsInline`）；右上「n / total」mono 计数 + 标题 + 类型 + 名称 + 变体 pill。
-- AssetManager：同一组件树，**顶栏多「项目」下拉**；`assetType=characters|scenes|props|library` 四 tab；库缩略 `aspect-square`（含 `kindLabel==='视频'` 播放钮）；`localAssets` 元数据视图；视频「下载」用 `<a href={url} download>` 直连。
-- **Library（`/library`）按项目浏览 + 批量导出**：项目筛选 GlassSelect「全部项目/未分组/未命名项目」+「全部 / 资产素材」双 tab + 类型 tab 图片/视频/文本 + 搜索「按提示词/标题搜索」+ 计数「共 ${n} 条」；**分页 30/页**「上一页/下一页」（**不是无限滚动、不是虚拟列表**）。
-  - ⭐ **「资产素材」可引用子视图是另一套卡**：`grid grid-cols-2 sm:3 lg:4`，卡 `transition hover:ring-1 hover:ring-primary/40`（**hover 用 ring 不用 border，不抖布局**）；缩略缺失兜底 = 18px 类型首字（角色/场景/道具）；名称 `truncate text-[13px]` +「共 N 张参考图」/「缺参考图」+ 补图按钮 +「主图」角标。
-  - 素材卡：`aspect-square` + 右上收藏（**仅 `favEditable` 时给 button，否则 span，避免无意义可点**）+ 类型角标 `rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] text-white backdrop-blur`（**图上信息一律半透明黑 pill + blur，不画彩色遮罩**）；meta 行项目名 + 截断提示词 + mono 时间 + 导出/移动到项目（GlassSelect「移动到：…」）/删除。
-  - **文本素材点开**：Dialog `max-w-2xl`，`whitespace-pre-wrap max-h-[52vh] glass-input p-4 text-sm leading-relaxed` + 复制全文/导出 txt（`agnes-文稿-${title}`）。图片/视频点开：`fixed inset-0 z-50 bg-black/60 backdrop-blur-sm p-6` + `onClick=close` + 内层 `stopPropagation` + **`max-h-[70vh] rounded-md` 媒体**。
-  - ⭐ **打包导出**：「把当前筛选下的素材打包成一个 zip 导出到设备（上限 200 条）」，按钮文案切「打包中…」+ toast「已导出 ZIP」/「导出失败，请重试」。**批量导出以"当前筛选"为范围**，不需要先手工多选。
-  - ⭐ 空态带**因果链 + 出路**（不是"暂无数据"）：「还没有素材 / 去图片或视频页生成一批，就会汇总到这里；想用自己的图？点上方「上传素材」，存好的在「资产素材」页签里，写稿时就能 @ 引用」+「去生成」。
-  - 收藏持久化 `agnes.preset.favorites.v1`（**上限 30，超限 toast「收藏已满，请先取消一个再收藏」**）。
+> ⚠ 校正记录：`/assets` **没有抽屉、没有卡片网格、没有视图切换、没有搜索框**（`inset-y-0 right-0`、`slide-in-from-right`、`z-[60]`、`420px`、`确认入库` 等字符串在全部 chunk 中 **0 命中**；`slide-in-from-right` 仅出现在 Radix Select 内部）。全站**不存在 Sheet/Drawer 组件**，只有居中 Dialog。以下按实测写。
+
+- **Assets 结构**：工具条 → 4 统计卡 → 类型页签 → 双栏 `grid items-start gap-4 lg:grid-cols-[minmax(340px,430px)_minmax(0,1fr)]`。
+  - 统计卡 `grid grid-cols-2 gap-3 sm:grid-cols-4`（角色/场景/道具/已出图），图标座 `h-9 w-9 rounded-md bg-primary/10` + `text-lg font-semibold` 数字。
+  - 类型页签 segmented：`surface-card flex items-center gap-1 p-1`，激活 `bg-primary text-primary-foreground shadow-md` + 计数 `rounded-full px-1.5 text-[10px]`。
+  - **左栏 = 资产 chips 流 + 行内表单**（选中的编辑对象就绑在右栏，不跳页、不开窗）：chip `rounded-full border py-1 pl-3 pr-1.5 text-xs transition`，选中 `border-primary/40 bg-primary/10 text-primary`，名字 `max-w-40 truncate`；有图=✓，无图=小灰点（title「待生成参考图」）。
+  - 编辑表单 7 字段：名称/别名/一句话概述/风格档案/详细描述/基础出图提示词/细节出图提示词（`grid gap-3 p-4 sm:grid-cols-2`，长字段跨 2 列；输入 `glass-input h-9 rounded-md px-3 text-xs`；maxLength 200/2000/8000）。⭐ **dirty 提示 `有修改未保存`**（`text-[11px] text-primary`，不弹窗不打断）；⭐ **「生成参考图」= 虚线按钮 `border-dashed border-primary/40 bg-primary/5`**（把"会花额度/会耗时"的动作与实心「保存」在视觉上分开）。
+  - **右栏 = 参考图**：主参考图 `aspect-[3/4]`（角色竖构图；加载中同尺寸占位）+ hover「查看大图」`opacity-0 group-hover:opacity-100 backdrop-blur`；历史图 `grid grid-cols-3 gap-2 sm:grid-cols-4` `aspect-square`；⭐ **hover 底部工具条 `translate-y-full group-hover:translate-y-0`**（前移/后移/设主/删除），title 把语义写死「**顺序即引用顺序**」；删除是**格内确认遮罩**（不起全局弹窗）；dropzone `border-dashed rounded-md py-2.5 text-[11px]`。
+- ⭐ **提取资产（从文稿）**：工具条 = 项目下拉 `glass-input h-9 w-52` + 集数 `w-20 inputMode=numeric` +「提取资产」(虚线) +「一键补齐参考图」(实心) +「批量导入素材」(隐藏 file input 多选) +「备份」。前置校验把依赖顺序讲清 `这一集还没有分镜或脚本文稿，先去拆镜或写故事，再来提取资产`；结果 `提取完成：角色 X，场景 Y，道具 Z（本机新增/更新 N）`。
+- **批量导入按文件名合并**：`导入完成：新建 N 个素材（同名图片会并进同一素材）`——去重语义是"**同名并入**"，不是内容 hash。
+- ⭐ **一键补齐只补缺口 + 幂等四计数**：`一键补齐中：需要 a，已成功 b，失败 c，跳过已有 d` / `本集待补 N，成功 R，失败 I，已有 S`；单个 `参考图生成完成：成功 N，已存本机`；无密钥禁用并提示 `请先登录并配置 Agnes 密钥`。
+- ⭐ **引用守卫删除**：删资产单击即可，但被引用时拒绝并列出引用方 `仍在使用中：a、b、c 等，先解除引用再删除`。**全站唯一需要两段式确认的是「清除本机数据」**：`再点一次，确认清除全部本机数据` + 警示 `请确认你已导出备份——清除后无法找回。`
+- **备份/恢复**：恢复为**合并式**（明说 `现有数据不会被清空`）；导出 toast 带四类计数 `备份已导出：素材 N · 主档 N · 分镜 N · 媒体文件 N`。
+- ⭐ **本机存储异常被翻译成人话（5 类，本地版最该抄这块）**：`浏览器本机存储空间已满，请先导出备份并清理旧素材后再试` / `本机数据库需要修复，刷新页面即可自动补齐…` / `本机数据连接中断，请刷新页面重试` / `当前浏览器（可能处于隐私模式）不支持本机保存，数据只在本次打开期间保留` / `本机数据读写失败，请刷新页面重试`；另有迁移未完横幅 `资产迁移本机未完成，暂以旧数据只读展示`。
+- toast 位置在此页是**居中** `fixed bottom-6 left-1/2 -translate-x-1/2`（约 2.6s），与其余页右下不一致 → 见 §7。
+
+- **AssetManager 素材管理**：定位一句话讲清能力 `一屏看全当前项目的角色、场景、道具和素材：点开就能改名、换类型、换参考图…还能一键拿去生成。`
+  - ⭐ **sticky 工具栏** `sticky top-0 z-20 surface-elevated p-2.5`：项目下拉(w-40) + 类型胶囊 tabs（全部/角色/场景/道具/素材 + 计数 chip `min-w-[1.25rem] rounded-full text-[10px]`）+ 搜索 `rounded-full w-44 focus:w-56 transition-[width]`（**focus 变宽，`transition-[width]` 就是为它准备**）+「新建素材」+「批量整理」。
+  - 网格 `grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6`；缩略 `aspect-square rounded-t-3xl`；hover = `-translate-y-0.5 hover:shadow-xl` + 图 `group-hover:scale-[1.04] duration-500` + **渐变遮罩条 `bg-gradient-to-t from-black/85 via-black/45 to-transparent`**（4 动作）；⭐ **移动端遮罩常显** `opacity-100 md:opacity-0 md:group-hover:opacity-100`（触屏没有 hover）。
+  - ⭐ **「拿去生成」= 管理→生产的反向消费**：primary pill，title `自动把 @素材名 插入提示词`，实际 `navigate('/videos?reuseAsset=<id>')`，**零复制**；另配「存为素材」把任意临时图 3 秒升级成可 @ 资产 —— 素材闭环是双向门。
+  - ⭐ **批量整理 = 勾选框只在批量模式出现 + 底部浮起命令栏 + 原地切确认态**：勾选框 `h-6 w-6 rounded-full border-2 backdrop-blur`（选中 `border-primary bg-primary`）、卡 `ring-2 ring-primary`；命令栏 `fixed inset-x-0 bottom-6 z-40 flex justify-center px-4` 内 `rounded-full px-3 py-2 shadow-xl fade-in slide-in-from-bottom-4 duration-200`：`已选 N 个素材 | 全选当前 | 删除所选 | ×退出`；点删除后**命令栏原地变确认文案** `将删除 N 个素材，仍被分镜或任务引用的会自动跳过，删除后无法恢复。[返回][确认删除]`；结果 `已删除 N 个素材（跳过 M 个引用中）`。
+  - **单素材删除 = 引用检查流程**：打开即转圈 `正在检查分镜与任务的引用…` → 列引用方（`分镜 3`、`…等共 K 处引用`，warning 框 `max-h-44 overflow-auto rounded-xl bg-[var(--warning-soft)]`）→ 按钮变「知道了」。教育文案 `素材主档和它的全部参考图会从本机一并删除…提示词里已写的 @素材名 也不会再生效`。
+  - 编辑弹窗 `max-w-2xl`，内 `grid sm:grid-cols-[190px_minmax(0,1fr)]`；⭐ **label 即教学** `名称（提示词里 @ 这个名字引用）`；版本网格 `grid-cols-3 sm:grid-cols-5 lg:grid-cols-6`，标题写出取图规则 `参考图版本（N 张；@ 引用按主图 → 追加顺序取图）`；脏检查 `内容没有变化`；页脚 `保存后全站生效：生成页的 @ 引用与参考图都用最新版本`。
+  - 骨架屏：**12 个 `aspect-square rounded-3xl` animate-pulse**（全站唯一成规模骨架屏）；筛选空态给「清空筛选条件」按钮，真无数据才给「新建素材」。
+
+- **Library 素材库**：定义文案 `汇总你所有项目里生成的图片、视频和文本素材，以及存为素材的角色、场景、道具，可按项目、类型、关键词筛选。` + 计数徽章 `rounded-full bg-primary/10 px-3 py-1.5 text-xs`「共 N 条」。
+  - ⚠ **Library 没有多选、没有勾选框、没有浮现工具条、没有 per-item 收藏**（与 AssetManager 明确分工）。卡片动作**全部常驻**：`移动到…`(`h-7 flex-1 text-[10px]`) + 下载 `h-7 w-7 hover:text-primary` + 删除 `hover:text-[var(--danger)]`。
+  - ⭐ **批量 = 以"当前筛选"为范围的打包导出**：title 直接写范围与上限 `把当前筛选下的素材打包成一个 zip 导出到设备（上限 200 条）`，文件名 `agnes-素材包-N条.zip`，按钮切「打包中…」，toast `已打包 N 条素材，zip 已开始导出` / 部分失败 `部分素材内容取不到…请逐条导出`。**不需要先手工多选**——素材库的"批量"应该是这个形状。
+  - 筛选 3 维：类型页签（全部/图片/视频/文本/资产素材）+ 项目 GlassSelect `h-9 w-48`「全部项目」+ 关键词 `glass-input h-9 pl-8 pr-3 sm:w-56`（图标 `absolute left-2.5 top-1/2 -translate-y-1/2`，placeholder「按提示词/标题搜索」）。⚠ 无防抖、无日期筛选 → 见 §7。
+  - 网格 `grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6`；卡 `surface-card overflow-hidden` + `aspect-square`（`bg-secondary/12` 兜底，视频=播放图标占位）；两行 meta = 项目名 `truncate text-xs` + 类型徽章 `rounded bg-secondary/20 px-1.5 py-0.5 text-[10px]`；⭐ **入场 `useStaggerReveal(tRef,[items,page])`——依赖含 page，翻页会重放入场动画**（把分页当成一次新的"揭示"）。
+  - 「资产素材」子页签（读本地 IDB）：嵌在「全部」下时 `compact` 只显 6 张 + `还有 N 个资产素材，全部展开`；缺图卡 hover「补图」→ 直接开 QuickCreate 追加模式；空态把因果链讲全 `在出图 / 出片页把参考图「存为素材」…存好后写提示词时输入 @ 就能引用`。
+  - 灯箱（自绘）：`fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-6` + `onClick=close` + 内层 `stopPropagation`；媒体 `max-h-[70vh]`，文本 `whitespace-pre-wrap overflow-auto`；动作 复制全文/导出全文/导出/关闭；⚠ **键盘只有 Escape，无 ←/→ 切换**。
+  - 分页 `pageSize=24`，**接口拉全量后前端 `slice()`**；⚠ **本页无骨架屏**（只有一张文字卡 `surface-card p-4 sm:p-6`「正在读取素材…」）。删除用自绘小弹窗 `max-w-sm p-5`「删除该素材？删除后无法恢复。」
+  - ⭐ **未登录也有独立空态**：`登录后查看素材库 / 你生成的图片、视频和文本素材都会汇总在这里，登录后可以浏览、删除或移动到其它项目。`
+- **QuickCreate 弹窗**（`AssetQuickCreateDialog`，`max-w-md gap-5`）：双态标题「上传素材」/`给「X」补参考图`（补图态隐藏名称+类型，说明 `下面选的图会追加到这个素材上`）；字段 名称(maxLength 60，placeholder `比如：主角小满 / 城南老街`) + 类型 4 胶囊 `rounded-full px-3 py-1.5 text-xs` + dropzone `border-dashed py-5 text-[11px]` `点这里选图片，或把图片拖进来（最多 N 张）`（dragOver `border-primary bg-primary/10`）；预览 `grid-cols-2 sm:grid-cols-4`，首张左上金色「主图」徽章；校验行内红字 + 按钮禁用（`先给素材起个名字`/`先选至少一张参考图`/`这张参考图取不回来了（可能已过期），请在下方重新选图`）；⭐ 无参考图时 gold 教育条 `还没有参考图：没有图的素材不会带图参与生成，只能当文字描述用。`；busy 时**拦截弹窗关闭**；成功 toast `素材已存好，在「资产素材」里能看到，写稿时可以 @ 引用`。
+- **素材本地层（IndexedDB）**：`agnes-studio-local` v2，5 个 store `assets/tasks/shots/assetLibrary/assetFiles`；⚠ **无索引、out-of-line key、全量 getAll + 内存过滤**（万级素材会慢，**这是本地版能超越它的地方**）；blob 直存 + `createObjectURL` Map 缓存 + 主动 revoke；备份前 blob→dataUrl；多标签冲突有专文案。版本 = `media_refs` 序号，「设为主图」只改 `primary_file_id`，**顺序即 @ 引用取图顺序**；角色主图若是四视图自动回退取全身正视图。
+- **预设库实测 113 条**（README 称 82，偏少）：`style 65`（动漫卡通14·插画艺术11·国风东方11·影视氛围11·写实影像8·复古潮流10）/ `light 28`（自然光9·戏剧布光8·氛围光效9·特殊光感2）/ `camera 20`（镜头运动11·氛围运镜9），12 组。⭐ **单条只有 `{label, prompt}`**——无主体/前后缀切分，`prompt` 原样进提示词（UI 明说「描述短语，会原样进提示词」），另建 `Map<prompt,label>` 反查表回显名字（未命中截 12 字 `我的自定义 · xx…`）。配额：收藏 ≤30/类置顶、自定义 ≤30 插队首、常用参数 ≤8（标签形态 `5秒 · 16:9`），满额有专文案（`自定义预设最多 30 条，请先删掉不用的`）。
+- ⭐ **Picture N 参考协议 + 参考资产面板**：@ 解析后按序前置 `<Picture 1> 是角色参考图，只参考人物身份、脸、发型、服装，不复制白色背景。`（场景/道具各有句式）并统一追加 `参考图仅用于保持一致性：…`；硬上限 5 张，超限警告 `最多同时生效 5 张参考图，超出部分不参与生成；调优先级决定保留哪几张。`；面板区分**显式关联与自动识别**（`另有 N 个资产按名字自动识别（未显式关联，改分镜文本或重命名资产可调整）`），每张生效图带 `#N` 序号 + `启用中/已停用` + `优先级 ↑↓`。
+- **ReferenceAssetChips** 全文 40 行：`flex flex-wrap gap-1.5` + 前缀「当时参考了：」+ chip `rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px]`，命名 `类型·名称`，title 显 variant；**纯只读快照，无 +N 折叠、无删除、无拖拽**（按 `asset_image_id` 去重的生成当时记录）。
+- ⭐ **AI 优化的两条护栏**：① 结果进**左右对照浮层**（原文 vs 优化结果，空原文显示 `（空）`），`点「使用这条」才会替换输入框`；② 送进模型的 meta-prompt 有硬条款 `原文里的 @名字 是素材引用标记，必须逐字保留，不得新增、删除或改写任何 @ 条目`——**AI 改写不得破坏用户的引用语法**。
+- **模板 popover**（`w-72`，上限 30）：`保存当前提示词`（名称不填自动取开头）、每条双动作「用这条替换」/`追加到当前内容后面（不覆盖已写的）`、删除两步确认。
+- **`@素材` 的完整解析链**：正则 `/@([^\s@，。；、,！!？?「」『』"']+)/g`（token ≤24 字符）→ 精确同名优先 → 最长前缀匹配（≥2 字）→ 命中后剥 `@` 换素材名、图进参考序列（≤5 张、每素材最多取 3 个文件）→ 未命中保留原文并给 warning。
+
+
 
 ### 4.8 Tasks 任务中心（`Tasks-BERQG5aA.js`）
 
@@ -488,3 +548,133 @@ Tailwind 默认 640 / 768 / 1024 / 1280；**语义分工**：
 **文案语法（可归纳成 5 条）**：① 先说发生什么、再说下一步做什么；② 给"时间预期"（1~3 分钟 / ${n} 秒后重试 / 等一两分钟）；③ 给"更快路径"（关掉先思考会明显更快）；④ 说明副作用边界（删除任务不会取消远端生成 / 素材仍在、只是这次没拿到地址）；⑤ 兜底永远是「请稍后再试」+ 一个可点的重试按钮，不出现技术黑话或 stack。
 
 ---
+
+## 5. 动效与微交互
+
+### 5.1 两套入场系统（同一曲线语言，成本分层）
+
+| 系统 | 参数 | 触发 | 用在哪 |
+|---|---|---|---|
+| **纯 CSS** `.reveal-in` | `revealIn .56s cubic-bezier(.22,.61,.36,1) both`；`@keyframes revealIn{ from{opacity:0; transform:translateY(26px) scale(.97)} }` | 元素挂载即播（`both` 回填起始态） | 页头、单卡、Login 卡 |
+| **纯 CSS** `.reveal-stagger>*` | 子元素按 `:nth-child(1..8)` 依次 `animation-delay:0/60/120/180/240/300/360/420ms`（**60ms 步进，最多 8 档**，第 9 个起不再延） | 同上，容器挂载即级联 | Home KPI / 快速开始 / 部分网格（全站仅 3 个 chunk 用到） |
+| **GSAP** `useStaggerReveal(ref, deps)` | `gsap.fromTo(nodes,{y:56,scale:.96,opacity:0},{y:0,scale:1,opacity:1,duration:.6,ease:'power3.out',stagger:.06,clearProps:'transform,opacity'})`，`revertOnUpdate:true` | `useLayoutEffect`，**deps 变化即重放**（如 `[items,page]` → 翻页重放）；选择器 `[data-reveal-item]`；`matchMedia('(prefers-reduced-motion: no-preference)')` 守卫 | Projects 卡、Library 网格、Assets |
+
+**要点**：
+- 两条路线**位移量不同**（CSS 26px / GSAP 56px）、**时长几乎相同**（.56s / .6s）、**缓动等价**（`cubic-bezier(.22,.61,.36,1)` ≈ `power3.out`）→ 视觉一致，成本分层。**我们抄 CSS 那一套就够了**（零依赖）。
+- 进场只播一次（挂载即触发），**全站零滚动触发动效**：没有 IntersectionObserver，GSAP 也**没有注册 ScrollTrigger**（全 bundle 仅 1 处命中，是核心里 `Missing plugin? gsap.registerPlugin()` 的告警分支）。
+  这符合"工作台"而非"营销页"的定位——**用户是来干活的，不是来看动画的**；我们也不必加。
+- `clearProps:'transform,opacity'` 播完清掉内联样式，避免与 hover transform 打架——**用 JS 做级联时必须记得这一步**。
+
+### 5.2 hover / 按压反馈
+
+| 对象 | 反馈 | 时长 |
+|---|---|---|
+| 卡片（`.glass-card`） | bg `#ffffff14→#ffffff24` + border `→#e8c98959` + `box-shadow:0 8px 28px #00000029` | 默认 `transition-colors`（150ms） |
+| `.gold-flow-card` | conic 流光 **9s → 3.5s 提速** + 叠 `--gold-glow` | 关键帧驱动 |
+| `.tilt-card` | 跟随指针 3D 倾角 + CSS 自带 `translateY(-4px) scale(1.01)` | `transform .12s ease-out`（JS 写角度）/ `0.26s` 复位 |
+| `.mouse-glow` | `radial-gradient(280px circle at var(--mouse-x) var(--mouse-y), #ffffff1a, #e8c9890d 45%, transparent 72%)`，opacity 0→1 | `.3s` |
+| 媒体封面 | `scale(1→1.03)`（Library/AssetManager 用 `1.04`）+ 遮罩/按钮条 `opacity` 或 `translate-y` 浮出 | **`duration-500`**（比常规 150ms 慢一档，做成"缓放"感） |
+| 文字链 / 次级按钮 | 只换色 `hover:text-foreground` / `hover:bg-white/[0.06]`，**不加边框不位移** | 150ms |
+| 图标按钮 | 平时无边框，hover 才有底 | 150ms |
+| 主按钮 | `brightness(1.05)` + 阴影加深，**`transform:none`**（金主按钮刻意不位移，靠亮度） | 150ms |
+| 侧栏激活项 | `border-[var(--gold-border)] bg-[var(--gold-soft)] text-[var(--gold-bright)]` + `[&_svg]` 同步变金 | — |
+| 输入框 | `border-color:var(--gold-border)` + `--focus-ring`（3px `#e8c98938`） | 150ms |
+| 搜索框（AssetManager） | `w-44 focus:w-56 transition-[width]`——**只给搜索框开宽度过渡**，其它地方不做尺寸动画 | 150ms |
+
+### 5.3 异步与加载态的动效编排
+
+1. **按钮自己当进度条**：无独立 loading 圈时，主按钮文案切 `生成中…/提交中…/测试中…/打包中…/正在保存…` + 内嵌 `h-4 w-4 animate-spin` + `disabled`。批量时更狠——**进度写进按钮文案**：`停止补词 3/12`、`出图中 3/12`、`提交中 done/total`。
+2. **进度条三段式**：`h-1.5 rounded-full bg-secondary/20` 轨道 + `bg-[var(--brand)]`（失败段 `bg-[var(--danger)]`）+ `transition-all duration-500` 平滑推进；右侧配 `text-xs tabular-nums` 百分比（**`tabular-nums` 防数字跳动抖版**）。
+3. **呼吸点表示"活着"**：`inline-block h-2 w-2 rounded-full animate-pulse bg-primary`（批量任务标题旁）+ StatusBadge 前导点 `bg-current opacity-70`。
+4. **排队倒计时**：`setInterval(…,1000)` 每秒刷新 `75 秒后自动重试`，配「取消自动重试」——**等待被可视化且可退出**。
+5. **骨架屏 → 内容**：同构骨架（尺寸逐个对齐真实块）+ `animate-pulse`（2s opacity 呼吸，**无 shimmer**）。
+6. **数字滚动 / count-up：全站没有**。KPI 与计数都是直接落字（配 `tabular-nums`）。→ 我们也不要加，这类动效对生产工具是负资产。
+7. **Toast 进出**：进 `animate-in fade-in slide-in-from-bottom-4 duration-300`；**没有 animate-out**（`setTimeout` 直接卸载，硬消失）——我们做 vanilla 时补一个 200ms 淡出就比它好。
+8. **Dialog 进出对称**：`fade-in-0 zoom-in-95 slide-in-from-top-[48%]` ↔ `fade-out-0 zoom-out-95`，`duration-200`。
+9. **路由切换**：无页面转场动画，只有 `<main>` `scrollTo({top:0})` + 我们本地版的 `pageEnter 240ms cubic-bezier(.22,1,.36,1)`（**这条我们已经有了，且曲线与他们的 reveal 同源**）。
+
+### 5.4 `prefers-reduced-motion` 降级表（L572–592，可直接抄成 CSS）
+
+```css
+/* 逐字抄自 CSS 的 reduce 块 */
+.reveal-in, .reveal-stagger>*  { animation: none; }
+.gold-flow-card:before         { opacity: .55; animation: none; }
+.gold-flow-card:hover:before   { opacity: .55; }        /* hover 提速一并失效，保持静态 */
+.tilt-card                     { transform: none; }
+.mouse-glow                    { display: none; }
+.parallax-item                 { translate: none; }     /* 注意是 translate，不是 transform */
+```
+**关键做法：不删除装饰，而是降级成静态态**（流光描边仍在，只是不流动、透明度固定 .55）。⚠ 已知漏洞：Radix 的 `data-[state=open]:animate-in` 系列不在这个降级块里，**下拉/弹窗动画在减动偏好下仍会播放**——我们自绘浮层时记得把动画挂进这个块。
+
+### 5.5 其它微交互清单
+
+- **两段式确认（`useTwoClickConfirm`）**：`[pendingId,setPendingId]` + `setTimeout(()=>set(''),3000)`；三通道反馈 = 文案变「再点一次确认删除」+ 描边红→实心红 + 追加警示行。**不用弹窗，快一拍且不打断心流**；按 id 记态所以同屏多行可各自武装。
+- **复制成功 → 按钮文案自变**「正文已复制」+ `setTimeout(…,1600)` 复位；失败「复制失败，请手动选择」。**反馈就地发生在触发点**。
+- **⛔ 危险动作的 label 前缀**：「退出并**清除**本机数据」——在按钮文案里把不可逆后果写进去，而不是只靠红色。
+- **收藏即时态**：☆→★ `fill-current` + `border-[var(--gold-border)] bg-[var(--gold-soft)] text-[var(--gold-bright)]`，title 在「收藏这个预设（收藏后在下拉最上面）」↔「取消收藏这个预设」之间切换；**无 toast**（状态即时可见就不需要提示）。
+- **顶栏密钥灯**：`h-1.5 w-1.5 rounded-full` + `bg-[var(--success)]`/`bg-[var(--warning)]` + 文案「API 已连接 / 未配置密钥」，整枚可点直达 `/settings`；保存失败实时打回黄灯。
+- **IM 式 mention 菜单**：↑↓ 循环、Enter/Tab 选中、Esc 关、`onMouseEnter` 同步高亮、**IME composing / `keyCode===229` 守卫**（中文输入法下不劫持回车）；定位 160ms 节流、blur 160ms 延时关、点击插入后 300ms 内 focus 不重开。
+- **面板折叠**：chevron `rotate-180`，折叠态持久化；折叠后**浮出胶囊按钮**保留主操作（不因为折叠就把动作藏进必须展开才能点的地方）。
+
+---
+
+## 6. 最值得借鉴点排序（10–15 条）
+
+| # | 借鉴点 | 是什么 | 为什么值得抄 | 成本 | 风险 |
+|---|---|---|---|---|---|
+| **1** | **统一状态语言 + 异步任务卡片化** | `StatusBadge` 8 态双表（色 + 中文）；把"等待/排队/生成中/超时/需重登"当**用户要看的一等公民**，逐行「继续查询→查询中」单行锁，轮询 `document.hidden` 暂停 | 我们已有 jobs/poller + SSE，缺的是**表达层**；本地版任务更多（离线跑），价值比托管版更大 | 低-中 | 低 |
+| **2** | **错误/结果文案语法**（含 9 阶段流水线名 + 错误码全表 + 副作用说明） | 「发生什么 → 下一步做什么 → 时间预期 → 更快路径 → 副作用边界」五段式；「在『镜头解析』这一步失败」「删除后**不会取消已在远端跑的生成**」 | 纯文案工程，**零重构、观感提升最大的一条**；把"模型出错了"变成"可动手修" | **低** | 无 |
+| **3** | **两段式确认（`useTwoClickConfirm`）+ 引用守卫删除** | 3s 时间窗、文案+配色+警示行三通道；被引用时先列引用清单再拒绝 | 替代我们现在的 `confirm()` 阻塞弹窗（`ui.js/confirm`）；本地版删除即真删，**更需要"删了会断什么"** | 低 | 低（需防"手滑第二次点击"→ 按 id 记态并加区域外点击复位） |
+| **4** | **设计令牌体系落地（三层色 + 金 14 档 alpha + 4 档圆角 + 8 档间距 + 5 级文字 + 4 级阴影）** | §1 全表，含 `--focus-ring`、`--elev-popover`、`::selection` 金、`--cjk-latin-shift`、`font-size-adjust:.56` | 我们只有 ~10 个变量；补齐后所有组件改造都有统一依据，**是其余 14 条的地基** | 低-中（纯 CSS 追加） | 低（改错会全站走样，需一次做完） |
+| **5** | **提示词工作台**（@素材 mention + 高度记忆 + 大屏编辑 + 「最终提示词」预览） | 纯 `<textarea>` + 镜像 div 测 caret + body 浮层 + 上下翻转 + IME 守卫；草稿按项目 localStorage；发送前把"实际发出去的完整提示词"展开给人看 | **AI 工具最核心的输入体验**；「最终提示词」直接消灭"模型到底收到了什么"的黑箱焦虑，是**信任类**功能 | 中 | 中（caret 定位细节多，需真机测输入法） |
+| **6** | **自绘 Select（替掉全站原生 `<select>`）** | trigger = `.glass-input` + h10 + `[&>span]:line-clamp-1`；面板 = 浮层 `max-h-[288px]` + 选中勾位 `pl-8` + `↑↓/Home/End/Esc` + 首字符跳转（1000ms 缓冲）+ "全部"用哨兵值 | 原生 select 的弹层是操作系统画的，**是我们与竞品观感差距最大的单点**；语义用 `aria-haspopup=listbox` 自建即可 | 中 | 中（键盘与移动端可达性要测） |
+| **7** | **结果复用闭环：每张历史卡 = 可回填的模板** | 「复用参数 / 复用提示词 / 存当前为常用参数（≤8，标签 `5秒 · 16:9`）/ 收藏（≤30 置顶）」四级 + 「存为项目默认」+「跟随项目（xxx）」首项 | 漫剧生产是**高度重复的调参过程**；把"调过一次"变成"下次一键"。配合项目默认 = 整部番风格一次锁定 | 中 | 低 |
+| **8** | **后台任务体验：可离开 + 可续跑 + 可解释 + 幂等** | 提交即给"1~3 分钟"预期和"可以离开"许可；localStorage 存 task_id+时间戳，<900s 自动接上；720s 软超时改文案不改状态；批量「跳过已有」+「重跑全部失败（n）单个不影响其余」+ 中断后可续 | 我们已有 `lib/jobs.js`+`poller.js`，**缺的正是"接上"和"讲明白"这层**；本地长跑任务更多，收益高于托管版 | 中 | 中（续跑要处理任务已消失的情况，他们用了 404 重试 + 120s 整单重发） |
+| **9** | **KPI/统计卡 + 内联横幅双通道反馈** | Home/Tasks 的 `grid-cols-2 sm:3 xl:4` 统计卡（整卡是链接 + hint 写清统计口径 + 仅"需要处理"项语义变色）；结果性长文案走 `actionHint` 内联横幅（Story/Storyboard 各 21/57 处），临时性才走 toast | 首页从"入口列表"升级为"驾驶舱"；toast 不再承担长文案 | 低-中 | 低 |
+| **10** | **同构骨架屏 + 空态"三段式带指路"** | 骨架块尺寸逐个对齐真实块（同断点同列数），无 shimmer；空态 = 图标座 + 一句话 + **一条含页面名的出路** + 直达按钮 | 消除切页跳版；把"没数据"变成"下一步该去哪" | 低 | 无 |
+| **11** | **玻璃层级三档 + `max-w-[1320px]` 居中工作区 + 圆角矩形顶栏** | `blur16/150% → 24/160%` 三档语义；header `sticky top-0 z-30 mx-3 mt-3 h-14 rounded-[19px]` 悬浮胶囊（不是通栏硬边） | 是"看起来贵"的主要来源；我们目前是纯黑 + 通栏 | 中（含布局微调） | 中（改 header 形态会牵动全站间距） |
+| **12** | **记忆层（28 个 `agnes.*` localStorage 键）** | 折叠态 / 筛选 / 草稿 / 输入高度 / 任务续跑 / 常用参数 / 收藏 / 项目默认 / 引导已读 / 侧栏折叠 / 返回路径，全部 try-catch 容错 | **单用户工具的"手感"来自这里**：关掉再打开，一切还在原地 | 低（我们已有 `data/` 落盘，加 localStorage 即可） | 低（键名需统一前缀，避免污染） |
+| **13** | **CSS 类即品牌变体（不枚举组件 variant）** | `btn-accent-gradient` / `btn-ghost-soft` / `surface-card` / `surface-elevated` / `glass-input` 全局贴到任意 `<a>/<button>/div`；组件层只留最小 cva 表 | 与 vanilla CSS **天然同构**——我们不需要组件框架也能拿到同样的主题一致性；改一处全站生效 | 低 | 无 |
+| **14** | **参数用可视 pill 组，没得选就不做下拉** | 比例 8 档 / 分辨率 4 档 / 时长 9 档全部 `rounded-[10px] border px-2 py-1.5 text-xs`，选中反色；单模型只显金色 pill + title 解释「当前唯一可用，免费」 | 高频调参一眼可选，比下拉少一次点击；"没得选"用只读 pill 表达比禁用下拉诚实 | 低 | 无 |
+| **15** | **入场级联 + hover 微交互（纯 CSS 路线）** | `.reveal-in` 560ms `cubic-bezier(.22,.61,.36,1)` + `translateY(26px) scale(.97)`；`.reveal-stagger>*` 60ms 步进 ≤8 档；hover `scale-[1.03] duration-500`；完整 reduced-motion 降级表 | 纯 CSS 零依赖，**和我们已有的 `pageEnter` 同曲线**，接得上；减动偏好降级块可直接抄 | 低 | 无 |
+
+**推荐落地顺序（按"性价比 ÷ 风险"，与上表价值排名不同轴）**：`4 → 13 → 2 → 10 → 15 → 14 → 3 → 9 → 1 → 12 → 7 → 5 → 6 → 8 → 11`。
+- 先做 **4 + 13**（令牌表 + 5 个 CSS 类）：这是地基，其余每一条都要踩在它上面，且是纯追加、可回滚。
+- 再做 **2 + 10 + 15 + 14**（文案语法、同构骨架与空态、纯 CSS 入场、参数 pill 组）：**零后端改动、一周内全部见效**。
+- 然后 **3 + 9 + 1 + 12**（两段式确认、KPI+双通道反馈、状态语言与任务表达、记忆层）：需要新增少量 JS 与状态约定。
+- 最后 **7 → 5 → 6 → 8 → 11**（复用闭环、提示词工作台、自绘 Select、任务续跑、玻璃层级与 header 形态）：**要单独排期**，其中 6 和 11 会牵动全站，务必在 4/13 稳定后再动。
+
+---
+
+## 7. 不值得学的（明确不抄清单）
+
+### 7.1 技术栈重量
+1. **Radix UI + GSAP + Tailwind 运行时**：Radix Select/Dialog/Popover/Tabs/Tooltip + 内嵌一份 **GSAP 3.15.0 核心 + CSSPlugin**（`useStaggerReveal-DJfEh49G.js` 有 69 处 gsap 引用；`ScrollTrigger`/`Flip` 只是核心里的告警分支与 tick 常量，**并未注册**）+ tailwindcss-animate。我们零依赖 vanilla，**只为一个下拉和一次入场动画引两个库是本末倒置**。CSS 版 reveal-stagger 效果等价；Select 自绘即可（见 §3.3）。
+2. **`useStaggerReveal` 的 GSAP 路线**：`revertOnUpdate` + `matchMedia` + `clearProps` 这套只在"翻页重放动画"这种少见场景才划算，我们统一用 CSS `nth-child` 延迟。
+3. **PocketBase SDK / 账号体系 / 密钥托管 + `scratch` 临时上传接口**：纯云端产物。我们是本地单机、密钥就在 `data/`，抄过来只会增加攻击面。
+
+### 7.2 平台特化的装饰
+4. **顶栏 5 个外部推广快捷链接**（ima 知识库 / 动画大丸家4.0 / 提示词大师 / miniMiniMax H3 导演台 / 漫剧宝藏资源网）：托管版的导流位，**与工具价值无关**。
+5. **「v0.1.5 · 本地浏览器存储」等版本页脚 + 新手引导横幅 + 使用引导页**：营销/Onboarding 包装，本地版自说明即可，不必照搬长文案。
+6. **conic 流光描边（`.gold-flow-card`）+ tilt + mouse-glow 三件套**：他们自己也**只在 3–4 个 chunk 用**（Home 快速开始、Projects 卡、Login、引导条），工作页一律不用。若我们把它铺到每张卡上，长时间盯屏幕会变成视觉噪声——**只在"值得被点"的少数卡上用最多加一个效果**。
+7. **`@property --flow-angle` + 9s conic 动画**：Safari 旧版兼容成本 + 常驻合成层动画（CPU/GPU 持续占用），对一个可能开一整天的本地工具不友好。
+8. **登录页两团 `blur-[64px]/blur-3xl` 光斑 + `h-[420px] w-[680px]`**：一次性门面，我们不抄。
+
+### 7.3 设计系统自身的不干净
+9. **`--text-muted / --text-tertiary / --text-aux / --text-weak` 四个别名同一个值 `#cfcabf`**；`--status-*` 又复制一遍 `--success/--warning/--danger` → 令牌冗余。我们建自己的表时**一个值一个名**，别抄这个。
+10. **`--accent-blue: #2f81f7` / `--accent-cyan: #4dd0e1` 命名残留**：实际使用处是 `--info/--accent-cyan` 混用，语义漂移。
+11. **`.glass-light / .glass-strong / .glass-sticky / .glass-nav` 在 ≤767px 降级块里被引用，但基础类根本不存在**（`.glass-panel` 也只有一条 `border-radius:28px`）→ 死选择器。**抄降级块时要逐个核对**。
+12. **`@keyframes goldFlow{ to{--flow-angle:360deg; transform:none} }` 里的 `transform:none`** 是无操作噪声；`-webkit-mask-composite:xor` 与 `mask-composite:exclude` 双写。
+13. **装饰类的真实使用率极低，别把它们当"系统标配"**（逐 chunk 精确计数）：`parallax-item` **0 次**（纯死代码）· `reveal-in` **仅 1 处**（只有 Login 卡）· `tilt-card` / `mouse-glow` **各 3 个文件**（Login + Home + Projects）· `gold-flow-card` **4 个文件** · `glass-card` / `glass` **各 2 次且只在壳层 index chunk**（页面全用 `surface-card`）· `glass-footer` 2 次 · `scroll-dark` 3 处。**结论：真正扛全场的只有 5 个类** —— `surface-card`(18 文件) + `glass-input`(17) + `btn-accent-gradient`(17) + `btn-ghost-soft`(16) + `surface-elevated`(9)；其余都是登录页/首页的少量装饰。**我们只要把这 5 个类 + 令牌做到位，就能拿到约 90% 的观感，不用复制整套玻璃家族。**
+
+### 7.4 会伤害本地单机体验的
+14. **toast 压在移动端底部 tab 上**（`bottom-6` vs tab `h-14`+safe-area，且只有 tab bar 写了 `env(safe-area-inset-bottom)`）：我们若做移动适配必须 `bottom: calc(56px + env(safe-area-inset-bottom))`。
+15. **toast 位置不统一**（Assets 居中 / 其余右下）、时长散落在 2400/2600/2000ms、**无 animate-out**（硬消失）。我们统一一处。
+16. **Library 搜索无防抖**（每次键入 `setKeyword + setPage(1)` 全量重拉）、**Library 无骨架屏**（只有一张「正在读取素材…」文字卡）。我们本地数据在内存/IDB，加 200ms 防抖 + 骨架只是举手之劳，**这里我们可以直接超过它**。
+17. **IndexedDB 无索引、全量 `getAll()` + 内存过滤**，5 个 store 一视同仁。素材上千条后必卡。我们若做本地缓存层，**从第一天就建 `project_id`/`kind` 索引**。
+18. **登出/切账号走整页 reload**（`agnes.route.reload`）：本地版是长连接（SSE），整页刷新会断流，不能抄。
+19. **桌面表格横向滚动**（Tasks `min-w-[820px]`；Admin 的 920/960 不算用户面）：1280 屏上表格要左右拖。我们优先做"移动卡片流/桌面表格同源双渲染"，但**不要靠加最小宽度撑表**。
+20. **超长中文按钮/说明文案**（「收起生成参数，只留标题行」「把当前画风存为项目默认（出图与出片都跟随项目）」「仍在用：a、b、c 等，先解除引用再删除」）：放在 `title` 里很好，**放进按钮可见文案就会撑破布局**。抄"写清楚"的意图，别抄它的落位。
+21. **给 8 档比例/9 档时长按钮组**：模型只有 1 个、参数集合固定时才划算。我们若支持多模型多参数，需先做参数能力表再决定控件形态。
+22. **`min-w-[820px]` 表格 + 无虚拟滚动 + 无时间分组**的大列表策略：他们数据量小所以没暴露问题。**不要照抄"永远全量渲染"这件事本身**，超过 500 行就该考虑分组或窗口化。
+

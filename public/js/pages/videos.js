@@ -10,7 +10,7 @@ import {
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, navigate } from '../app.js';
+import { state, navigate, onEvent } from '../app.js';
 
 export default async function videos(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
@@ -270,8 +270,8 @@ export default async function videos(container, params) {
         frame_rate: S.t2v.fps, seed: S.t2v.seed || undefined,
       });
     } else if (mode === 'i2v') {
-      if (!S.i2v.image.trim()) { toast.err('请填写参考图片 URL'); return; }
-      if (!/^https?:\/\//.test(S.i2v.image)) { toast.err('参考图必须是 http(s) 开头的公网地址'); return; }
+      if (!S.i2v.image.trim()) { toast.err('请填写参考图片 URL——可去「素材库」点图片复制公网链接粘贴过来'); return; }
+      if (!/^https?:\/\//.test(S.i2v.image)) { toast.err('参考图必须是 http(s) 公网地址——本地路径模型看不到，可去素材库复制图片链接'); return; }
       if (!S.i2v.prompt.trim()) { toast.err('请输入运动描述'); return; }
       Object.assign(payload, {
         mode: 'image_to_video', prompt: S.i2v.prompt, negative_prompt: S.i2v.neg,
@@ -280,8 +280,8 @@ export default async function videos(container, params) {
       });
     } else if (mode === 'multi') {
       const valid = S.multi.imgs.filter((i) => i.url.trim());
-      if (valid.length < 2) { toast.err('多图参考至少需要 2 张图片'); return; }
-      if (valid.some((i) => !/^https?:\/\//.test(i.url.trim()))) { toast.err('参考图都必须是公网地址'); return; }
+      if (valid.length < 2) { toast.err('多图参考至少 2 张公网图片——点「+ 添加参考图」补足'); return; }
+      if (valid.some((i) => !/^https?:\/\//.test(i.url.trim()))) { toast.err('参考图都必须是 http(s) 公网地址——本地路径模型看不到，可去素材库复制图片链接'); return; }
       if (!S.multi.prompt.trim()) { toast.err('请输入视频提示词'); return; }
       Object.assign(payload, {
         mode: 'multi_image', prompt: S.multi.prompt, source_images: valid,
@@ -403,4 +403,13 @@ export default async function videos(container, params) {
   await loadImages();
   renderForm();
   await loadRecent();
+
+  // 2.8：提交后"最近任务"不再定格——SSE 事件驱动 700ms 防抖重拉（照素材库已验模式）
+  let liveTmr = null;
+  const off = onEvent('video', () => {
+    if (document.querySelector('.modal-mask')) return; // 弹窗开着不打扰
+    clearTimeout(liveTmr);
+    liveTmr = setTimeout(() => loadRecent(), 700);
+  });
+  return () => { clearTimeout(liveTmr); off(); };
 }

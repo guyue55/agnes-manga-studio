@@ -56,11 +56,36 @@ export function modal(o) {
       ${o.footer ? `<div class="modal-foot">${o.footer}</div>` : ''}
     </div>`;
   const close = () => mask.remove();
-  mask.addEventListener('click', (e) => {
-    if (e.target === mask || e.target.closest('[data-close]')) close();
-  });
   const bodyEl = mask.querySelector('.modal-body');
   if (o.body && typeof o.body !== 'string') bodyEl.appendChild(o.body);
+
+  // ── 2.5：脏守卫——编辑过未提交就想关（ESC/遮罩/×），先拦截一次 ──
+  let dirty = false; let submitted = false; let guardShown = false;
+  bodyEl.addEventListener('input', () => { dirty = true; });
+  bodyEl.addEventListener('change', () => { dirty = true; });
+  mask.addEventListener('click', (e) => {
+    // 点过「保存/确定」后再关闭 = 用户本意已交付，不再纠缠
+    if (e.target.closest('.modal-foot .btn-primary, .modal-foot [data-yes]')) submitted = true;
+  });
+  const requestClose = () => {
+    if (submitted || !dirty || o.dirtyGuard === false) { close(); return; }
+    if (guardShown) return;
+    guardShown = true;
+    const bar = document.createElement('div');
+    bar.className = 'note orange';
+    bar.style.cssText = 'margin:0 20px 10px;display:flex;align-items:center;gap:12px;justify-content:space-between';
+    bar.innerHTML = `<span>有未保存的修改，关闭后将丢失</span><span class="row" style="gap:8px;flex:none">
+      <button class="btn btn-sm" data-stay>继续编辑</button><button class="btn btn-sm btn-danger" data-discard>放弃修改</button></span>`;
+    const foot = mask.querySelector('.modal-foot');
+    if (foot) foot.insertAdjacentElement('beforebegin', bar);
+    else mask.querySelector('.modal').appendChild(bar); // 无脚注弹窗：守卫条放盒内底部
+    bar.querySelector('[data-stay]').onclick = () => { bar.remove(); guardShown = false; };
+    bar.querySelector('[data-discard]').onclick = () => { submitted = true; close(); };
+    bar.querySelector('[data-stay]').focus();
+  };
+  mask.addEventListener('click', (e) => {
+    if (e.target === mask || e.target.closest('[data-close]')) requestClose();
+  });
   root.appendChild(mask);
   document.body.classList.add('modal-open');
 
@@ -69,7 +94,12 @@ export function modal(o) {
   const onKey = (e) => {
     if (e.key === 'Escape') {
       // 只关最上层，避免一次 ESC 关掉叠着的多个弹窗
-      if (root.lastElementChild === mask) { e.preventDefault(); close(); }
+      if (root.lastElementChild === mask) { e.preventDefault(); requestClose(); }
+    } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      // 2.5：⌘/Ctrl+↵ 提交——触发脚注主按钮（禁用态不响应）
+      const primary = mask.querySelector('.modal-foot .btn-primary:not(:disabled)')
+        || mask.querySelector('.modal-foot [data-yes]:not(:disabled)');
+      if (primary) { e.preventDefault(); primary.click(); }
     } else if (e.key === 'Tab') {
       const els = focusables();
       if (!els.length) return;
@@ -99,8 +129,8 @@ export function modal(o) {
     (input || safeBtn || mask.querySelector('[data-close]'))?.focus();
   }
 
-  if (o.onMount) o.onMount(mask, close);
-  return { close, root: mask };
+  if (o.onMount) o.onMount(mask, requestClose); // 调用方拿到的 close 也带脏守卫
+  return { close: requestClose, forceClose: close, root: mask };
 }
 
 /**
@@ -193,8 +223,10 @@ export function dataOf(el, name) {
   return el.getAttribute(`data-${name}`);
 }
 
-export function empty(title, desc, iconName = 'inbox') {
-  return `<div class="empty">${icon(iconName, 38)}<div class="t">${esc(title)}</div><div class="d">${esc(desc || '')}</div></div>`;
+/** 空态块。action={label, go:'#/route'} 时渲染成一键直达的 hash 链接（2.7：空态从指路文案变出口） */
+export function empty(title, desc, iconName = 'inbox', action = null) {
+  return `<div class="empty">${icon(iconName, 38)}<div class="t">${esc(title)}</div><div class="d">${esc(desc || '')}</div>
+    ${action && action.go && action.label ? `<div style="margin-top:14px"><a class="btn btn-sm btn-primary" href="${esc(action.go)}">${esc(action.label)}</a></div>` : ''}</div>`;
 }
 
 export function spinner(text) {

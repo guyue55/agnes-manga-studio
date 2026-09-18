@@ -9,7 +9,7 @@ import {
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
-import { state, onEvent } from '../app.js';
+import { state, onEvent, syncViewParams } from '../app.js';
 
 export default async function storyboards(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
@@ -62,8 +62,8 @@ export default async function storyboards(container, params) {
   const epSel = container.querySelector('#ep');
   epSel.innerHTML = Array.from({ length: 30 }, (_, i) => i + 1)
     .map((n) => `<option value="${n}"${n === episode ? ' selected' : ''}>第 ${n} 集</option>`).join('');
-  picker.onchange = () => { projectId = picker.value; selected.clear(); load(); };
-  epSel.onchange = () => { episode = Number(epSel.value); selected.clear(); load(); };
+  picker.onchange = () => { projectId = picker.value; selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
+  epSel.onchange = () => { episode = Number(epSel.value); selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#gen-sb').onclick = genFromScript;
   container.querySelector('#add-shot').onclick = () => editShot(null);
@@ -103,11 +103,19 @@ export default async function storyboards(container, params) {
     renderTable();
   }
 
+  function syncSelAll() { // 2.6：全选钮与行选择双向同步，部分选中显示半选
+    const sa = container.querySelector('#sel-all');
+    if (!sa) return;
+    sa.checked = rows.length > 0 && selected.size === rows.length;
+    sa.indeterminate = selected.size > 0 && selected.size < rows.length;
+  }
+
   function renderTable() {
     const el = container.querySelector('#table');
     container.querySelector('#sel-count').textContent = `已选 ${selected.size} 个镜头`;
+    syncSelAll();
     if (!rows.length) {
-      el.innerHTML = `<div class="card">${empty('第 ' + episode + ' 集还没有分镜', '在上面粘贴脚本点「生成分镜」，或手动添加镜头', 'film')}</div>`;
+      el.innerHTML = `<div class="card">${empty('第 ' + episode + ' 集还没有分镜', '在上面粘贴脚本点「生成分镜」，或手动添加镜头', 'film', { label: '去故事脚本页', go: '#/scripts' + (projectId ? '?project=' + encodeURIComponent(projectId) : '') })}</div>`;
       return;
     }
     el.innerHTML = `<div class="table-wrap"><table class="tbl">
@@ -157,6 +165,7 @@ export default async function storyboards(container, params) {
         const id = c.getAttribute('data-sel');
         c.checked ? selected.add(id) : selected.delete(id);
         container.querySelector('#sel-count').textContent = `已选 ${selected.size} 个镜头`;
+        syncSelAll();
       };
     });
     const bind = (attr, fn) => el.querySelectorAll(`[data-${attr}]`).forEach((b) => { b.onclick = () => fn(b.getAttribute(`data-${attr}`), b); });
@@ -204,7 +213,7 @@ export default async function storyboards(container, params) {
     if (genBusy) return; // 双击会重复烧一次 API 配额
     const text = container.querySelector('#script-in').value.trim();
     if (!text) { toast.err('请先粘贴脚本内容'); return; }
-    if (!projectId) { toast.err('请先选择项目'); return; }
+    if (!projectId) { toast.err('请先选择项目——右上角下拉选一个，或去「项目管理」新建'); return; }
     const btn = container.querySelector('#gen-sb');
     genBusy = true;
     setBusy(btn, true, '分镜生成中');
@@ -371,7 +380,7 @@ ${text}`,
   }
 
   async function genImage(s, btn) {
-    if (!s?.image_prompt) { toast.err('这个镜头还没有图片提示词'); return; }
+    if (!s?.image_prompt) { toast.err('这个镜头还没有图片提示词——点「编辑」补上，或勾选后批量补提示词'); return; }
     setBusy(btn, true);
     try {
       const r = await api.genImage({
@@ -388,7 +397,7 @@ ${text}`,
   }
 
   async function genVideo(s, btn) {
-    if (!s?.video_prompt) { toast.err('这个镜头还没有视频提示词'); return; }
+    if (!s?.video_prompt) { toast.err('这个镜头还没有视频提示词——点「编辑」补上，或勾选后批量补提示词'); return; }
     setBusy(btn, true);
     try {
       // R3：与批量路径同一判定——有可用分镜图就走图生视频，不再永远文生视频

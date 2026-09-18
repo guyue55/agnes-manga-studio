@@ -230,11 +230,11 @@ export default async function images(container, params) {
     });
     bind('copyurl', (id) => {
       const img = items.find((x) => x.id === id);
-      copyText(img.remote_url || img.url).then(() => toast.ok('已复制 URL')).catch(() => toast.err('复制失败'));
+      copyText(img.remote_url || img.url).then(() => toast.ok('已复制 URL')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
     });
     bind('copyprompt', (id) => {
       const img = items.find((x) => x.id === id);
-      copyText(img.generation_prompt || '').then(() => toast.ok('已复制提示词')).catch(() => toast.err('复制失败'));
+      copyText(img.generation_prompt || '').then(() => toast.ok('已复制提示词')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
     });
     bind('dl', (id) => {
       const img = items.find((x) => x.id === id);
@@ -274,7 +274,7 @@ export default async function images(container, params) {
         <a class="btn btn-primary" href="${esc(img.url)}" download="${esc(img.name)}.png">下载</a>`,
       onMount(root, close) {
         root.querySelector('[data-copy]').onclick = () => {
-          copyText(img.generation_prompt || '').then(() => toast.ok('已复制')).catch(() => toast.err('复制失败'));
+          copyText(img.generation_prompt || '').then(() => toast.ok('已复制')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
         };
       },
     });

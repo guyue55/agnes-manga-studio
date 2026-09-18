@@ -10,7 +10,7 @@ import {
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy, errBox } from '../ui.js';
 import { head } from './helpers.js';
-import { onEvent } from '../app.js';
+import { onEvent, syncViewParams } from '../app.js';
 
 const MODE_LABELS = {
   text_to_video: '文生视频',
@@ -21,9 +21,9 @@ const MODE_LABELS = {
 const TYPE_LABELS = { text: '文本', image: '图片', video: '视频' };
 const REF_STATUS = new Set(['poll_timeout', 'video_url_missing', 'remote_submitted', 'sync_failed', 'result_parse_failed']);
 
-export default async function tasks(container) {
-  let tab = 'all';
-  let statusFilter = 'all';
+export default async function tasks(container, params = {}) {
+  let tab = ['all', 'video', 'image', 'text'].includes(params.tab) ? params.tab : 'all'; // 2.9：可分享/可刷新
+  let statusFilter = params.status || 'all';
   let search = '';
   let videos = [];
   let others = [];
@@ -57,14 +57,28 @@ export default async function tasks(container) {
 
   container.querySelector('#reload').onclick = load;
   container.querySelector('#batch-fix').onclick = batchFix;
+  // 2.10：状态候选跟着 tab 走——图片/文本任务只有完成/失败，给"生成中"筛选是空承诺
+  function fillStatus() {
+    const sel = container.querySelector('#status');
+    const vocab = tab === 'image' || tab === 'text'
+      ? { completed: '已完成', failed: '失败' }
+      : Object.fromEntries(Object.entries(VIDEO_STATUS).map(([k, v]) => [k, v.label]));
+    if (tab === 'all' && statusFilter !== 'all' && !vocab[statusFilter]) statusFilter = 'all';
+    sel.innerHTML = `<option value="all">全部状态</option>`
+      + Object.entries(vocab).map(([k, label]) => `<option value="${k}"${k === statusFilter ? ' selected' : ''}>${esc(label)}</option>`).join('');
+  }
   container.querySelectorAll('#tabs [data-tab]').forEach((b) => {
+    b.classList.toggle('on', b.getAttribute('data-tab') === tab);
     b.onclick = () => {
       tab = b.getAttribute('data-tab');
       container.querySelectorAll('#tabs [data-tab]').forEach((x) => x.classList.toggle('on', x === b));
+      fillStatus();
+      syncViewParams({ tab, status: statusFilter });
       render();
     };
   });
-  container.querySelector('#status').onchange = (e) => { statusFilter = e.target.value; render(); };
+  fillStatus();
+  container.querySelector('#status').onchange = (e) => { statusFilter = e.target.value; syncViewParams({ tab, status: statusFilter }); render(); };
   let timer;
   container.querySelector('#search').oninput = (e) => {
     clearTimeout(timer);
@@ -111,7 +125,7 @@ export default async function tasks(container) {
     }) : [];
 
     if (!vRows.length && !oRows.length) {
-      el.innerHTML = `<div class="card">${empty('没有符合条件的任务', '换个筛选条件，或去「视频生成」提交一个任务', 'tasks')}</div>`;
+      el.innerHTML = `<div class="card">${empty('没有符合条件的任务', '换个筛选条件，或去「视频生成」提交一个任务', 'tasks', { label: '去视频生成', go: '#/videos' })}</div>`;
       return;
     }
 
@@ -274,7 +288,7 @@ export default async function tasks(container) {
         footer: `<button class="btn" data-copy>复制 video_id</button>`,
         onMount(root) {
           root.querySelector('[data-copy]').onclick = () => {
-            copyText(v.agnes_video_id || '').then(() => toast.ok('已复制')).catch(() => toast.err('复制失败'));
+            copyText(v.agnes_video_id || '').then(() => toast.ok('已复制')).catch(() => toast.err('复制失败——浏览器拦截了剪贴板，请手动选中文本复制'));
           };
         },
       });

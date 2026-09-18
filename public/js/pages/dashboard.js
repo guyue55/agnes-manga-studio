@@ -89,7 +89,7 @@ export default async function dashboard(container) {
       const list = (pr.data || []).slice(0, 6);
       const el = container.querySelector('#recent-projects');
       if (!list.length) {
-        el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有项目', '点右上角「新建项目」开始第一部漫剧', 'folder')}</div>`;
+        el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有项目', '点右上角「新建项目」开始第一部漫剧', 'folder', { label: '去新建项目', go: '#/projects' })}</div>`;
       } else {
         el.innerHTML = list.map((p) => `
           <div class="proj-card" data-pid="${esc(p.id)}">
@@ -124,7 +124,7 @@ export default async function dashboard(container) {
       ...vd.data.slice(0, 4).map((v) => ({ kind: 'video', a: v })),
     ];
     if (!assets.length) {
-      el2.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有生成内容', '先建项目，再从故事脚本开始', 'sparkles')}</div>`;
+      el2.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有生成内容', '先建项目，再从故事脚本开始', 'sparkles', { label: '去写故事脚本', go: '#/scripts' })}</div>`;
     } else {
       el2.innerHTML = assets.map(({ kind, a }) => kind === 'image'
         ? `<div class="asset-card" data-go="assets" data-params='{"tab":"image"}'>

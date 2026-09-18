@@ -6,7 +6,7 @@ import { icon, esc, TEMPLATE_TYPES, modelChoices, fmtTime } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, spinner, confirm, options, setBusy, errBox } from '../ui.js';
 import { head } from './helpers.js';
-import { state, refreshState } from '../app.js';
+import { state, refreshState, syncViewParams } from '../app.js';
 
 const SECTIONS = [
   { id: 'api', label: 'Agnes API', icon: 'key' },
@@ -17,8 +17,8 @@ const SECTIONS = [
   { id: 'about', label: '关于', icon: 'info' },
 ];
 
-export default async function settings(container) {
-  let section = 'api';
+export default async function settings(container, params = {}) {
+  let section = params.sec || 'api'; // 2.9
   let settings = {};
   let templates = [];
   let keyVisible = false;
@@ -34,7 +34,7 @@ export default async function settings(container) {
     </div>`;
 
   container.querySelectorAll('[data-sec]').forEach((b) => {
-    b.onclick = () => { section = b.getAttribute('data-sec'); render(); };
+    b.onclick = () => { section = b.getAttribute('data-sec'); syncViewParams({ sec: section }); render(); };
   });
 
   async function load() {

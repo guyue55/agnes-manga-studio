@@ -204,6 +204,31 @@ group('设计规范');
   ok('无大面积紫色主题', !/#8B5CF6|purple/.test(css));
   // 响应式
   ok('有窄屏适配', css.includes('@media (max-width: 900px)'));
+
+// ── B2 体验缺陷批的落地钉（防回归删除）─────────────────────
+group('B2 体验批钉');
+{
+  const ui = read(path.join(PUB, 'js', 'ui.js'));
+  const app = read(path.join(PUB, 'js', 'app.js'));
+  const consts = read(path.join(PUB, 'js', 'consts.js'));
+  const rd = (f) => read(path.join(PUB, 'js', 'pages', f));
+  const sb = rd('storyboards.js'); const tk = rd('tasks.js'); const as = rd('assets.js');
+  const vd = rd('videos.js'); const st = rd('settings.js'); const db = rd('dashboard.js');
+  ok('errBox 存在且四页接线', ui.includes('export function errBox') && [as, tk, st, db].every((x) => x.includes('errBox')));
+  ok('空态动作出口（empty action 插槽）', ui.includes('action && action.go') && sb.includes("label: '去故事脚本页'") && db.includes("label: '去新建项目'"));
+  ok('T-1 画幅映射 sizeForAspect 全链路', consts.includes('export function sizeForAspect')
+    && [sb, vd, rd('images.js')].every((x) => x.includes('sizeForAspect'))
+    && !sb.includes("'1024x1024'") && !vd.includes('width: 1152'));
+  ok('2.6 全选半选态', sb.includes('sa.indeterminate') && sb.includes('function syncSelAll'));
+  ok('2.9 视图状态进 hash（syncViewParams）', app.includes('export function syncViewParams')
+    && [tk, as, st, sb, rd('scripts.js')].every((x) => x.includes('syncViewParams')));
+  ok('2.10 任务状态候选随 tab', tk.includes('function fillStatus') && tk.includes("tab === 'image' || tab === 'text'"));
+  ok('2.12 素材筛选持久化', as.includes("localStorage.getItem('agnes.assets") && as.includes("localStorage.setItem('agnes.assets"));
+  ok('2.8 视频页最近任务订阅 SSE', vd.includes("onEvent('video'") && vd.includes('loadRecent(), 700'));
+  ok('2.5 弹窗脏守卫 + ⌘↵ 提交', ui.includes('有未保存的修改') && ui.includes('requestClose') && ui.includes('e.metaKey || e.ctrlKey'));
+  ok('SE-1 replace 导入二段确认', st.includes('确认替换导入') && st.includes('清空并导入'));
+  ok('2.14 后台页签节流+回前台放流', app.includes('hiddenLive') && app.includes("'visibilitychange'"));
+}
 }
 
 // ── 8. 用户系统已清除 ────────────────────────────────────────
