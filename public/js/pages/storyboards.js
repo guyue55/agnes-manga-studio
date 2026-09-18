@@ -79,6 +79,7 @@ export default async function storyboards(container, params) {
 
   const offBatch = onEvent('batch', (j) => {
     job = j;
+    if (promptBusy) return; // E2：「批量补提示词」正占着 #batch-bar，结束后会补渲染，别互踩
     renderBatchBar(container.querySelector('#batch-bar'), j);
     if (j.status !== 'running') {
       load();
@@ -276,9 +277,10 @@ ${text}`,
     promptBusy = true;
     const bar = container.querySelector('#batch-bar');
     let done = 0;
+    let failed = 0; // E3：失败不再混进"已完成"计数
     try {
       for (const s of targets) {
-        bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + 1} / ${targets.length}（每条约 5〜20s）</span></div></div>`;
+        bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + failed + 1} / ${targets.length}（每条约 5〜20s）</span></div></div>`;
       const sys = kind === 'image'
         ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，风格统一，细节丰富。只输出提示词，不要解释。'
         : '你是专业的AI视频提示词工程师。请用英文输出，只描述画面运动与镜头运动，不要重复静态外观。';
@@ -289,11 +291,13 @@ ${text}`,
         if (r.ok) {
           const txt = (r.data.content || '').trim().replace(/^["']|["']$/g, '');
           await api.updateStoryboard(s.id, kind === 'image' ? { image_prompt: txt } : { video_prompt: txt });
-        }
-        done++;
+          done++;
+        } else failed++;
       }
-      bar.innerHTML = `<div class="note green">${icon('check', 14)} 已为 ${done} 个镜头补充${kind === 'image' ? '图片' : '视频'}提示词</div>`;
-      setTimeout(() => { bar.innerHTML = ''; }, 3500);
+      bar.innerHTML = failed
+        ? `<div class="note orange">已为 ${done} 个镜头补充提示词，${failed} 条失败（保持原样，可重跑补差）</div>`
+        : `<div class="note green">${icon('check', 14)} 已为 ${done} 个镜头补充${kind === 'image' ? '图片' : '视频'}提示词</div>`;
+      setTimeout(() => { bar.innerHTML = ''; if (job) renderBatchBar(bar, job); }, 3500);
       load();
     } finally {
       promptBusy = false;
@@ -306,9 +310,12 @@ ${text}`,
     return sel.length ? sel : rows;
   }
 
+  let submitBusy = false; // R6：批量提交入口防双击——重复提交是真金白银
   async function batchImages() {
+    if (submitBusy) return;
     const shots = targetShots().filter((s) => s.image_prompt);
     if (!shots.length) { toast.err('选中的镜头还没有图片提示词，先「批量补图片提示词」'); return; }
+    submitBusy = true;
     const r = await api.batchImages({
       items: shots.map((s) => ({
         storyboard_id: s.id,
@@ -319,22 +326,33 @@ ${text}`,
       })),
       concurrency: 3,
     });
+    submitBusy = false;
     if (r.ok) toast.ok(`已提交 ${r.data.total} 张图片的批量任务`);
     else toast.err(r.error);
   }
 
+  /** R2/R3 统一判定：镜头关联图能否作为图生视频输入（必须公网 URL；本地 /assets/… Agnes 抓不到） */
+  function videoImageOf(s) {
+    const img = s.linked_image_id ? (window.__imgMap?.[s.linked_image_id] || null) : null;
+    const u = img ? (img.remote_url || img.url || '') : '';
+    return /^https?:\/\//.test(u) ? u : '';
+  }
+
   async function batchVideos() {
+    if (submitBusy) return;
     const shots = targetShots().filter((s) => s.video_prompt);
     if (!shots.length) { toast.err('选中的镜头还没有视频提示词，先「批量补视频提示词」'); return; }
-    // 有分镜图的用图生视频，没有的退回文生视频
+    // 有分镜图且图是公网 URL 的走图生视频；本地文件真正降级为文生视频（R2：toast 承诺与提交参数一致）
+    let downgraded = 0;
     const items = shots.map((s) => {
-      const img = s.linked_image_id ? (window.__imgMap?.[s.linked_image_id] || null) : null;
+      const imgUrl = videoImageOf(s);
+      if (!imgUrl && s.linked_image_id) downgraded++;
       return {
         project_id: projectId,
         storyboard_id: s.id,
-        mode: img ? 'image_to_video' : 'text_to_video',
+        mode: imgUrl ? 'image_to_video' : 'text_to_video',
         prompt: s.video_prompt,
-        image: img?.remote_url || img?.url || undefined,
+        image: imgUrl || undefined,
         negative_prompt: s.negative_prompt,
         num_frames: 121,
         frame_rate: 24,
@@ -342,12 +360,13 @@ ${text}`,
         height: 768,
       };
     });
-    const publicOk = items.filter((i) => i.image && i.image.startsWith('http'));
-    if (items.some((i) => i.image && !i.image.startsWith('http'))) {
-      toast.warn('部分分镜图是本地文件，Agnes 无法抓取（需公网 URL），这些镜头将改用文生视频。', 6500);
+    if (downgraded) {
+      toast.warn(`${downgraded} 个镜头的分镜图是本地文件，Agnes 无法抓取（需公网 URL），这些镜头已改用文生视频。`, 6500);
     }
+    submitBusy = true;
     const r = await api.batchVideos({ items, concurrency: 1 });
-    if (r.ok) toast.ok(`已提交 ${r.data.total} 个视频任务${publicOk.length ? '' : '（文生视频）'}`);
+    submitBusy = false;
+    if (r.ok) toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`);
     else toast.err(r.error);
   }
 
@@ -372,11 +391,14 @@ ${text}`,
     if (!s?.video_prompt) { toast.err('这个镜头还没有视频提示词'); return; }
     setBusy(btn, true);
     try {
+      // R3：与批量路径同一判定——有可用分镜图就走图生视频，不再永远文生视频
+      const imgUrl = videoImageOf(s);
       const r = await api.createVideo({
         project_id: projectId,
         storyboard_id: s.id,
-        mode: 'text_to_video',
+        mode: imgUrl ? 'image_to_video' : 'text_to_video',
         prompt: s.video_prompt,
+        image: imgUrl || undefined,
         negative_prompt: s.negative_prompt,
         num_frames: 121,
         frame_rate: 24,

@@ -167,7 +167,9 @@ export default async function assets(container, params) {
       if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
     });
     el.querySelectorAll('[data-zoom],[data-id]').forEach((c) => {
-      c.onclick = () => {
+      c.onclick = (e) => {
+        // R5：钮与父卡都被本选择器命中，钮点击会冒泡进卡片 handler 叠出第二层弹窗
+        e.stopPropagation();
         const id = c.getAttribute('data-zoom') || c.getAttribute('data-id');
         const img = images.find((x) => x.id === id);
         if (!img) return;
@@ -209,7 +211,8 @@ export default async function assets(container, params) {
       if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
     });
     el.querySelectorAll('[data-open],[data-vid]').forEach((c) => {
-      c.onclick = () => {
+      c.onclick = (e) => {
+        e.stopPropagation(); // R5：同上，视频卡与播放钮不再双层弹窗
         const id = c.getAttribute('data-open') || c.getAttribute('data-vid');
         const v = videos.find((x) => x.id === id);
         if (!v) return;

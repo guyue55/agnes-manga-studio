@@ -351,7 +351,7 @@ export default async function settings(container) {
         });
         if (!ok) return;
         const r = await api.importData({ collections: {} }, 'replace');
-        if (r.ok) { toast.ok('已清空'); await refreshState(); } else toast.err(r.error);
+        if (r.ok) { toast.ok('已清空'); await load(); await refreshState(); } else toast.err(r.error); // E6：重拉，页面不再显示已删模板/旧值
       };
     }
   }

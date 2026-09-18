@@ -262,7 +262,9 @@ export default async function scripts(container, params) {
   async function importStoryboard(parsed) {
     if (!Array.isArray(parsed) || !parsed.length) { toast.err('结果不是镜头数组，无法导入'); return; }
     if (!projectId) { toast.err('请先选择项目'); return; }
-    const ep = Number(await modalEp()) || 1;
+    const epRaw = await modalEp();
+    if (epRaw === null) return; // R1：取消/ESC/点遮罩 = 明确中止，绝不"以第 1 集导入"
+    const ep = Math.max(1, Number(epRaw) || 1);
     const rows = parsed.map((s, i) => ({
       project_id: projectId,
       episode_number: ep,
@@ -291,15 +293,19 @@ export default async function scripts(container, params) {
 
   function modalEp() {
     return new Promise((resolve) => {
+      let settled = false;
+      const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
       modal({
         title: '导入到第几集',
         body: `<div class="field"><label>集数</label><input class="input" id="ep" type="number" min="1" value="1" /></div>`,
         footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>导入</button>`,
+        // R1：ESC/遮罩/× 关闭也 resolve(null)，导入流程不再静默挂起
+        onDismiss: () => settle(null),
         onMount(root, close) {
           const i = root.querySelector('#ep');
           i.focus();
-          root.querySelector('[data-no]').onclick = () => { close(); resolve(null); };
-          root.querySelector('[data-yes]').onclick = () => { const v = i.value; close(); resolve(v); };
+          root.querySelector('[data-no]').onclick = () => { settle(null); close(); };
+          root.querySelector('[data-yes]').onclick = () => { const v = i.value; settle(v); close(); };
         },
       });
     });

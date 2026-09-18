@@ -135,24 +135,42 @@ export function onEvent(kind, fn) {
   return () => { listeners[kind] = listeners[kind].filter((f) => f !== fn); };
 }
 
+// E1：dashboard 每条事件全量刷新合并为 400ms 一次（helper 命名避开文件里已导出的 softRefresh）
+let sseTmr = null;
+function debouncedRefresh() {
+  if (sseTmr) return;
+  sseTmr = setTimeout(() => { sseTmr = null; refreshState(); }, 400);
+}
+
 function connectSSE() {
   try {
     const es = new EventSource('/api/events');
+    let hadOpen = false;
+    es.onopen = () => {
+      // 浏览器自动重连成功后，断线期间错过的 video/batch 事件不会补发——主动拉一次齐。
+      // 审核修正：resync 不许无脑整页 render()——那会清掉开着弹窗（未保存输入蒸发）并打断播放中的视频。
+      // 弹窗打开/有视频在播时只刷状态与侧栏角标（refreshState 自带），空闲才安全重挂当前页。
+      if (hadOpen) {
+        refreshState().then(() => {
+          const busy = document.body.classList.contains('modal-open')
+            || [...document.querySelectorAll('video')].some((v) => !v.paused && !v.ended);
+          if (!busy) render();
+        });
+      }
+      hadOpen = true;
+    };
     es.addEventListener('video', (e) => {
       let d = null;
       try { d = JSON.parse(e.data); } catch { return; }
       listeners.video.forEach((f) => { try { f(d); } catch { /* ignore */ } });
-      if (state.current === 'tasks' || state.current === 'dashboard') {
-        // 任务页自己会处理增量；工作台只需更新角标
-        if (state.current === 'dashboard') refreshState();
-      }
+      if (state.current === 'dashboard') debouncedRefresh();
     });
     es.addEventListener('batch', (e) => {
       let d = null;
       try { d = JSON.parse(e.data); } catch { return; }
       listeners.batch.forEach((f) => { try { f(d); } catch { /* ignore */ } });
     });
-    es.onerror = () => { /* 断线由浏览器自动重连 */ };
+    es.onerror = () => { /* 断线由浏览器自动重连，恢复后 onopen 里 resync */ };
   } catch { /* SSE 不可用时静默降级为手动刷新 */ }
 }
 
@@ -168,7 +186,10 @@ async function boot() {
   await render();
   connectSSE();
 
-  if (!state.settings.agnes_api_key) {
+  if (!h.ok) {
+    // E9：本地服务没起来时页面上任何"没数据/保存失败"都是假象——先说清楚，再别催 Key
+    toast.err('连不上本地工作台服务（/api/health 无响应）。若刚关掉过 exe/终端窗口，请重新打开 Agnes 漫剧工坊；本页面刷新前所有操作都不会生效。', 12000);
+  } else if (!state.settings.agnes_api_key) {
     setTimeout(() => {
       toast.warn('还没有配置 Agnes API Key，去「设置」填一个就能开始生成了。', 8000);
     }, 700);

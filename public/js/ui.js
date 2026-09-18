@@ -87,6 +87,7 @@ export function modal(o) {
       obs.disconnect();
       document.removeEventListener('keydown', onKey);
       if (!root.querySelector('.modal-mask')) document.body.classList.remove('modal-open');
+      if (o.onDismiss) o.onDismiss(); // R1：ESC/遮罩/× 关闭也有明确信号，调用方 Promise 不会永挂
     }
   });
   obs.observe(root, { childList: true });
@@ -126,6 +127,9 @@ export function confirm(o) {
       footer: `
         <button class="btn" data-no>${esc(opts.cancelText || '取消')}</button>
         <button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-yes>${esc(opts.okText || '确定')}</button>`,
+      // 与 modalEp 同类修复：ESC/点遮罩/× 关闭时 confirm 也必须落定，
+      // 否则任何 `await confirm()` 的破坏性操作会在取消关闭时静默永挂（done 标志防二次 resolve）。
+      onDismiss: () => finish(cancelVal, null),
       onMount(root, close) {
         root.querySelector('[data-yes]').onclick = () => {
           finish(yesVal(!!root.querySelector('[data-cb]')?.checked), close);
@@ -199,11 +203,17 @@ export function spinner(text) {
 
 /** 生成 <option> 列表 */
 export function options(items, valueKey = 'value', labelKey = 'label', current) {
-  return items.map((it) => {
+  const html = items.map((it) => {
     const v = typeof it === 'object' ? it[valueKey] : it;
     const l = typeof it === 'object' ? it[labelKey] : it;
     return `<option value="${esc(v)}"${String(v) === String(current) ? ' selected' : ''}>${esc(l)}</option>`;
   }).join('');
+  // R8：存量值不在候选里时保留为"(当前)"选项。
+  // 不加这行，浏览器默认选中第一项，用户"没动"下拉保存即被静默改写（如旧数据 '9:16' → '9:16 竖屏'）。
+  if (current !== undefined && current !== null && current !== '' && !items.some((it) => String(typeof it === 'object' ? it[valueKey] : it) === String(current))) {
+    return `<option value="${esc(current)}" selected>${esc(current)}（当前）</option>` + html;
+  }
+  return html;
 }
 
 /**
