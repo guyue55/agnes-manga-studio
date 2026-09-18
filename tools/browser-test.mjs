@@ -159,13 +159,16 @@ try {
     await cdp.connect();
 
     const errors = [];
-    await cdp.eval(`
+    // 钩子必须跨 reload 存活：套件里有大量 Page.reload，若只做一次 cdp.eval，
+    // 首次 reload 后 window.__uiErrors 消失，末尾 `|| []` 兜底会让"无未捕获异常"永久假绿。
+    const HOOK = `
       window.__uiErrors = [];
       window.__uiRejects = [];
       window.addEventListener('error', e => window.__uiErrors.push(String(e.message || e.error || 'window error')));
       window.addEventListener('unhandledrejection', e => window.__uiRejects.push(String((e.reason && e.reason.message) || e.reason || 'unhandled rejection')));
-      return true;
-    `);
+    `;
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: HOOK });
+    await cdp.eval(`${HOOK}\nreturn true;`);
 
     group('工作台');
     await waitFor(() => cdp.eval(`document.readyState === 'complete' && !!document.querySelector('.page-title')`), '工作台渲染');
@@ -592,6 +595,44 @@ try {
       await sleep(300);
     }
 
+    group('页面挂载矩阵（9 页真机冒烟）');
+    {
+      // 覆盖空洞：browser-test 历史上只走 7 条路由，#/images 与 #/videos 从未真机挂载
+      const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
+      const pid = (await Jget('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const pages = [
+        ['工作台', '#/dashboard', '#stats'],
+        ['项目管理', '#/projects', '#list'],
+        ['剧本', '#/scripts', '#fields'],
+        ['分镜', '#/storyboards', '#table'],
+        ['图片生成', '#/images', '#model'],
+        ['视频生成', '#/videos', '#model'],
+        ['任务', '#/tasks', '#tabs'],
+        ['素材', '#/assets', '#tabs'],
+        ['设置', '#/settings', '#panel'],
+      ];
+      const errs = [];
+      for (const [name, route, anchorSel] of pages) {
+        await cdp.eval(`location.hash = '${route}?project=${pid}'; return true;`);
+        const mounted = await waitFor(
+          () => cdp.eval(`return !!document.querySelector('${anchorSel}') && (document.querySelector('#view') || {}).innerHTML.length > 200;`),
+          `${name} 挂载`, 12000,
+        ).then(() => true).catch(() => false);
+        ok(`页面「${name}」真机挂载（${anchorSel} 就绪且内容非空）`, mounted);
+        const n = await cdp.eval(`return (window.__uiErrors || []).length;`);
+        if (n > 0) errs.push(`${name}×${n}`);
+      }
+      ok('9 页挂载全程无未捕获异常', errs.length === 0, errs.join(',') || 'clean');
+      // 两页补强：控件必须真的渲染出来（此前无任何真机断言）
+      for (const [name, route] of [['图片生成', '#/images'], ['视频生成', '#/videos']]) {
+        await cdp.eval(`location.hash = '${route}?project=${pid}'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#model');`), `${name} 模型选择器`, 10000);
+        const st = await cdp.eval(`return (() => { const m = document.querySelector('#model'); return { opts: m ? m.options.length : -1, mode: !!document.querySelector('#mode'), reload: !!document.querySelector('#reload') }; })();`);
+        ok(`「${name}」控件齐备（模型下拉有项 / 模式 / 刷新）`, st.opts > 0 && st.mode && st.reload, JSON.stringify(st));
+      }
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
     group('失败恢复契约（M8：断连不得锁死按钮）');
     {
       // 慢失败上游：1.2s 后 500——给 busy 态留出确定性观测窗口
@@ -642,9 +683,15 @@ try {
       }
     }
 
-    const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
+    const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);
+    ok('异常钩子存活（自证非空跑：reload 后仍可捕获）', collected?.hookLive === true, JSON.stringify(collected));
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
+    // 正向对照：证明"检测器能检测"——故意抛错必须被捕获，否则上面的绿是空跑
+    await cdp.eval(`setTimeout(() => { throw new Error('__hook_probe__'); }, 0); return true;`);
+    await sleep(400);
+    const probe = await cdp.eval(`return (window.__uiErrors || []).some((m) => String(m).includes('__hook_probe__'));`);
+    ok('异常钩子正向对照（故意抛错必须被捕获）', probe === true);
     cdp.close();
   }
 } catch (e) {
