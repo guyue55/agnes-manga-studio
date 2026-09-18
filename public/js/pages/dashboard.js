@@ -4,7 +4,7 @@
  */
 import { icon, esc, relTime, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { empty, spinner, toast } from '../ui.js';
+import { empty, spinner, toast, errBox } from '../ui.js';
 import { head } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -65,7 +65,11 @@ export default async function dashboard(container) {
       api.stats(), api.projects(), api.images(), api.videos(),
     ]);
 
-    if (st.ok) {
+    if (!st.ok) { // D-1：统计加载失败显示红字+重试，不再转圈到底
+      const el = container.querySelector('#stats');
+      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`统计加载失败：${st.error || '网络错误'}`)}</div>`;
+      el.querySelector('[data-retry]').onclick = load;
+    } else {
       const s = st.data;
       container.querySelector('#stats').innerHTML = [
         stat('项目总数', s.total_projects, ''),
@@ -77,7 +81,11 @@ export default async function dashboard(container) {
       ].join('');
     }
 
-    if (pr.ok) {
+    if (!pr.ok) {
+      const el = container.querySelector('#recent-projects');
+      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`项目加载失败：${pr.error || '网络错误'}`)}</div>`;
+      el.querySelector('[data-retry]').onclick = load;
+    } else {
       const list = (pr.data || []).slice(0, 6);
       const el = container.querySelector('#recent-projects');
       if (!list.length) {
@@ -105,11 +113,16 @@ export default async function dashboard(container) {
       }
     }
 
-    const assets = [
-      ...(im.ok ? im.data.slice(0, 6).map((i) => ({ kind: 'image', a: i })) : []),
-      ...(vd.ok ? vd.data.slice(0, 4).map((v) => ({ kind: 'video', a: v })) : []),
-    ];
     const el2 = container.querySelector('#recent-assets');
+    if (!im.ok || !vd.ok) { // 失败≠空：不再把故障谎报成"还没有生成内容"
+      el2.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`近期内容加载失败：${(im.error || vd.error || '网络错误')}`)}</div>`;
+      el2.querySelector('[data-retry]').onclick = load;
+      return;
+    }
+    const assets = [
+      ...im.data.slice(0, 6).map((i) => ({ kind: 'image', a: i })),
+      ...vd.data.slice(0, 4).map((v) => ({ kind: 'video', a: v })),
+    ];
     if (!assets.length) {
       el2.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有生成内容', '先建项目，再从故事脚本开始', 'sparkles')}</div>`;
     } else {

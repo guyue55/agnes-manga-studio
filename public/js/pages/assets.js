@@ -4,7 +4,7 @@
  */
 import { icon, esc, copyText, relTime, IMAGE_USAGES, statusBadge } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, setBusy, errBox } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate, onEvent } from '../app.js';
 
@@ -49,9 +49,16 @@ export default async function assets(container, params) {
 
   async function load() {
     const [i, v, s] = await Promise.all([api.images(), api.videos(), api.scripts()]);
-    if (i.ok) images = i.data || [];
-    if (v.ok) videos = v.data || [];
-    if (s.ok) scripts = s.data || [];
+    const bad = [i, v, s].find((r) => !r.ok); // D-1：失败≠空——红字+重试，不再谎报"还没有素材"
+    if (bad) {
+      const el = container.querySelector('#grid');
+      el.innerHTML = errBox(`素材加载失败：${bad.error || '网络错误'}`);
+      el.querySelector('[data-retry]').onclick = load;
+      return;
+    }
+    images = i.data || [];
+    videos = v.data || [];
+    scripts = s.data || [];
     render();
   }
 

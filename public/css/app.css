@@ -713,9 +713,9 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
   border: 1px solid transparent;
 }
 .note.gold { background: rgba(214, 181, 109, 0.06); border-color: rgba(214, 181, 109, 0.16); color: #C9AC72; }
-.note.red { background: rgba(255, 69, 58, 0.06); border-color: rgba(255, 69, 58, 0.18); color: #FCA5A5; }
-.note.orange { background: rgba(255, 159, 10, 0.06); border-color: rgba(255, 159, 10, 0.18); color: #FCD34D; }
-.note.green { background: rgba(48, 209, 88, 0.06); border-color: rgba(48, 209, 88, 0.18); color: #86EFAC; }
+.note.red { background: var(--err-soft); border-color: rgba(240, 97, 107, 0.24); color: #FCA5A5; }
+.note.orange { background: rgba(232, 150, 60, 0.07); border-color: rgba(232, 150, 60, 0.22); color: #FCD34D; }
+.note.green { background: var(--ok-soft); border-color: rgba(79, 190, 139, 0.22); color: #9BE0BD; }
 
 /* ── 弹窗 ───────────────────────────────────────────────── */
 .modal-mask {

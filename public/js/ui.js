@@ -201,6 +201,15 @@ export function spinner(text) {
   return `<div class="loading-wrap"><div class="spinner"></div><span>${esc(text || '加载中…')}</span></div>`;
 }
 
+/** D-1/A-1：加载失败专用块——红字原因 + 重试钮（调用方负责绑定 [data-retry]）。
+ *  杜绝"永久 spinner"和"API 故障谎报空态"两类伪装。 */
+export function errBox(text = '加载失败', hint = '本地服务可能未启动或正在重启') {
+  return `<div class="card" style="text-align:center;padding:36px 20px">
+    <div class="note red" style="display:inline-block;text-align:left;max-width:560px">${esc(text)}<br>${esc(hint)}</div>
+    <div style="margin-top:14px"><button class="btn btn-sm" data-retry>重试加载</button></div>
+  </div>`;
+}
+
 /** 生成 <option> 列表 */
 export function options(items, valueKey = 'value', labelKey = 'label', current) {
   const html = items.map((it) => {

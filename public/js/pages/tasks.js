@@ -8,7 +8,7 @@ import {
   relTime, fmtTime, copyText,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy, errBox } from '../ui.js';
 import { head } from './helpers.js';
 import { onEvent } from '../app.js';
 
@@ -79,8 +79,15 @@ export default async function tasks(container) {
 
   async function load() {
     const [v, t] = await Promise.all([api.videos(), api.tasks()]);
-    if (v.ok) videos = v.data || [];
-    if (t.ok) others = t.data || [];
+    const bad = [v, t].find((r) => !r.ok); // A-1：任务页加载失败不再转圈/空列表两装
+    if (bad) {
+      const el = container.querySelector('#list');
+      el.innerHTML = errBox(`任务列表加载失败：${bad.error || '网络错误'}`);
+      el.querySelector('[data-retry]').onclick = load;
+      return;
+    }
+    videos = v.data || [];
+    others = t.data || [];
     render();
   }
 
