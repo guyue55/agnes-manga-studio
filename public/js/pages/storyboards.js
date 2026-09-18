@@ -78,15 +78,36 @@ export default async function storyboards(container, params) {
     renderTable();
   };
 
+  // E7/4.5：批量任务跨页签、跨刷新找回——记 id、进页续订、可取消
+  const BKEY = 'agnes.batch.last';
+  const cancelBatch = () => {
+    if (!job || !job.id) return;
+    api.cancelBatch(job.id).then((r) => {
+      if (r.ok) toast('已请求取消——在跑的那条完成后就停', 'info');
+      else toast.err(r.error);
+    });
+  };
   const offBatch = onEvent('batch', (j) => {
     job = j;
+    if (j.status !== 'running') localStorage.removeItem(BKEY);
     if (promptBusy) return; // E2：「批量补提示词」正占着 #batch-bar，结束后会补渲染，别互踩
-    renderBatchBar(container.querySelector('#batch-bar'), j);
+    renderBatchBar(container.querySelector('#batch-bar'), j, cancelBatch);
     if (j.status !== 'running') {
       load();
       setTimeout(() => { job = null; renderBatchBar(container.querySelector('#batch-bar'), null); }, 4000);
     }
   });
+  (async () => {
+    const saved = localStorage.getItem(BKEY);
+    if (!saved) return;
+    const r = await api.batch(saved);
+    if (!r.ok) { localStorage.removeItem(BKEY); return; } // 服务重启后旧 job 已蒸发，别拿 404 骚扰
+    if (r.data.status === 'running') {
+      job = r.data;
+      if (!promptBusy) renderBatchBar(container.querySelector('#batch-bar'), r.data, cancelBatch);
+      toast('发现进行中的批量任务，进度已续上', 'info');
+    } else localStorage.removeItem(BKEY);
+  })();
 
   async function load() {
     const el = container.querySelector('#table');
@@ -306,7 +327,7 @@ ${text}`,
       bar.innerHTML = failed
         ? `<div class="note orange">已为 ${done} 个镜头补充提示词，${failed} 条失败（保持原样，可重跑补差）</div>`
         : `<div class="note green">${icon('check', 14)} 已为 ${done} 个镜头补充${kind === 'image' ? '图片' : '视频'}提示词</div>`;
-      setTimeout(() => { bar.innerHTML = ''; if (job) renderBatchBar(bar, job); }, 3500);
+      setTimeout(() => { bar.innerHTML = ''; if (job) renderBatchBar(bar, job, cancelBatch); }, 3500);
       load();
     } finally {
       promptBusy = false;
@@ -336,7 +357,7 @@ ${text}`,
       concurrency: 3,
     });
     submitBusy = false;
-    if (r.ok) toast.ok(`已提交 ${r.data.total} 张图片的批量任务`);
+    if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 张图片的批量任务`); }
     else toast.err(r.error);
   }
 
@@ -374,7 +395,7 @@ ${text}`,
     submitBusy = true;
     const r = await api.batchVideos({ items, concurrency: 1 });
     submitBusy = false;
-    if (r.ok) toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`);
+    if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`); }
     else toast.err(r.error);
   }
 

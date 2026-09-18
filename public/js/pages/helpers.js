@@ -27,7 +27,7 @@ export function projectPicker(projects, selected, opts = {}) {
 }
 
 /** 批量任务进度（SSE 驱动） */
-export function renderBatchBar(el, job) {
+export function renderBatchBar(el, job, onCancel) {
   if (!el) return;
   if (!job) { el.innerHTML = ''; return; }
   const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
@@ -43,7 +43,12 @@ export function renderBatchBar(el, job) {
         </div>
         <div class="progress" style="max-width:none"><i style="width:${pct}%"></i></div>
       </div>
+      ${job.status === 'running' && job.id && onCancel ? '<button class="btn btn-sm" data-cancel-batch>取消</button>' : ''}
     </div>`;
+  if (onCancel) {
+    const cb = el.querySelector('[data-cancel-batch]');
+    if (cb) cb.onclick = onCancel;
+  }
 }
 
 /** 通用表单片段：下拉 / 输入框 / 文本域 */
