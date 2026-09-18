@@ -112,7 +112,7 @@ function effBg(el){ let n=el; while(n && n.nodeType===1){ const c=rgbOf(getCompu
 function sel(el){ let s=el.tagName.toLowerCase(); if(el.id) return '#'+el.id; if(el.className && typeof el.className==='string'){ const c=el.className.trim().split(/\\\\s+/).filter(x=>!x.startsWith('data-'))[0]; if(c) s+='.'+c; } return s; }
 function vis(el){ const r=el.getBoundingClientRect(); const st=getComputedStyle(el); return r.width>0&&r.height>0&&st.visibility!=='hidden'&&st.display!=='none'&&parseFloat(st.opacity)>0.05; }
 function hasOwnText(el){ for(const n of el.childNodes) if(n.nodeType===3&&n.textContent.trim()) return true; return false; }
-const VW=innerWidth; const res={overflow:{de:document.documentElement.scrollWidth>VW+2,culprits:[]},contrast:[],micro:[],tinyTap:0,noName:0,scanned:0,samples:0,chips:0};
+const VW=innerWidth; const res={overflow:{de:document.documentElement.scrollWidth>VW+2,culprits:[]},contrast:[],micro:[],tinyTap:0,noName:0,noHint:[],scanned:0,samples:0,chips:0};
 for(const el of document.querySelectorAll('body *')){ if(!vis(el)) continue; res.scanned++; if(el.className&&String(el.className).includes('chip'))res.chips++;
   const r=el.getBoundingClientRect();
   if(r.right>VW+2 && r.width>8){ if(res.overflow.culprits.length<4) res.overflow.culprits.push(sel(el)+' w='+Math.round(r.width)); }
@@ -121,6 +121,14 @@ for(const el of document.querySelectorAll('body *')){ if(!vis(el)) continue; res
   if(el.matches('button,a,.chip,.icon-btn')){ if(r.height<23&&r.width<23) res.tinyTap++;
     const hasName = el.textContent.trim() || el.getAttribute('aria-label') || el.getAttribute('title') || (el.getAttribute('data-copy-prompt')?'x':'') || el.closest('[title]');
     if(el.matches('button,a') && !el.textContent.trim() && !el.getAttribute('aria-label') && !hasName) res.noName++; }
+}
+res.truncN=0;
+for(const el of document.querySelectorAll('.cell-ellipsis,[class*=truncate],[style*=text-overflow]')){
+  res.truncN++;
+  if(el.scrollWidth>el.clientWidth+2 && !el.getAttribute('title') && !el.closest('[title]') && el.innerText.trim()){
+    const sig=el.className+'::'+el.innerText.trim().slice(0,14);
+    if(!res.noHint.includes(sig)) res.noHint.push(sig);
+  }
 }
 for(const q of ['body','.page-title','.sub','h3','.nav-item','.btn','.btn-sm','.note','.note.gold','.note.muted','.cell-ellipsis','.chip','.badge','.muted','.seg-btn','label','th','.prompt-cell']){
   const els=[...document.querySelectorAll(q)].filter(vis).slice(0,3); res.samples+=els.length;
@@ -184,12 +192,13 @@ try {
       await waitFor(() => cdp.eval(`!!document.querySelector('.page') && !document.querySelector('.spinner')`), `${name}@${w}`);
       await sleep(120);
       const res = JSON.parse(await cdp.eval(PROBE));
-      if (name === 'storyboards' && w === 1440) console.log(`  [自证] scanned=${res.scanned} contrastSamples=${res.samples} chips=${res.chips} hash=${await cdp.eval('location.hash')}`);
+      if (name === 'storyboards' && w === 1440) console.log(`  [自证] scanned=${res.scanned} contrastSamples=${res.samples} chips=${res.chips} trunc=${res.truncN} noHint=${res.noHint.length} hash=${await cdp.eval('location.hash')}`);
       if (res.overflow.de) lines.push(`溢出   ${w}px ${name}: 页面横向滚动 [${res.overflow.culprits.join(' | ')}]`);
       for (const c of res.contrast) lines.push(`对比度 ${w}px ${name}: ${c.q} = ${c.ratio}:1（需≥${c.min}，${c.color}）`);
       if (res.micro.length) lines.push(`微字号 ${w}px ${name}: [${res.micro.join(' | ')}]`);
       if (res.tinyTap > 2) lines.push(`小目标 ${w}px ${name}: ${res.tinyTap} 个 <23px 可点元素`);
       if (res.noName > 0) lines.push(`无障碍 ${w}px ${name}: ${res.noName} 个无文本无标签的图标钮`);
+      for (const h of res.noHint) lines.push(`截断无提示 ${w}px ${name}: ${h}`);
     }
   }
   console.log(`── UI 度量审计（${viewports.length} 视口 × ${pages.length} 页）──`);
