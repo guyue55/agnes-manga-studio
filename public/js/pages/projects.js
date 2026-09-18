@@ -156,7 +156,7 @@ export default async function projects(container, params) {
             aspect_ratio: root.querySelector('#f-ratio').value,
             art_style: root.querySelector('#f-style').value.trim(),
             episode_duration: root.querySelector('#f-dur').value.trim(),
-            planned_episodes: Number(root.querySelector('#f-eps').value) || 1,
+            planned_episodes: Math.max(1, Number(root.querySelector('#f-eps').value) || 1),
             status: root.querySelector('#f-status').value,
           };
           if (!payload.name) { toast.err('项目名称不能为空'); return; }

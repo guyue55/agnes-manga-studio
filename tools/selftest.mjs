@@ -93,6 +93,19 @@ group('设置与脱敏');
   store.setSettings({ evil_field: 'x' });
   ok('非白名单字段被忽略', !('evil_field' in store.getSettings()));
 
+  // E8：数字型设置在写入口钳进合法区间，显示值恒等于生效值
+  store.setSettings({ video_poll_interval: '0' });
+  eq('轮询间隔 0 钳到下限 2', store.getSettings().video_poll_interval, '2');
+  store.setSettings({ video_poll_interval: '-5' });
+  eq('轮询间隔负数钳 2', store.getSettings().video_poll_interval, '2');
+  store.setSettings({ video_poll_interval: 'abc' });
+  eq('轮询间隔非法串回落默认 8', store.getSettings().video_poll_interval, '8');
+  store.setSettings({ request_timeout_ms: '99999999' });
+  eq('超时上限 600000', store.getSettings().request_timeout_ms, '600000');
+  store.setSettings({ default_concurrent_tasks: '999' });
+  eq('并发上限 8', store.getSettings().default_concurrent_tasks, '8');
+  store.setSettings({ video_poll_interval: '8', video_max_polls: '60', default_concurrent_tasks: '3', request_timeout_ms: '150000' });
+
   // 短 key 不崩
   eq('短 key 掩码', store.maskKey('abc'), 'ab****');
   eq('空 key 掩码', store.maskKey(''), '');

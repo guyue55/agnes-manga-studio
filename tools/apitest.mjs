@@ -212,7 +212,7 @@ group('设置');
   const r = await api('PUT', '/api/settings', {
     agnes_api_base_url: `${MOCK_BASE}/v1`,
     agnes_api_key: MOCK_KEY,
-    video_poll_interval: '1',
+    video_poll_interval: '5',
     video_max_polls: '20',
     auto_download_video: '1',
   });
@@ -221,7 +221,8 @@ group('设置');
   eq('Key 脱敏返回', g.data.agnes_api_key, '***configured***');
   ok('掩码形如 sk-a****7890', /\*+/.test(g.data.agnes_api_key_masked), g.data.agnes_api_key_masked);
   eq('base url 已更新', g.data.agnes_api_base_url, `${MOCK_BASE}/v1`);
-  eq('轮询间隔已更新', g.data.video_poll_interval, '1');
+  eq('轮询间隔已更新', g.data.video_poll_interval, '5');
+  { const cr = await api('PUT', '/api/settings', { video_poll_interval: '1' }); eq('E8 低于下限钳制为 2', cr.data.settings.video_poll_interval, '2'); const cr2 = await api('PUT', '/api/settings', { video_poll_interval: 'abc' }); eq('E8 非法串回落默认 8', cr2.data.settings.video_poll_interval, '8'); }
 
   const t = await api('POST', '/api/settings/test', { kind: 'text' });
   ok('连通性测试返回结构', typeof t.data.ok === 'boolean', JSON.stringify(t.data));

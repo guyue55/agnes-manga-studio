@@ -140,7 +140,7 @@ export default async function videos(container, params) {
       };
     });
     const fps = container.querySelector('#f-fps');
-    if (fps) fps.oninput = () => { s.fps = Number(fps.value) || 24; };
+    if (fps) fps.oninput = () => { s.fps = Math.min(60, Math.max(1, Number(fps.value) || 24)); };
     const seed = container.querySelector('#f-seed');
     if (seed) seed.oninput = () => { s.seed = seed.value; };
     const res = container.querySelector('#f-res');
