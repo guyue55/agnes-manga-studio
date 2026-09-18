@@ -213,6 +213,43 @@ try {
     ok('动态模型面板可打开', await cdp.eval(`!!document.querySelector('#refresh-models') && !!document.querySelector('#m-ttl')`));
     ok('模型默认项可选', await cdp.eval(`document.querySelector('#m-text')?.options.length > 0 && document.querySelector('#m-image')?.options.length > 0 && document.querySelector('#m-video')?.options.length > 0`));
 
+    group('B2/B3 交互回归');
+    // 脏守卫：编辑过未提交就点 × → 拦截条出现 → 放弃才真关
+    await cdp.eval(`location.hash = '#/projects?new=1'`);
+    await waitFor(() => cdp.eval(`!!document.querySelector('#f-name')`), '脏守卫用弹窗');
+    await cdp.eval(`document.querySelector('#f-name').value = '脏字段的剧'; document.querySelector('#f-name').dispatchEvent(new Event('input', {bubbles:true})); document.querySelector('[data-close]').click(); return true;`);
+    ok('编辑未提交点关闭→出现拦截条', await cdp.eval(`!!document.querySelector('[data-discard]')`));
+    ok('拦截时弹窗未关', await cdp.eval(`!!document.querySelector('.modal')`));
+    await cdp.eval(`document.querySelector('[data-discard]').click(); return true;`);
+    await waitFor(() => cdp.eval(`!document.querySelector('.modal')`), '放弃后关闭');
+    ok('放弃修改后弹窗关闭', await cdp.eval(`!document.querySelector('.modal')`));
+    // 侧栏折叠双态 + 持久化
+    await cdp.eval(`document.querySelector('#sb-toggle').click(); return true;`);
+    ok('折叠生效', await cdp.eval(`document.body.classList.contains('sb-collapsed')`));
+    ok('折叠已持久化', await cdp.eval(`localStorage.getItem('agnes.sidebar.collapsed') === '1'`));
+    await cdp.eval(`document.querySelector('#sb-toggle').click(); return true;`);
+    ok('展开恢复', await cdp.eval(`!document.body.classList.contains('sb-collapsed')`));
+    // 视图状态进 hash：设置分节切换写 sec
+    await cdp.eval(`location.hash = '#/settings'`);
+    await waitFor(() => cdp.eval(`!!document.querySelector('[data-sec=\"task\"]')`), '设置分节');
+    await cdp.eval(`document.querySelector('[data-sec=\"task\"]').click(); return true;`);
+    ok('分节切换写入 hash', await cdp.eval(`location.hash.includes('sec=task')`));
+    // 两段式就地确认：首点 armed 改文案，3.4s 后自动回弹（不真删）
+    await cdp.eval(`document.querySelector('[data-sec=\"template\"]')?.click(); return true;`);
+    const delSel = await cdp.eval(`!!document.querySelector('[data-del]')`);
+    if (delSel) {
+      await cdp.eval(`document.querySelector('[data-del]').click(); return true;`);
+      ok('两段式：首点进入确认态', await cdp.eval(`!!document.querySelector('[data-del].armed')`));
+      await sleep(3500);
+      ok('两段式：3s 后自动回弹（未误删）', await cdp.eval(`!document.querySelector('[data-del].armed') && !!document.querySelector('[data-del]')`));
+    } else ok('两段式：无模板可点跳过', true);
+    // 导出钮在位（分镜页，用刚建的项目）
+    const plist = await (await fetch(`http://127.0.0.1:${port}/api/projects`)).json();
+    const pid = (plist.find((x) => x.name === '浏览器验收剧') || {}).id;
+    await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+    await waitFor(() => cdp.eval(`!!document.querySelector('#exp-csv')`), '分镜工具条');
+    ok('CSV/MD 导出钮在位', await cdp.eval(`!!document.querySelector('#exp-csv') && !!document.querySelector('#exp-md')`));
+
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
