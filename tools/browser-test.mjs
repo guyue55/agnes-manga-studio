@@ -645,6 +645,24 @@ try {
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 
+    group('时长→帧数契约（R4：8n+1 与上下限钳制）');
+    {
+      // 页面内动态 import 真实模块：断言的是真机实际下发的产物，而非源码文本
+      const F = async (sec, fps) => cdp.eval(`return (async () => { const m = await import('/js/consts.js'); return m.secondsToFrames(${JSON.stringify(sec)}${fps === undefined ? '' : ', ' + fps}); })();`);
+      ok('R4 默认 5s → 121 帧', (await F(5)) === 121, String(await F(5)));
+      ok('R4 非法值 0 落默认（非 0 帧）', (await F(0)) === 121, String(await F(0)));
+      ok('R4 负数落默认', (await F(-3)) === 121, String(await F(-3)));
+      ok('R4 非数字落默认', (await F('abc')) === 121, String(await F('abc')));
+      ok('R4 下限钳制 1s → 81（Agnes 下限）', (await F(1)) === 81, String(await F(1)));
+      ok('R4 中段 10s → 241', (await F(10)) === 241, String(await F(10)));
+      ok('R4 上限钳制 60s → 441（Agnes 上限）', (await F(60)) === 441, String(await F(60)));
+      ok('R4 自定义帧率 30fps/5s → 153', (await F(5, 30)) === 153, String(await F(5, 30)));
+      const sweep = await cdp.eval(`return (async () => { const m = await import('/js/consts.js'); const a = []; for (let s = 0; s <= 70; s++) a.push(m.secondsToFrames(s)); return a; })();`);
+      ok('R4 全扫描 0..70s 均满足帧数 = 8n+1（云端硬要求）', Array.isArray(sweep) && sweep.length === 71 && sweep.every((x) => x % 8 === 1), JSON.stringify(sweep.slice(0, 8)));
+      const mono = sweep.slice(1).every((x, i) => i === 0 || x >= sweep[i]);
+      ok('R4 s≥1 单调不减（时长列真正影响产出，未被写死）', mono === true, String(mono));
+    }
+
     group('防连点契约（R6：双击不得重复创建）');
     {
       const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());

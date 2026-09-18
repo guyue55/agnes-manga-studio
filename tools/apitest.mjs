@@ -796,6 +796,24 @@ group('安全');
   ok('X4 且提示"已在运行"', String(second.out).includes('已在运行'), String(second.out).slice(0, 90));
   const afterX4 = await api('GET', '/api/health');
   eq('X4 后原实例仍健康（未被抢端口）', afterX4.status, 200);
+
+  // H5：video_url 只收 http(s) 或空——javascript:/data: 等形状会进 <video src> 与"打开链接"按钮
+  const vmk = await api('POST', '/api/videos', { prompt: 'H5 协议白名单探针', mode: 'text_to_video' });
+  const vid = vmk.data && (vmk.data.id || (vmk.data.asset && vmk.data.asset.id));
+  ok('H5 探针视频已建', !!vid, JSON.stringify(vmk.data).slice(0, 80));
+  const setUrl = async (u) => (await api('PUT', `/api/videos/${vid}`, { video_url: u })).data.video_url;
+  eq('H5 javascript: 形状被清空', await setUrl('javascript:alert(1)'), '');
+  eq('H5 data: 形状被清空', await setUrl('data:video/mp4;base64,AAAA'), '');
+  eq('H5 大写 HTTP:// 放行（大小写不敏感）', await setUrl('HTTP://cdn.example.com/a.mp4'), 'HTTP://cdn.example.com/a.mp4');
+  eq('H5 https 放行', await setUrl('https://cdn.example.com/a.mp4'), 'https://cdn.example.com/a.mp4');
+  eq('H5 空串放行（允许清空）', await setUrl(''), '');
+  await api('DELETE', `/api/videos/${vid}`);
+
+  // B8：API 路由参数里的非法转义必须按"不匹配"处理（404），不许 URIError→500
+  const badParam = await rawGet('/api/projects/%zz', { Host: `127.0.0.1:${srvPort}` });
+  eq('B8 API 参数非法转义 → 404（非 500）', badParam.status, 404);
+  const badParam2 = await rawGet('/api/videos/%zz/refresh', { Host: `127.0.0.1:${srvPort}` });
+  ok('B8 深路径非法转义亦不 500', badParam2.status === 404 || badParam2.status === 400, String(badParam2.status));
 }
 
 // ── 14. 静态资源 ─────────────────────────────────────────────
