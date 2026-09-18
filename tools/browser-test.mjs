@@ -1048,7 +1048,7 @@ try {
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 
-    group('防连点契约（R6：双击不得重复创建）');    group('防连点契约（R6：双击不得重复创建）');
+    group('防连点契约（R6：双击不得重复创建）');
     {
       const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
       const before = (await Jget('/api/projects')).length;
