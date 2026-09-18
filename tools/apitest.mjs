@@ -37,6 +37,10 @@ const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8B
 // ── mock Agnes ───────────────────────────────────────────────
 let queryCount = 0;
 const VIDEO_ID = 'vid_mock_001';
+// 捕获最近一次 /v1/videos 创建请求体，供 2.5 协议断言
+let lastVideoCreate = null;
+let lastVideoQueryUrl = null; // v2.0 查询
+let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
 const mock = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://127.0.0.1');
   const send = (code, obj) => {
@@ -45,6 +49,12 @@ const mock = http.createServer((req, res) => {
     res.end(s);
   };
   if (req.method === 'GET' && u.pathname === '/agnesapi') {
+    lastVideoQueryUrl = req.url;
+    if (/2\.5/.test(String(u.searchParams.get('model_name') || ''))) {
+      // 2.5 系查询契约：带 model_name，完成后的地址在 metadata.url
+      last25QueryUrl = req.url;
+      return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, metadata: { url: `${MOCK_BASE}/video.mp4` } });
+    }
     queryCount++;
     if (queryCount <= 1) return send(200, { id: VIDEO_ID, status: 'queued', progress: 20 });
     return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, remixed_from_video_id: `${MOCK_BASE}/video.mp4` });
@@ -74,6 +84,7 @@ const mock = http.createServer((req, res) => {
       });
     }
     if (u.pathname === '/v1/videos') {
+      try { lastVideoCreate = JSON.parse(body); } catch { lastVideoCreate = { bad_json: body }; }
       return send(200, { id: VIDEO_ID, video_id: VIDEO_ID, task_id: 'task_mock', status: 'queued' });
     }
     send(404, { error: 'unknown path' });
@@ -358,6 +369,72 @@ group('视频任务');
     const resp = await fetch(`${BASE}/assets/videos/${name}`);
     eq('视频可静态访问', resp.status, 200);
   }
+}
+
+// ── 8.5 Agnes Video 2.5 新协议适配（真实事故回归：旧字段被 400 拒绝） ──
+group('视频 2.5 新协议');
+{
+  const r = await api('POST', '/api/videos', {
+    prompt: '雨后的未来城市街道', model: 'agnes-video-2.5-flash', mode: 'text_to_video',
+    negative_prompt: 'low quality', width: 1152, height: 768, num_frames: 241, frame_rate: 24, seed: '7',
+  });
+  eq('2.5 提交成功', r.data.ok, true);
+  const b1 = lastVideoCreate || {};
+  eq('必填 mode=text', b1.mode, 'text');
+  eq('seconds 由帧数÷帧率折算', b1.seconds, '10');
+  eq('Flash size 固定 720P', b1.size, '720P');
+  eq('横版预设映射 16:9', b1.aspect_ratio, '16:9');
+  eq('seed 透传为整数', b1.seed, 7);
+  ok('不发送 width/height（forbidden）', !('width' in b1) && !('height' in b1));
+  ok('不发送 num_frames/frame_rate（forbidden）', !('num_frames' in b1) && !('frame_rate' in b1));
+  ok('negative_prompt 并入正向', !('negative_prompt' in b1) && b1.prompt.includes('low quality'));
+
+  await api('POST', '/api/videos', {
+    prompt: '少女回头', model: 'agnes-video-2.5-flash', mode: 'image_to_video',
+    image: 'https://example.com/a.png', num_frames: 121, frame_rate: 24,
+  });
+  eq('单图 → keyframe', lastVideoCreate.mode, 'keyframe');
+  eq('单图 → first_frame', lastVideoCreate.first_frame, 'https://example.com/a.png');
+  eq('121f÷24 ≈ 5 秒', lastVideoCreate.seconds, '5');
+  ok('keyframe 不带 images', !('images' in lastVideoCreate));
+
+  await api('POST', '/api/videos', {
+    prompt: '风格参考', model: 'agnes-video-2.5-flash', mode: 'multi_image',
+    source_images: [{ url: 'https://e.com/1.png' }, { url: 'https://e.com/2.png' }], width: 768, height: 1152,
+  });
+  eq('多图 → reference', lastVideoCreate.mode, 'reference');
+  eq('reference.images 数', lastVideoCreate.images && lastVideoCreate.images.length, 2);
+  eq('竖版预设映射 9:16', lastVideoCreate.aspect_ratio, '9:16');
+
+  await api('POST', '/api/videos', {
+    prompt: '过渡', model: 'agnes-video-2.5-flash', mode: 'keyframe', mode_flag: 'keyframes',
+    source_images: [{ url: 'https://e.com/a' }, { url: 'https://e.com/b' }, { url: 'https://e.com/c' }],
+  });
+  eq('keyframes 标记取首帧', lastVideoCreate.first_frame, 'https://e.com/a');
+  eq('keyframes 标记取尾帧（中间帧丢弃）', lastVideoCreate.last_frame, 'https://e.com/c');
+
+  // v2.0 模型仍走旧协议（对照）
+  await api('POST', '/api/videos', {
+    prompt: 'legacy check', model: 'agnes-video-v2.0', mode: 'text_to_video',
+    width: 1152, height: 768, num_frames: 121, frame_rate: 24,
+  });
+  eq('v2.0 保留 frame_rate', lastVideoCreate.frame_rate, 24);
+  eq('v2.0 保留 num_frames', lastVideoCreate.num_frames, 121);
+  ok('v2.0 无 mode 字段', !('mode' in lastVideoCreate));
+
+  // 轮询闭环：query 必须带 model_name，完成地址取自 metadata.url
+  const vid = r.data.asset.id;
+  let a25 = null;
+  for (let i = 0; i < 30; i++) {
+    await sleep(700);
+    const all = await api('GET', '/api/videos');
+    a25 = (all.data || []).find((x) => x.id === vid);
+    if (a25 && a25.status === 'completed') break;
+  }
+  ok('2.5 任务轮询到 completed', !!a25 && a25.status === 'completed', a25 && a25.status);
+  ok('video_url 来自 metadata.url', String(a25 && a25.video_url).endsWith('/video.mp4'));
+  ok('查询带了 model_name', /model_name=agnes-video-2\.5-flash/.test(String(last25QueryUrl)), String(last25QueryUrl).slice(0, 80));
+  await api('DELETE', `/api/videos/${vid}`);
 }
 
 // ── 9. 手动刷新与补录 ────────────────────────────────────────
