@@ -122,6 +122,12 @@ group('导入导出');
   const n2 = store.importAll({ collections: { projects: [{ id: 'only-one', name: '替换测试' }] } }, 'replace');
   ok('替换导入返回条数', n2 >= 1);
   eq('替换后只剩一条', store.count('projects'), 1);
+  // 新语义：replace 时备份里没有的集合也要一起清空（旧写法 continue 跳过 → 「清空全部数据」空转）
+  eq('替换会清掉未提供的集合', store.count('scripts'), 0);
+  store.importAll({ collections: {} }, 'replace');
+  eq('空 collections 替换 = 全库清空', store.count('projects'), 0);
+  store.importAll({ collections: copy }, 'merge'); // 恢复给后续组用
+  ok('合并恢复后又有数据', store.count('projects') >= 1);
 }
 
 // ── 4. 统计 ──────────────────────────────────────────────────
