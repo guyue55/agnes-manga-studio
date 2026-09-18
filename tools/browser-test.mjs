@@ -663,6 +663,42 @@ try {
       ok('R4 s≥1 单调不减（时长列真正影响产出，未被写死）', mono === true, String(mono));
     }
 
+    group('播放不打断契约（E5：SSE 刷新不得 surprise 重绘）');
+    {
+      const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
+      const pid = (await Jget('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      await cdp.eval(`location.hash = '#/tasks?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#list');`), '任务页就绪');
+      await sleep(500);
+      // 注入受控 video（用自有属性遮蔽 paused/ended 真值）+ 哨兵：render() 重写 #list 会抹掉哨兵
+      const inject = `window.__probePlaying = false;
+        const list = document.querySelector('#list');
+        list.insertAdjacentHTML('afterbegin', '<video id="probe-video"></video><span id="probe-sentinel">哨兵</span>');
+        const pv = document.getElementById('probe-video');
+        Object.defineProperty(pv, 'paused', { get: () => !window.__probePlaying });
+        Object.defineProperty(pv, 'ended', { get: () => false });
+        return !!pv;`;
+      const fire = `const es = (window.__esRefs || [])[0]; if (!es) return -1; es.dispatchEvent(new MessageEvent('video', { data: JSON.stringify({ id: 'probe-e5', status: 'completed' }) })); return 1;`;
+      const hasSentinel = () => cdp.eval(`return !!document.getElementById('probe-sentinel');`);
+
+      ok('E5 探针注入受控 video 与哨兵', (await cdp.eval(`return (() => { ${inject} })();`)) === true);
+      // 阶段 A：有视频在播 → 事件到达必须"挂起"，不得重绘
+      await cdp.eval(`window.__probePlaying = true; return true;`);
+      await cdp.eval(`return (() => { ${fire} })();`);
+      await sleep(1200); // 覆盖一次 800ms 轮询
+      ok('E5 播放中收到 SSE 事件不重绘（哨兵仍在）', (await hasSentinel()) === true);
+      // 阶段 B：播放停止 → 800ms 轮询应补渲染（挂起不是永久冻结）
+      await cdp.eval(`window.__probePlaying = false; return true;`);
+      await sleep(2000);
+      ok('E5 播放停止后自动补渲染（哨兵被抹）', (await hasSentinel()) === false);
+      // 阶段 C：灵敏度对照——空闲时同一事件应立即重绘（证明哨兵确实能探测到 render）
+      await cdp.eval(`return (() => { ${inject} })();`);
+      await cdp.eval(`return (() => { ${fire} })();`);
+      await sleep(400);
+      ok('E5 灵敏度对照：空闲时同一事件立即重绘（哨兵被抹）', (await hasSentinel()) === false);
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
     group('防连点契约（R6：双击不得重复创建）');
     {
       const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
