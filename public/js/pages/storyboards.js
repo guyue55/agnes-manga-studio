@@ -25,7 +25,7 @@ export default async function storyboards(container, params) {
       actions: `
         ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
         <select class="select select-sm" id="ep" style="width:110px"></select>
-        <button class="btn" id="reload">${icon('refresh', 16)}</button>`,
+        <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
 
     <div class="card" style="margin-bottom:18px">
@@ -130,8 +130,8 @@ export default async function storyboards(container, params) {
             <td style="font-family:var(--mono);color:var(--text)">#${esc(s.shot_number)}</td>
             <td><span class="badge gray">${esc(s.shot_type)}</span></td>
             <td><div class="cell-ellipsis" style="max-width:260px" title="${esc(s.scene_description)}">${esc(s.scene_description || '—')}</div></td>
-            <td><div class="cell-ellipsis" style="max-width:96px">${esc(s.characters || '—')}</div></td>
-            <td><div class="cell-ellipsis" style="max-width:150px;color:var(--text-3)">${esc(s.dialogue || '—')}</div></td>
+            <td><div class="cell-ellipsis" style="max-width:96px" title="${esc(s.characters)}">${esc(s.characters || '—')}</div></td>
+            <td><div class="cell-ellipsis" style="max-width:150px;color:var(--text-3)" title="${esc(s.dialogue)}">${esc(s.dialogue || '—')}</div></td>
             <td>${esc(s.duration_seconds)}s</td>
             <td>${promptCell(s.image_prompt)}</td>
             <td>${promptCell(s.video_prompt)}</td>
@@ -177,7 +177,7 @@ export default async function storyboards(container, params) {
     if (!text) return `<span style="color:var(--text-4);font-size:11.5px">待生成</span>`;
     return `<div class="row" style="gap:6px">
       <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${esc(text)}">${esc(text)}</span>
-      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制" style="width:22px;height:22px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
+      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }
 
@@ -391,6 +391,7 @@ ${text}`,
   }
 
   async function clearEpisode() {
+    if (!projectId) { toast.err('请先选择项目再清空本集'); return; }
     if (!(await confirm({
       text: `确定清空第 ${episode} 集的全部 ${rows.length} 个镜头吗？此操作不可撤销。`,
       danger: true, okText: '清空',

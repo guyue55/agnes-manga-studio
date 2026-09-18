@@ -276,6 +276,17 @@ group('分镜');
 
   const del = await api('DELETE', `/api/storyboards?project_id=${PROJECT_ID}&episode=2`);
   eq('清空第 2 集', del.data.removed, 1);
+
+  // 护栏：缺 project_id 或 episode 一律拒绝，避免跨项目 / 全表误删
+  const badClear1 = await api('DELETE', `/api/storyboards?episode=3`);
+  eq('清空缺 project_id 被拒 400', badClear1.status, 400);
+  const badClear2 = await api('DELETE', `/api/storyboards?project_id=${PROJECT_ID}`);
+  eq('清空缺 episode 被拒 400', badClear2.status, 400);
+  const badClear3 = await api('DELETE', `/api/storyboards`);
+  eq('裸清空被拒 400', badClear3.status, 400);
+  // 拒绝必须是无副作用的：第 1 集分镜不能被这些请求删掉
+  const stillThere = await api('GET', `/api/storyboards?project_id=${PROJECT_ID}&episode=1`);
+  ok('护栏拒绝不产生副作用', stillThere.data.length >= 1, `剩 ${stillThere.data.length}`);
 }
 
 // ── 7. 图片生成（含落盘） ────────────────────────────────────
@@ -521,6 +532,16 @@ group('SSE');
 // ── 16. 清理 ─────────────────────────────────────────────────
 group('级联删除');
 {
+  // 先记录本项目落盘的本地文件，级联删除后必须一起消失（防孤儿文件占盘）
+  const [imBefore, vdBefore] = await Promise.all([
+    api('GET', `/api/images?project_id=${PROJECT_ID}`),
+    api('GET', `/api/videos?project_id=${PROJECT_ID}`),
+  ]);
+  const localFiles = [...imBefore.data, ...vdBefore.data]
+    .map((a) => a.local_file).filter(Boolean);
+  ok('测试前确有本地落盘文件', localFiles.length >= 2, `找到 ${localFiles.length} 个`);
+  localFiles.forEach((f) => ok(`删除前文件存在 ${f.slice(-20)}`, fs.existsSync(f)));
+
   const r = await fetch(`${BASE}/api/projects/${PROJECT_ID}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
@@ -529,6 +550,8 @@ group('级联删除');
   const d = await r.json();
   eq('删除项目 200', r.status, 200);
   ok('级联删掉了关联数据', d.removed >= 4, `删了 ${d.removed} 条`);
+  ok('返回了本地文件删除数', d.filesRemoved >= 2, `filesRemoved=${d.filesRemoved}`);
+  localFiles.forEach((f) => ok(`删除后文件已清 ${f.slice(-20)}`, !fs.existsSync(f)));
   const left = await api('GET', `/api/storyboards?project_id=${PROJECT_ID}`);
   eq('分镜已清空', left.data.length, 0);
 }
