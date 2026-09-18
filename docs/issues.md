@@ -688,3 +688,16 @@ run-all 全绿 128/207/452/69。图谱时效：9-12 轮对 poller.js（函数体
 - **踩坑留痕（`cdp.eval` 求值陷阱）**：`return !!document.querySelector('.page')` 这种**无分号的显式 return** 会被自动包成 `return (return …)` → SyntaxError，而 `waitFor` 吞异常 → 表现为**静默超时**（值为 undefined），排查了一轮。已写入 AGENTS 注意事项 6。
 - **踩坑留痕（守卫误报·第三次）**：B41 的"测试选择器一致性"守卫把我在测试里**动态创建**的 `#__lbl` 判为死选择器——**守卫是对的**（严格按设计），故**改测试而非放宽守卫**：改用 `d.querySelector('label')` 结构化查询。原则：守卫的严格性不要为个案让步。
 - **计数**：browser-test 146 → **150**。门禁 135/261/464/150 全绿。
+
+**B45 巡检轮·三十三（第 64 轮）**：继续无障碍维度——**键盘可达性**（B44 的另一半）。
+- **静态盘点**：CSS 焦点环本就很完整（`.btn/.icon-btn/.mini-btn/.chip/.tabs>button/.segmented>button/.nav-item/.quick-item/.switch/a` 均有 `:focus-visible`）✓；但全仓**无 `tabindex`/`role="button"`** → 卡片类可点 `div` 全是**鼠标专用**。
+- **逐个判读（关键：不能一律加 `role="button"`）**：
+  - `projects.js` 卡片 → 卡内已有完整按钮行（进入分镜/编辑/复制/导出/删除）→ 键盘用户已可用，**不加**（加了反而形成"按钮里嵌按钮"的 ARIA 违规）✓
+  - `images.js`/`assets.js` 图片/视频卡 → 卡内已有 `[data-zoom]`/播放钮 → 同理不改 ✓
+  - `dashboard.js` 最近项目卡（`.proj-card[data-pid]`）→ **内部无任何按钮** → 整卡可键盘操作 ✓（新增共享助手 `clickableCard`：`tabIndex=0` + `role=button` + Enter/Space 触发）
+  - `assets.js` 文本卡（`[data-sid]`）→ 卡内有删除钮，且**查看全文原先只能点卡片**（键盘不可达、鼠标也难发现）→ 新增显式「**查看全文**」按钮（`data-view`，带 `aria-label`），并把开预览逻辑抽成 `openScript(id)` 复用
+- **配套（易漏的一环）**：新可聚焦元素必须**看得见焦点**——CSS 焦点环清单里补 `.proj-card:focus-visible, [role="button"]:focus-visible`。否则"能聚焦但看不见"本身就是新的无障碍缺陷。
+- **新增「键盘可达契约」8 钉（browser-test）**：①可点卡片 `tabIndex=0` ②有 `role=button` ③**按 Enter 真的进入项目**（不是只加属性）④**灵敏度对照**：无关按键 `a` 不得触发跳转 ⑤文本卡有显式「查看全文」按钮 ⑥**含按钮的卡片必须没有 `role=button`**（防按钮嵌套）⑦点该按钮确实开弹窗 ⑧探针脚本已建（自证非空跑）。
+  - **正向对照（硬证据）**：把工作台卡片退回"只挂 onclick" → 3 条钉如期失败（tabIndex / role / Enter 进入，hash 停在 `#/dashboard`）；还原后全绿。
+- **踩坑留痕**：本组首版又踩了 `cdp.eval` 无分号显式 `return` 的坑（`return location.hash`）——**刚写进 AGENTS 注意事项 6 又犯一次**，说明该陷阱极易复现，已统一改为裸表达式；另首版漏了素材页**文本素材在独立 tab 下**（默认是图片 tab），补 `[data-tab="text"]` 点击后才拿到 `[data-view]`。
+- **计数**：browser-test 150 → **158**，uitest 464 → **465**（选择器守卫自动纳入新增的 `[data-tab="text"]`）。门禁 135/261/465/158 全绿；ui-audit 复测「不溢出、无微字号、对比度全过 WCAG AA」。

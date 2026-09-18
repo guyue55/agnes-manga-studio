@@ -159,6 +159,21 @@ export function twoClick(btn, run, opts = {}) {
 }
 
 /**
+ * 让「整块可点」的元素也能键盘操作：Tab 可达 + Enter/Space 触发。
+ * 仅用于内部**没有**按钮的卡片——内部已有按钮的卡片不要再加 role="button"，
+ * 否则形成「按钮里嵌按钮」的 ARIA 违规（键盘用户用内部按钮即可）。
+ */
+export function clickableCard(el, fn) {
+  el.tabIndex = 0;
+  el.setAttribute('role', 'button');
+  el.onclick = fn;
+  el.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); fn(e); }
+  };
+  return el;
+}
+
+/**
  * 确认框。
  * 不带 checkbox 时返回 Promise<boolean>；
  * 带 checkbox（{label, checked}）时返回 Promise<{confirmed, checked}> ——

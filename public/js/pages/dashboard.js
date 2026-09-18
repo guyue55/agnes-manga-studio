@@ -4,7 +4,7 @@
  */
 import { icon, esc, relTime, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { empty, spinner, toast, errBox } from '../ui.js';
+import { empty, spinner, toast, errBox, clickableCard } from '../ui.js';
 import { head } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -107,8 +107,8 @@ export default async function dashboard(container) {
             </div>
             <div style="font-size:11px;color:var(--text-4)">更新于 ${relTime(p.updated_at || p.created_at)}</div>
           </div>`).join('');
-        el.querySelectorAll('[data-pid]').forEach((c) => {
-          c.onclick = () => navigate('storyboards', { project: c.getAttribute('data-pid') });
+        el.querySelectorAll('[data-pid]').forEach((c) => { // A11y：卡内无按钮，故整卡可键盘操作
+          clickableCard(c, () => navigate('storyboards', { project: c.getAttribute('data-pid') }));
         });
       }
     }

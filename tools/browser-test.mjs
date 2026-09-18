@@ -318,6 +318,43 @@ try {
       await fetch(`http://127.0.0.1:${port}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
     }
 
+    group('键盘可达契约（A11y：可点卡片必须能键盘操作）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      // 工作台最近项目卡：内部无按钮 → 应整卡可键盘操作
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.proj-card[data-pid]')`), '工作台项目卡出现');
+      ok('可点卡片可聚焦（tabIndex=0）', (await cdp.eval(`const c = document.querySelector('.proj-card[data-pid]'); return c ? c.tabIndex : -1;`)) === 0);
+      ok('可点卡片有 role=button（屏幕阅读器可识别）', (await cdp.eval(`const c = document.querySelector('.proj-card[data-pid]'); return c ? c.getAttribute('role') : '';`)) === 'button');
+      // 键盘 Enter 必须真的进入（不是只加了个属性）
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.proj-card[data-pid]')`), '工作台项目卡就绪');
+      await cdp.eval(`const c = document.querySelector('.proj-card[data-pid]'); c.focus(); c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return true;`);
+      await sleep(700);
+      ok('按 Enter 真的进入项目（键盘可用）', (await cdp.eval(`location.hash`)).includes('/storyboards'), await cdp.eval(`location.hash`));
+      // 灵敏度对照：无关按键不得触发（证明不是"任意键都进"）
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.proj-card[data-pid]')`), '工作台项目卡就绪');
+      await cdp.eval(`const c = document.querySelector('.proj-card[data-pid]'); c.focus(); c.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })); return true;`);
+      await sleep(600);
+      ok('灵敏度对照：无关按键不触发跳转', (await cdp.eval(`location.hash`)).includes('/dashboard'), await cdp.eval(`location.hash`));
+      // 素材页文本卡：卡内有按钮，故不给整卡 role=button，而是提供显式「查看全文」按钮
+      const sc = await J('/api/scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: pid, title: '键盘可达探针脚本', script_type: 'concept', content: '探针内容' }) });
+      ok('键盘探针脚本已建', !!sc.id, JSON.stringify(sc).slice(0, 60));
+      await cdp.eval(`location.hash = '#/assets'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-tab="text"]')`), '素材页就绪');
+      await cdp.eval(`document.querySelector('[data-tab="text"]').click(); return true;`); // 文本素材在独立 tab 下
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-view]')`), '文本卡查看按钮出现');
+      ok('文本卡有显式「查看全文」按钮（键盘可达）', await cdp.eval(`!!document.querySelector('[data-view][aria-label="查看全文"]')`));
+      ok('含按钮的卡片不得再标 role=button（避免按钮嵌套）', (await cdp.eval(`const c = document.querySelector('[data-sid]'); return c ? c.getAttribute('role') : 'NO_CARD';`)) === null);
+      await cdp.eval(`document.querySelector('[data-view]').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#modal-root .modal')`), '查看全文弹窗');
+      ok('点「查看全文」打开弹窗', await cdp.eval(`!!document.querySelector('#modal-root .modal')`));
+      await cdp.eval(`const x = document.querySelector('#modal-root [data-close]'); if (x) x.click(); return true;`);
+      await J(`/api/scripts/${sc.id}`, { method: 'DELETE' }).catch(() => {});
+    }
+
     group('表单可达名契约（A11y：控件必须有可访问名称）');
     {
       const NAME_FN = `(el) => {

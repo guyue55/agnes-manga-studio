@@ -133,6 +133,7 @@ export default async function assets(container, params) {
               <div style="font-size:13px;font-weight:550;margin-bottom:4px">${esc(s.title)}</div>
               <div style="font-size:11px;color:var(--text-4)">${esc(relTime(s.created_at))}</div>
             </div>
+            <button class="icon-btn" data-view="${esc(s.id)}" title="查看全文" aria-label="查看全文" style="background:rgba(255,255,255,0.07);color:var(--text-3)">${icon('eye', 13)}</button>
             <button class="icon-btn danger" data-dels="${esc(s.id)}" title="删除" aria-label="删除文本" style="background:rgba(255,255,255,0.07);color:var(--text-3)">${icon('trash', 13)}</button>
           </div>
           <pre class="json-out" style="max-height:150px;margin-top:10px">${esc(String(s.content).slice(0, 500))}${String(s.content).length > 500 ? '\n…' : ''}</pre>
@@ -143,11 +144,16 @@ export default async function assets(container, params) {
           if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
         });
       });
+      // A11y：卡内已有按钮，故整卡不加 role="button"（避免按钮嵌套），改为提供显式的「查看全文」按钮
+      const openScript = (id) => {
+        const s = scripts.find((x) => x.id === id);
+        if (s) modal({ title: s.title, wide: true, body: `<pre class="json-out" style="max-height:60vh">${esc(s.content)}</pre>` });
+      };
+      el.querySelectorAll('[data-view]').forEach((b) => {
+        b.onclick = (e) => { e.stopPropagation(); openScript(b.getAttribute('data-view')); };
+      });
       el.querySelectorAll('[data-sid]').forEach((c) => {
-        c.onclick = () => {
-          const s = scripts.find((x) => x.id === c.getAttribute('data-sid'));
-          modal({ title: s.title, wide: true, body: `<pre class="json-out" style="max-height:60vh">${esc(s.content)}</pre>` });
-        };
+        c.onclick = () => openScript(c.getAttribute('data-sid'));
       });
     }
   }

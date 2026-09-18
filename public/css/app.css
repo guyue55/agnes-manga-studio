@@ -778,7 +778,8 @@ body.modal-open { overflow: hidden; }
 /* 键盘操作时的统一焦点环（鼠标点击不显示）。输入框已有自己的 :focus 光晕 */
 .btn:focus-visible, .icon-btn:focus-visible, .mini-btn:focus-visible, .chip:focus-visible,
 .tabs > button:focus-visible, .segmented > button:focus-visible,
-.nav-item:focus-visible, .quick-item:focus-visible, .switch:focus-visible, a:focus-visible {
+.nav-item:focus-visible, .quick-item:focus-visible, .switch:focus-visible,
+.proj-card:focus-visible, [role="button"]:focus-visible, a:focus-visible {
   outline: 2px solid rgba(245, 213, 138, 0.6);
   outline-offset: 2px;
 }
