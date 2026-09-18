@@ -52,6 +52,69 @@ export default async function settings(container, params = {}) {
     render();
   }
 
+  // 分节 → 该节面板控件与设置键的对应表（单一事实源，供 syncPanel 回写生效值）
+  const PANEL_FIELDS = {
+    api: [['#s-base', 'agnes_api_base_url', 'text']],
+    model: [
+      ['#m-text', 'default_text_model', 'select'],
+      ['#m-image', 'default_image_model', 'select'],
+      ['#m-video', 'default_video_model', 'select'],
+      ['#m-ttl', 'model_cache_ttl_hours', 'text'],
+      ['#m-auto', 'auto_refresh_models', 'switch'],
+    ],
+    task: [
+      ['#t-interval', 'video_poll_interval', 'text'],
+      ['#t-max', 'video_max_polls', 'text'],
+      ['#t-conc', 'default_concurrent_tasks', 'text'],
+      ['#t-timeout', 'request_timeout_ms', 'text'],
+      ['#t-auto', 'auto_download_video', 'switch'],
+    ],
+  };
+
+  /**
+   * E8 的 UI 半边：后端在唯一写入口把数字型设置钳进合法区间（store.setSettings），
+   * 所以保存回执里的 settings 才是「实际生效值」。这里把它回写到**当前面板已有的控件**，
+   * 保证「界面显示 == 实际生效」；刻意不重建 DOM（render() 会丢焦点、跳滚动位置，
+   * 也会把正在编辑的 Key 输入框清空）。
+   */
+  function syncPanel() {
+    const p = container.querySelector('#panel');
+    if (!p) return;
+    // API 节：Key 输入框不参与"生效值回写"（后端只回脱敏值）。保存成功后必须收回明文态，
+    // 否则刚输入的明文 Key 会一直留在输入框里（旧实现在保存后 render() 顺手重置，去掉 render 后要显式收）。
+    if (section === 'api') {
+      const ki = p.querySelector('#s-key');
+      if (ki) {
+        const has = !!settings.agnes_api_key;
+        ki.type = 'password';
+        ki.disabled = true;
+        ki.value = settings.agnes_api_key_masked || '';
+        ki.placeholder = has ? '已配置，留空表示不修改' : 'sk-…';
+      }
+      const tg = p.querySelector('#toggle-key');
+      if (tg) tg.innerHTML = icon('edit', 15);
+      const hint = p.querySelector('#s-key-hint');
+      if (hint) hint.innerHTML = settings.agnes_api_key
+        ? `当前：${esc(settings.agnes_api_key_masked || '***')}。点右侧按钮可重新填写。`
+        : '还没有配置 Key，填了才能生成内容。';
+    }
+    for (const [sel, key, kind] of PANEL_FIELDS[section] || []) {
+      const el = p.querySelector(sel);
+      const v = settings[key];
+      if (!el || v === undefined || v === null) continue;
+      if (kind === 'switch') {
+        const on = v === '1';
+        el.classList.toggle('on', on);
+        el.setAttribute('aria-checked', String(on));
+      } else if (kind === 'select') {
+        // 只在该选项存在时回写，避免把 select 变成无选中
+        if ([...el.options].some((o) => o.value === v)) el.value = v;
+      } else if (el.value !== String(v)) {
+        el.value = String(v);
+      }
+    }
+  }
+
   let saveInflight = false; // R6 残留：所有分节的保存钮共用互斥锁，防连点双写
   async function save(patch, msg = '已保存') {
     if (saveInflight) return;
@@ -60,6 +123,7 @@ export default async function settings(container, params = {}) {
     const r = await api.saveSettings(patch);
     if (r.ok) {
       settings = r.data.settings || settings;
+      syncPanel(); // 越界/非法值被钳制后立刻显示生效值（显示=生效）
       toast.ok(msg);
       // 首次配置 Key / 更换 Base URL 后顺手同步一次模型目录；失败不影响设置保存。
       if (patch.agnes_api_key || patch.agnes_api_base_url) {
@@ -68,7 +132,6 @@ export default async function settings(container, params = {}) {
         else if (mr.data?.models) state.models = mr.data.models;
       }
       await refreshState();
-      render();
     } else toast.err(r.error);
     } finally { saveInflight = false; }
   }
@@ -104,7 +167,7 @@ export default async function settings(container, params = {}) {
               placeholder="${has ? '已配置，留空表示不修改' : 'sk-…'}" ${keyVisible ? '' : 'disabled'} />
             <button class="btn btn-icon" id="toggle-key" title="显示/编辑">${icon(keyVisible ? 'eye' : 'edit', 15)}</button>
           </div>
-          <div class="hint">${has ? `当前：${esc(settings.agnes_api_key_masked || '***')}。点右侧按钮可重新填写。` : '还没有配置 Key，填了才能生成内容。'}</div>
+          <div class="hint" id="s-key-hint">${has ? `当前：${esc(settings.agnes_api_key_masked || '***')}。点右侧按钮可重新填写。` : '还没有配置 Key，填了才能生成内容。'}</div>
         </div>
         <div class="row wrap">
           <button class="btn btn-primary" id="save-api">${icon('save', 14)}保存配置</button>
