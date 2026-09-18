@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, statusBadge, VIDEO_STATUS, REMOTE_STATUS, LOCAL_STATUS,
-  relTime, fmtTime, copyText,
+  relTime, fmtTime, copyText, fmtBytes,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy, errBox } from '../ui.js';
@@ -276,7 +276,8 @@ export default async function tasks(container, params = {}) {
       } finally {
         setBusy(btn, false);
       }
-      if (r.ok) { toast.ok(`已保存到本机（${(r.data.bytes / 1024 / 1024).toFixed(1)} MB）`); load(); }
+      // 原先手工 /1024/1024 计算：小于 1MB 的文件一律显示 0.0 MB，统一走 fmtBytes
+      if (r.ok) { toast.ok(`已保存到本机（${fmtBytes(r.data.bytes)}）`); load(); }
       else toast.err(r.error);
     });
     bindOne('detail', (id) => {

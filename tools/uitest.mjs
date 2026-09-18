@@ -373,6 +373,25 @@ group('测试选择器一致性');
   ok('测试中的 #id 选择器均存在于源码（含动态 id 实参）', deadIds.length === 0, deadIds.join(',') || `${ids.length} 个全部命中`);
 }
 
+// ── 复用一致性（防「已有工具被绕过」）──────────────────────
+// B42：tasks.js 手工 /1024/1024 格式化字节（<1MB 谎报 0.0 MB），而 consts.js 就有 fmtBytes；
+// images.js 手工建游离 <a> 触发下载，而 consts.js 就有 downloadUrl（append+remove）。
+group('复用一致性');
+{
+  const pages = listJs(path.join(PUB, 'js', 'pages'));
+  const handBytes = pages.filter((f) => /\/\s*1024\s*\/\s*1024\s*\)\.toFixed/.test(read(f)));
+  ok('页面不得手工换算字节（须走 fmtBytes）', handBytes.length === 0, handBytes.map((f) => path.basename(f)).join(','));
+  const handDl = pages.filter((f) => /createElement\('a'\)/.test(read(f)));
+  ok('页面不得手工建 <a> 下载（须走 downloadUrl，含 append+remove）', handDl.length === 0, handDl.map((f) => path.basename(f)).join(','));
+  // 自证：两个被绕过的工具确实存在且导出
+  const consts = read(path.join(PUB, 'js', 'consts.js'));
+  ok('fmtBytes / downloadUrl 均仍导出（自证守卫有替代品可依）',
+    /export function fmtBytes/.test(consts) && /export function downloadUrl/.test(consts));
+  // 灵敏度对照：守卫的检测式确实能命中旧写法
+  const probe = "toast.ok(`x（${(r.data.bytes / 1024 / 1024).toFixed(1)} MB）`)";
+  ok('灵敏度对照：守卫检测式能命中旧手工写法', /\/\s*1024\s*\/\s*1024\s*\)\.toFixed/.test(probe));
+}
+
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
   console.log('  失败项：');

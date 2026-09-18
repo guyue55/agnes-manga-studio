@@ -767,6 +767,21 @@ try {
       }
     }
 
+    group('字节格式化契约（fmtBytes：保存回执不得谎报 0.0 MB）');
+    {
+      // 页面内动态 import 真实产物；B42 前 tasks.js 手工 /1024/1024 → 小于 1MB 一律 0.0 MB
+      const B = (n) => cdp.eval(`return (async () => { const m = await import('/js/consts.js'); return m.fmtBytes(${JSON.stringify(n)}); })();`);
+      ok('fmtBytes 小字节数原样（11B）', (await B(11)) === '11 B', String(await B(11)));
+      ok('fmtBytes 1KB 边界（1024→1.0 KB）', (await B(1024)) === '1.0 KB', String(await B(1024)));
+      ok('fmtBytes 中段（51200→50.0 KB，旧式会显示 0.0 MB）', (await B(51200)) === '50.0 KB', String(await B(51200)));
+      ok('fmtBytes 1MB 边界（1048576→1.0 MB）', (await B(1048576)) === '1.0 MB', String(await B(1048576)));
+      ok('fmtBytes 大值（5242880→5.0 MB）', (await B(5242880)) === '5.0 MB', String(await B(5242880)));
+      ok('fmtBytes 非法输入不产出 NaN', !String(await B('abc')).includes('NaN'), String(await B('abc')));
+      // 灵敏度对照：旧的手工式在同一输入上确实谎报，证明本组断言有鉴别力
+      const old = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
+      ok('灵敏度对照：旧手工式在 51200B 上确实谎报 0.0 MB', old(51200) === '0.0 MB', old(51200));
+    }
+
     group('卡内按钮冒泡契约（R5：不得叠出第二层弹窗）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

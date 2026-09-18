@@ -2,7 +2,7 @@
  * images.js — 图片生成
  * 文生图 / 图生图。生成结果直接落盘到本地素材库（不再依赖公网图床）。
  */
-import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect, PRESET_TERMS } from '../consts.js';
+import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect, PRESET_TERMS, downloadUrl } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
@@ -258,8 +258,8 @@ export default async function images(container, params) {
     });
     bind('dl', (id) => {
       const img = items.find((x) => x.id === id);
-      const a = document.createElement('a');
-      a.href = img.url; a.download = `${img.name}.png`; a.click();
+      // 统一走 downloadUrl：它 append 到 body 再 remove；手工建的游离 <a> 在部分浏览器不触发下载
+      downloadUrl(img.url, `${img.name}.png`);
     });
     bind('tovideo', (id) => {
       const img = items.find((x) => x.id === id);
