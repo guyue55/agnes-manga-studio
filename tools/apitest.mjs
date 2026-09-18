@@ -42,6 +42,7 @@ let queryCount = 0;
 const VIDEO_ID = 'vid_mock_001';
 // 捕获最近一次 /v1/videos 创建请求体，供 2.5 协议断言
 let lastVideoCreate = null;
+let lastImageCreate = null; // B4.1：验证画风只在使用点注入、且注入的是映射短语
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
 // 按提示词标记统计 /v1/videos 实际到达次数：验证「限流后重试」与「4xx 不重试」
@@ -82,6 +83,7 @@ const mock = http.createServer((req, res) => {
       return send(200, { choices: [{ message: { role: 'assistant', content: '```json\n[{"shot_number":1,"shot_type":"特写","image_prompt":"a hero face"}]\n```' } }] });
     }
     if (u.pathname === '/v1/images/generations') {
+      try { lastImageCreate = JSON.parse(body); } catch { lastImageCreate = { bad_json: body }; }
       return send(200, { data: [{ b64_json: PNG_1PX }] });
     }
     if (req.method === 'GET' && u.pathname === '/v1/models') {
@@ -737,6 +739,25 @@ group('SSE');
 }
 
 // ── 16. 清理 ─────────────────────────────────────────────────
+group('B4.1 画风分层注入');
+{
+  const proj = await api('POST', '/api/projects', { name: '画风分层测试', art_style: '日漫厚涂', aspect_ratio: '9:16 竖屏' });
+  const PID = proj.data.id;
+  const g = await api('POST', '/api/agnes/image', { prompt: 'a girl running on the beach', project_id: PID, size: '1024x1024' });
+  eq('出图注入映射画风', String(lastImageCreate && lastImageCreate.prompt), 'a girl running on the beach, japanese anime style, thick painterly shading');
+  const g2 = await api('POST', '/api/agnes/image', { prompt: 'a cat', project_id: PID, size: '1024x1024' });
+  const g3 = await api('POST', '/api/agnes/image', { prompt: 'a cat, japanese anime style, thick painterly shading', project_id: PID, size: '1024x1024' });
+  eq('同画风重复注入去重', String(lastImageCreate && lastImageCreate.prompt), 'a cat, japanese anime style, thick painterly shading');
+  const g4 = await api('POST', '/api/agnes/image', { prompt: 'standalone', size: '1024x1024' });
+  eq('无项目不注入', String(lastImageCreate && lastImageCreate.prompt), 'standalone');
+  // 视频：仅 t2v 注入；i2v 由参考图带风格
+  await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'hero walks forward', project_id: PID });
+  eq('t2v 注入画风', String(lastVideoCreate && lastVideoCreate.prompt), 'hero walks forward, japanese anime style, thick painterly shading');
+  await api('POST', '/api/videos', { mode: 'image_to_video', prompt: 'animate this', image: 'http://127.0.0.1:1/x.png', project_id: PID });
+  eq('i2v 不注入', String(lastVideoCreate && lastVideoCreate.prompt), 'animate this');
+  await api('DELETE', '/api/projects/' + PID + '?cascade=1');
+}
+
 group('B3.5 引用守卫删除');
 {
   // 删图/删视频不再是"悬挂引用制造机"：全量解关联并回传镜头号，状态同步回退

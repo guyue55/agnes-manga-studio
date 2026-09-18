@@ -229,6 +229,27 @@ group('B2 体验批钉');
   ok('SE-1 replace 导入二段确认', st.includes('确认替换导入') && st.includes('清空并导入'));
   ok('2.14 后台页签节流+回前台放流', app.includes('hiddenLive') && app.includes("'visibilitychange'"));
 }
+
+// ── B4 结构批钉：画风分层注入 ───────────────────────────────
+group('B4 画风分层');
+{
+  const routesSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+  const constsSrc = read(path.join(PUB, 'js', 'consts.js'));
+  const sbSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const scSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js'));
+  ok('4.1 后端使用点注入（图+视频 t2v）', routesSrc.includes('function artStylePhrase')
+    && routesSrc.includes("artStylePhrase(str(body.prompt).trim(), styleOf(body.project_id))")
+    && (routesSrc.match(/artStylePhrase\(str\(body\.prompt\)/g) || []).length >= 2);
+  const keysOf = (src) => {
+    const m = src.match(/ART_STYLE_MAP = \{([\s\S]*?)\n\};/);
+    return m ? [...m[1].matchAll(/'([^']+)':/g)].map((x) => x[1]).sort().join(',') : '';
+  };
+  ok('4.1 前后端画风映射表同构', keysOf(routesSrc) !== '' && keysOf(routesSrc) === keysOf(constsSrc));
+  ok('4.1 LLM 链禁烘画风（拆镜+补提示词，均在 storyboards）', (sbSrc.match(/不要写整体画风/g) || []).length >= 2);
+  ok('4.2 分镜提示词计算态预览', sbSrc.includes('artStylePhrase') && sbSrc.includes('+画风'));
+  ok('E7 批量找回+取消', sbSrc.includes("localStorage.setItem(BKEY") && sbSrc.includes('api.cancelBatch')
+    && read(path.join(PUB, 'js', 'pages', 'helpers.js')).includes('data-cancel-batch'));
+}
 }
 
 // ── 8. 用户系统已清除 ────────────────────────────────────────

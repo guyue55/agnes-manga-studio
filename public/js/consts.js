@@ -216,6 +216,29 @@ export const PRESET_TERMS = [
     { label: '留白构图', en: 'negative space composition' },
   ] },
 ];
+// B4.1 前端镜像：与 lib/routes.js 的 ART_STYLE_MAP 必须同表（uitest 有文本比对钉）。
+// 用途 = 预览"生成时真正发出的完整提示词"，让计算态在界面上可见。
+export const ART_STYLE_MAP = {
+  '日漫厚涂': 'japanese anime style, thick painterly shading',
+  '日漫': 'japanese anime style, clean linework',
+  '国漫写实': 'donghua realistic style, detailed textures',
+  '吉卜力': 'studio ghibli inspired, soft watercolor tones',
+  '水彩': 'watercolor illustration, soft paper texture',
+  '油画': 'oil painting style, visible brush strokes',
+  '赛博朋克': 'cyberpunk aesthetic, neon glow',
+  '像素': 'pixel art style',
+  '黑白漫画': 'black and white manga, screentone shading',
+  '3D渲染': '3d render, cinematic lighting',
+};
+export function artStylePhrase(prompt, style) {
+  const st = String(style || '').trim();
+  if (!st) return prompt;
+  const key = Object.keys(ART_STYLE_MAP).find((k) => st.includes(k) || k.includes(st));
+  const phrase = key ? ART_STYLE_MAP[key] : st;
+  if (!phrase || String(prompt).toLowerCase().includes(phrase.toLowerCase())) return prompt;
+  return `${prompt}, ${phrase}`;
+}
+
 export const STORYBOARD_STATUS = {
   pending: { label: '待处理', cls: 'gray' },
   image_ready: { label: '有图片', cls: 'blue' },

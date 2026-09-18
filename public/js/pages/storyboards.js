@@ -4,7 +4,7 @@
  * 支持批量补提示词、批量出图、批量出视频（带队列进度）。
  */
 import {
-  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect,
+  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, twoClick, confirm, options, setBusy } from '../ui.js';
@@ -206,9 +206,13 @@ export default async function storyboards(container, params) {
 
   function promptCell(text) {
     if (!text) return `<span style="color:var(--text-4);font-size:11.5px">待生成</span>`;
+    // B4.2：预览即计算态——tooltip 展示生成时真正会发出的完整提示词（内容+系统注入的画风）
+    const style = (state.projects.find((p) => p.id === projectId) || {}).art_style || '';
+    const final = artStylePhrase(text, style);
     return `<div class="row" style="gap:6px">
-      <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${esc(text)}">${esc(text)}</span>
-      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
+      <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${style && final !== text ? `生成时实际发出（含画风注入）：\n${esc(final)}` : esc(text)}">${esc(text)}</span>
+      ${style && final !== text ? `<span style="flex:none;color:var(--gold-light);font-size:10px" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
+      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }
 
@@ -240,7 +244,7 @@ export default async function storyboards(container, params) {
     try {
       const r = await api.genText({
         messages: [
-          { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。' },
+          { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。提示词只写镜头内容，不要写整体画风或媒介词（anime style、oil painting 等）——画风由系统在使用点统一注入。' },
           {
             role: 'user',
             content: `请将以下脚本内容转换为分镜表。输出一个 JSON 对象，格式：{"shots": [ ...每个元素是一个镜头... ]}，每个镜头包含：
@@ -312,7 +316,7 @@ ${text}`,
       for (const s of targets) {
         bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + failed + 1} / ${targets.length}（每条约 5〜20s）</span></div></div>`;
       const sys = kind === 'image'
-        ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，风格统一，细节丰富。只输出提示词，不要解释。'
+        ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，细节丰富。只写镜头内容（主体、动作、表情、景别构图、局部光效），**不要写整体画风或媒介词**（如 anime style、oil painting、watercolor——画风由系统在使用点统一注入，写死会导致换画风全部作废）。只输出提示词，不要解释。'
         : '你是专业的AI视频提示词工程师。请用英文输出，只描述画面运动与镜头运动，不要重复静态外观。';
       const user = kind === 'image'
         ? `为以下分镜生成英文图片提示词：景别:${s.shot_type}，画面:${s.scene_description}，人物:${s.characters}，动作:${s.action}`

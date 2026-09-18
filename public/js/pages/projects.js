@@ -133,7 +133,7 @@ export default async function projects(container, params) {
           <div class="field"><label>类型</label><select class="select" id="f-type">${options(PROJECT_TYPES, 'v', 'v', p.project_type)}</select></div>
           <div class="field"><label>目标平台</label><select class="select" id="f-plat">${options(PLATFORMS, 'v', 'v', p.target_platform)}</select></div>
           <div class="field"><label>视频比例</label><select class="select" id="f-ratio">${options(ASPECTS, 'v', 'v', p.aspect_ratio)}</select></div>
-          <div class="field"><label>画风</label><input class="input" id="f-style" value="${esc(p.art_style)}" placeholder="例：日漫厚涂、国漫写实" /></div>
+          <div class="field"><label>画风</label><input class="input" id="f-style" value="${esc(p.art_style)}" placeholder="例：日漫厚涂、国漫写实（出图/出视频时统一注入，换画风无需重做提示词）" /></div>
           <div class="field"><label>单集时长</label><input class="input" id="f-dur" value="${esc(p.episode_duration)}" placeholder="1分钟" /></div>
           <div class="field"><label>预计集数</label><input class="input" id="f-eps" type="number" min="1" value="${esc(p.planned_episodes)}" /></div>
         </div>
