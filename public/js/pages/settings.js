@@ -415,7 +415,7 @@ export default async function settings(container) {
           try {
             const data = JSON.parse(await f.text());
             const r = await api.importData(data, root.querySelector('#imp-mode').value);
-            if (r.ok) { toast.ok(`已导入 ${r.data.imported} 条数据`); close(); await refreshState(); }
+            if (r.ok) { toast.ok(`已导入 ${r.data.imported} 条数据${r.data.skipped ? `（${r.data.skipped} 条非法行已跳过）` : ''}`); close(); await load(); await refreshState(); }
             else toast.err(r.error);
           } catch (e) { toast.err(`文件解析失败：${e.message}`); }
         };
