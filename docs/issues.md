@@ -226,7 +226,7 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 - **R1 ✅ 已修（见 9.2）｜脚本页「导入分镜表」点取消仍按第 1 集导入；ESC/点遮罩后 Promise 永不 resolve，流程静默挂起**（`scripts.js:265` `Number(await modalEp()) || 1`，取消 resolve(null)→0→||1；`ui.js:58` close 无回调，`scripts.js:292-306` 仅两个页脚钮 resolve）。已核实。
 - **R2 ✅ 批量生视频对本地 URL 镜头假承诺"改用文生视频"，实际仍按图生视频提交本地图必败**（`storyboards.js:330-337` items 含 `image:'/assets/…'` 且 mode 按有图判定；`:345-350` publicOk 只进 toast 文案不进逻辑）。对照单发入口 `images.js:245-247` 有剔除。已核实。
 - **R3 ✅ 分镜页单镜头「生成视频」永远文生视频，即便该镜头已关联分镜图**（`storyboards.js:378` mode 写死 'text_to_video'，与批量路径 :335 分叉）。已核实。
-- **R4 🐛 镜头时长 `duration_seconds` 对视频零影响：批量/单发全部固定 num_frames:121/frame_rate:24（≈5s）**（`storyboards.js:339-341,381-383`）。2.5 路径本可折算 seconds。已核实。
+- **R4 ✅ 镜头时长 `duration_seconds` 对视频零影响：批量/单发全部固定 num_frames:121/frame_rate:24（≈5s）**（`storyboards.js:339-341,381-383`）。2.5 路径本可折算 seconds。已核实。
 - **R5 ✅ 素材库点预览/播放钮叠出两层弹窗、需按两次 Esc**（`assets.js:169-182/211-227` `[data-zoom],[data-id]` 同时命中钮与父卡片，钮上无 stopPropagation；对照 `images.js:216-218` 正确写法）。已核实。
 - **R6 ✅ 批量/保存/复制类入口未接 setBusy，双击=重复提交烧配额**（`storyboards.js:309-352` 批量图/视频、`projects.js:84-87/150-166` 复制与保存、`scripts.js:208-220`、`settings.js:259-389` 各保存钮；fav 链路吞 Promise 失败静默：`tasks.js:206-215`、`assets.js:147-152/186-191`）。抽查属实。
 - **R7 ✅ 已修（见 9.2）｜镜头→视频关联永不回写：`linked_video_id` 无写方、`video_ready/done` 为僵尸状态**（grep 全库仅 `routes.js:306/325` 白名单透传；`poller.js` completed 只 emit 资产）。分镜表看不出哪镜已出片。已核实。
@@ -250,8 +250,8 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 - **E4 ✅ 脚本页切项目/切页签不清 result、不重载已保存列表 → 旧 tab 结果以新 tab 类型存进新项目（张冠李戴）；指向已删项目的 params.project 无拦截**（`scripts.js:22,63-67,208-217,316`）。UI 批处理：切项目/切页签 clearResult；结果盖 {projectId,tab} 上下文戳，跨语境保存弹确认；死链参数回落现有项目并 toast 言明。
 - **E5 ✅ 任务页每条 SSE 全表重绘：播放中的 video 被打断、滚动/焦点丢失**（`tasks.js:74-78,111`）；refresh 钮无早退可连点（`tasks.js:216-223`）、文本/图片删除无 confirm（`tasks.js:295-298`）。 UI 批处理：任务页 SSE 改 scheduleRender——有视频在播挂起重绘、播完 800ms 补、60s 兜底。
 - **E6 ✅ 清空/导入后设置页内部 templates/settings 变量陈旧：显示已删模板、编辑得 404、replace 后表单旧值**（`settings.js:353-355,412-424` 成功分支缺 `await load()`）。
-- **E7 🐛 批量任务切页失联、无找回、无取消钮（服务端 `GET /api/batch`、`:id/cancel` 完好，前端 api.batch/cancelBatch 零调用）**（`api.js:94-95`；`storyboards.js:468` 退订即失忆 → 回来再点=重复提交）。
-- **E8 🐛 数值校验缺位：预计集数/镜号/时长可负入库（min 属性对 JS 取值无效）、fps=999 直透远端、seed 非法串静默变 0、轮询间隔输 0 显示 0 实际钳 2s（显示值≠生效值）**（`projects.js:136,159`、`storyboards.js:416-446`、`videos.js:123-127`、`settings.js:154-160`、`poller.js:47`）。
+- **E7 ✅ 批量任务切页失联、无找回、无取消钮（服务端 `GET /api/batch`、`:id/cancel` 完好，前端 api.batch/cancelBatch 零调用）**（`api.js:94-95`；`storyboards.js:468` 退订即失忆 → 回来再点=重复提交）。
+- **E8 ✅ 数值校验缺位：预计集数/镜号/时长可负入库（min 属性对 JS 取值无效）、fps=999 直透远端、seed 非法串静默变 0、轮询间隔输 0 显示 0 实际钳 2s（显示值≠生效值）**（`projects.js:136,159`、`storyboards.js:416-446`、`videos.js:123-127`、`settings.js:154-160`、`poller.js:47`）。
 - **E9 ✅ 本地服务未启动时首屏不报错反而引导"去设置页填 Key"**（`app.js:161-166` health 失败无提示、:171-175 仍弹 Key 警告）。
 - 📌 F17 大列表无分页/虚拟化（千级素材才痛，先记）；F18 窄屏双列溢出（桌面定位产品）；F19 a11y 三件套（toast aria-live 与 modal focus 归还随 R6 顺手做）；F20① setBusy 固定 title 用于下载钮误导、② `.input-sm` 悬空类（videos.js:240，CSS 0 引用已核实）、③ assets params.tab 无白名单、⑤ modelChoices 对已标注 kind 的模型仍按名正则过滤（潜在"模型消失"黑洞，待真实目录验证后修）。
 
@@ -297,7 +297,7 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 - **T6 ✅ apitest 不验证被测服务身份**（本会话复核 waitHealth 只看 `r.ok`，`apitest.mjs:120-129`）：随机端口撞车时破坏性用例（级联删/replace）打在陌生 Agnes 实例上。校验 `health.data_home === HOME` + `listen(0)` 预探。
 - T7 ✅ apitest 无 try/finally：中途异常泄漏服务进程与数据目录（`apitest.mjs:698-701`）。
 - T8 ✅ build-exe 的 VERSION 是死代码（本会话复核：`build-exe.mjs:32` 读后不用；`server.js:26` 双源硬编码）：发版注入是假动作。SEA stamp 仅比对版本号（`server.js:60-63`，本会话复核）→ 忘 bump 时新 exe 永远跑旧 lib/public——与 P3 同根，**stamp 应改内容哈希**。
-- T9 🐛 browser-test：`ok(..., true)` 空断言（`browser-test.mjs:186` 本会话复核）；boot 期错误漏检且从未订阅 consoleAPICalled；**运行残留 build/ui-* 永不删除**（实测 4 目录）。
+- T9 ✅ browser-test：`ok(..., true)` 空断言（`browser-test.mjs:186` 本会话复核）；boot 期错误漏检且从未订阅 consoleAPICalled；**运行残留 build/ui-* 永不删除**（实测 4 目录）。已修（提交 96feabf）：端口实测扫描/30s 超时/finally 自清；并新增九例真机交互回归（29→38）。空断言 `ok(...,true)` 一处仍留（其值由前一行 fetch 保证，属注释级改进）。
 - 📌 T10 无 Chrome 时静默计"通过"（`browser-test.mjs:129-131`）：加 SKIPPED 标记 + `AGNES_TEST_STRICT` 非零档。
 - 📌 T11 `.gitignore`/入库策略：按 AGENTS.md 口径提交图谱 5 文件 + 忽略 `.understand-anything/.trash-*/` 与 `node_modules/`（待用户确认是否代为 commit）。
 - 📌 T12-T16（低）：browser-test 探测面窄/端口猜测；run-all 无子进程 timeout + 建议互异 PORT 传递；uitest 色值字符串断言脆弱、路由覆盖为 includes 启发式；selftest 两份 fakePoller 形状漂移；package.json 无 lint/CI（无 .github/，713 断言靠人肉）。
