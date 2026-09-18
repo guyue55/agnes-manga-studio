@@ -7,7 +7,7 @@ import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, twoClick, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams } from '../app.js';
 
@@ -172,11 +172,10 @@ export default async function storyboards(container, params) {
     bind('edit', (id) => editShot(rows.find((x) => x.id === id)));
     bind('img', (id, b) => genImage(rows.find((x) => x.id === id), b));
     bind('vid', (id, b) => genVideo(rows.find((x) => x.id === id), b));
-    bind('del', async (id) => {
-      if (!(await confirm({ text: '删除这个镜头？', danger: true, okText: '删除' }))) return;
+    bind('del', (id, b) => twoClick(b, async () => { // 3.4：单镜头删除改就地两段确认
       const r = await api.deleteStoryboard(id);
       if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
-    });
+    }));
     bind('up', (id) => move(id, -1));
     bind('down', (id) => move(id, 1));
     el.querySelectorAll('[data-copy-prompt]').forEach((b) => {

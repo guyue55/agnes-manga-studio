@@ -4,7 +4,7 @@
  */
 import { icon, esc, copyText, relTime, IMAGE_USAGES, statusBadge } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, setBusy, errBox } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, setBusy, errBox, twoClick } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate, onEvent, syncViewParams } from '../app.js';
 
@@ -136,13 +136,11 @@ export default async function assets(container, params) {
           </div>
           <pre class="json-out" style="max-height:150px;margin-top:10px">${esc(String(s.content).slice(0, 500))}${String(s.content).length > 500 ? '\n…' : ''}</pre>
         </div>`).join('');
-      el.querySelectorAll('[data-dels]').forEach((b) => {
-        b.onclick = async (e) => {
-          e.stopPropagation();
-          if (!(await confirm({ text: '删除这条剧本？', danger: true, okText: '删除' }))) return;
+      el.querySelectorAll('[data-dels]').forEach((b) => { // 3.4：两段式就地确认
+        twoClick(b, async () => {
           const r = await api.deleteScript(b.getAttribute('data-dels'));
           if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
-        };
+        });
       });
       el.querySelectorAll('[data-sid]').forEach((c) => {
         c.onclick = () => {

@@ -90,13 +90,16 @@ async function render() {
   window.scrollTo({ top: 0 });
 }
 
+let sbCollapsed = localStorage.getItem('agnes.sidebar.collapsed') === '1'; // B3.2
+document.body.classList.toggle('sb-collapsed', sbCollapsed);
+
 function renderSidebar() {
   const el = document.getElementById('sidebar');
   const running = state.stats.running_videos || 0;
   el.innerHTML = `
     <div class="brand">
       <div class="brand-mark">${icon('sparkles', 19)}</div>
-      <div>
+      <div class="brand-txt">
         <div class="brand-name">Agnes 漫剧工坊</div>
         <div class="brand-sub">本地版 · 数据不出本机</div>
       </div>
@@ -108,6 +111,9 @@ function renderSidebar() {
           <span class="lbl">${esc(n.label)}</span>
           ${n.id === 'tasks' && running ? `<span class="badge">${running}</span>` : ''}
         </button>`).join('')}
+      <button class="nav-item sb-toggle" id="sb-toggle" title="${sbCollapsed ? '展开侧栏' : '折叠侧栏'}">
+        ${icon(sbCollapsed ? 'arrowRight' : 'arrowLeft', 16)}<span class="lbl">折叠侧栏</span>
+      </button>
     </nav>
     <div class="sidebar-footer">
       <div class="ver">v${esc(state.version || '1.0.0')}</div>
@@ -117,6 +123,13 @@ function renderSidebar() {
   el.querySelectorAll('[data-nav]').forEach((b) => {
     b.onclick = () => navigate(b.getAttribute('data-nav'));
   });
+  const tgl = el.querySelector('#sb-toggle');
+  if (tgl) tgl.onclick = () => {
+    sbCollapsed = !sbCollapsed;
+    document.body.classList.toggle('sb-collapsed', sbCollapsed);
+    localStorage.setItem('agnes.sidebar.collapsed', sbCollapsed ? '1' : '0');
+    renderSidebar();
+  };
 }
 
 // ── 全局数据 ────────────────────────────────────────────────

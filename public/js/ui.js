@@ -133,6 +133,31 @@ export function modal(o) {
   return { close: requestClose, forceClose: close, root: mask };
 }
 
+/** 3.4：两段式就地确认——首点换文案+红底+title 三通道提示，ms 内再点才执行，超时自动回弹。
+ *  用于高频单目标删除（镜头/剧本/模板），替代阻塞式 confirm，少一层打断。破坏面大的操作仍走 confirm。 */
+export function twoClick(btn, run, opts = {}) {
+  const { label = '确认', ms = 3000 } = opts;
+  let armed = false, t = null;
+  const orig = btn.innerHTML, origTitle = btn.getAttribute('title') || '';
+  const disarm = () => {
+    armed = false; clearTimeout(t);
+    if (!btn.isConnected) return;
+    btn.innerHTML = orig; btn.title = origTitle;
+    btn.classList.remove('btn-danger', 'armed'); btn.style.width = '';
+  };
+  btn.onclick = (e) => {
+    e.stopPropagation(); // 就地钮常嵌在可点卡片/行里，冒泡会误触父级打开预览
+    if (armed) { disarm(); return run(); }
+    armed = true;
+    btn.classList.add('btn-danger', 'armed');
+    btn.innerHTML = label;
+    btn.title = `${Math.round(ms / 1000)} 秒内再点一次生效，超时自动取消`;
+    btn.style.width = 'auto';
+    t = setTimeout(disarm, ms);
+  };
+  return disarm;
+}
+
 /**
  * 确认框。
  * 不带 checkbox 时返回 Promise<boolean>；

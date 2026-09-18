@@ -188,6 +188,34 @@ export const LOCAL_STATUS = {
   sync_failed: '同步异常',
   local_error: '本地异常',
 };
+// B3.6：提示词预设速查（竞品 113 条库的精简子集）。中文标签=记忆负担零，英文短语=模型实际吃的话。
+// 点击追加到提示词尾部，已含同短语则去重。后续可扩至分镜编辑弹窗内。
+export const PRESET_TERMS = [
+  { cat: '运镜', items: [
+    { label: '推镜', en: 'slow push in' },
+    { label: '拉镜', en: 'pull out reveal' },
+    { label: '横移', en: 'lateral tracking shot' },
+    { label: '环绕', en: 'orbiting camera' },
+    { label: '手持', en: 'handheld shakiness' },
+    { label: '升降', en: 'crane up shot' },
+  ] },
+  { cat: '光线', items: [
+    { label: '逆光', en: 'strong backlight rim light' },
+    { label: '黄金时刻', en: 'golden hour warm light' },
+    { label: '霓虹', en: 'neon glow, cyan magenta' },
+    { label: '体积光', en: 'volumetric god rays' },
+    { label: '烛光', en: 'candlelight, low key' },
+    { label: '冷月色', en: 'moonlit cold blue tones' },
+  ] },
+  { cat: '质感', items: [
+    { label: '电影感', en: 'cinematic composition' },
+    { label: '胶片颗粒', en: 'film grain, 35mm texture' },
+    { label: '高对比', en: 'high contrast dramatic' },
+    { label: '柔焦', en: 'soft focus dreamy' },
+    { label: '大特写细节', en: 'intricate detail, sharp focus' },
+    { label: '留白构图', en: 'negative space composition' },
+  ] },
+];
 export const STORYBOARD_STATUS = {
   pending: { label: '待处理', cls: 'gray' },
   image_ready: { label: '有图片', cls: 'blue' },

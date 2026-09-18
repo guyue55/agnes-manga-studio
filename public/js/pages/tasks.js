@@ -141,7 +141,7 @@ export default async function tasks(container, params = {}) {
       <div class="task-row" style="margin-bottom:12px" data-vid="${esc(v.id)}">
         <div class="side">
           ${statusBadge(v.status)}
-          ${running ? `<span class="badge gray" style="font-size:10px">${icon('clock', 9)}轮询中</span>` : ''}
+          ${running ? `<span class="badge gray" style="font-size:10px">${icon('clock', 9)}${v.poll_attempts ? `第 ${esc(v.poll_attempts)} 次查询 · 每 ${esc(v.poll_interval_s || 8)}s` : '轮询中'}</span>` : ''}
           <span class="badge gray" style="font-size:10px">视频</span>
           ${v.remote_status ? `<span class="badge blue" style="font-size:10px">远端：${esc(REMOTE_STATUS[v.remote_status] || v.remote_status)}</span>` : ''}
           ${v.local_status ? `<span class="badge gray" style="font-size:10px">本地：${esc(LOCAL_STATUS[v.local_status] || v.local_status)}</span>` : ''}

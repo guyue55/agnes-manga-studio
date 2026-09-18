@@ -8,6 +8,7 @@
    ========================================================================== */
 
 :root {
+  color-scheme: dark; /* B3.1：原生 option 弹层与滚动条转暗色渲染，质感最大杠杆且零 JS */
   /* 背景 */
   --bg: #08090D;
   --bg-2: #0D0F14;
@@ -196,7 +197,7 @@ html, body {
 
 /* ── 主区域 ─────────────────────────────────────────────── */
 .main {
-  margin-left: var(--sidebar-w);
+  margin-left: var(--sidebar-w); /* B3.2 折叠时随 --sidebar-w 平滑让位 */
   flex: 1;
   min-width: 0;
   display: flex;
@@ -364,6 +365,13 @@ select.select {
   cursor: pointer;
 }
 select.select option { background: #12141C; color: var(--text); }
+select.select:hover {
+  border-color: var(--gold-border-hover);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23D6B56D' stroke-width='2.4' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+select.select:focus {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23D6B56D' stroke-width='2.4' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
 .select-sm { height: 34px; font-size: 12.5px; border-radius: 10px; }
 .select-xs { height: 29px; font-size: 12px; border-radius: 8px; padding: 0 28px 0 9px; }
 
@@ -964,3 +972,22 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .grid > *:nth-child(n) { animation-delay: 0ms !important; }
 }
+
+/* ── B3.2 侧栏折叠（260↔68 图标轨，状态持久化于 localStorage）──── */
+.sidebar, .main { transition: width 180ms ease, margin-left 180ms ease; }
+body.sb-collapsed { --sidebar-w: 68px; }
+body.sb-collapsed .sidebar { padding-left: 10px; padding-right: 10px; }
+body.sb-collapsed .brand { justify-content: center; padding-left: 0; padding-right: 0; }
+body.sb-collapsed .brand-txt,
+body.sb-collapsed .nav-item .lbl,
+body.sb-collapsed .sidebar-footer { display: none; }
+body.sb-collapsed .nav-item { justify-content: center; padding: 0 8px; position: relative; }
+body.sb-collapsed .nav-item .badge { position: absolute; top: 5px; right: 6px; transform: scale(0.8); }
+body.sb-collapsed .sb-toggle .lbl { display: none; }
+@media (prefers-reduced-motion: reduce) { .sidebar, .main { transition: none; } }
+
+/* B3.4：两段式确认按钮的临时展开态 */
+.icon-btn.armed { padding: 0 9px; font-size: 11px; letter-spacing: .02em; }
+
+/* B3.6：预设 chips 行与已用态 */
+.preset-chips .chip { font-size: 11px; padding: 2px 9px; border-radius: 8px; }

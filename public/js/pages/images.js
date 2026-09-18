@@ -2,7 +2,7 @@
  * images.js — 图片生成
  * 文生图 / 图生图。生成结果直接落盘到本地素材库（不再依赖公网图床）。
  */
-import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect } from '../consts.js';
+import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect, PRESET_TERMS } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
@@ -42,6 +42,7 @@ export default async function images(container, params) {
             <div class="field">
               <label>图片提示词</label>
               <textarea class="textarea mono" id="t2i-prompt" rows="6" placeholder="描述画面，支持中英文&#10;例：cinematic anime style, a young woman in red dress, golden hour, detailed background"></textarea>
+              <div id="t2i-presets" aria-label="常用提示词预设"></div>
             </div>
             <div class="grid g2" style="gap:0 12px">
               <div class="field"><label>尺寸</label><select class="select" id="t2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
@@ -83,6 +84,25 @@ export default async function images(container, params) {
       </div>
     </div>`;
 
+  // B3.6：预设 chips——点一下补一个专业短语，写作门槛直降
+  (function mountPresets() {
+    const mount = container.querySelector('#t2i-presets');
+    if (!mount) return;
+    mount.innerHTML = PRESET_TERMS.map((g) => `
+      <div class="row wrap" style="gap:5px;margin-top:5px">
+        <span style="font-size:10.5px;color:var(--text-4);width:28px;flex:none">${esc(g.cat)}</span>
+        ${g.items.map((i) => `<button type="button" class="chip" data-en="${esc(i.en)}" title="追加：${esc(i.en)}">${esc(i.label)}</button>`).join('')}
+      </div>`).join('');
+    mount.querySelectorAll('[data-en]').forEach((b) => {
+      b.onclick = () => {
+        const ta = container.querySelector('#t2i-prompt');
+        const en = b.getAttribute('data-en');
+        if (ta.value.includes(en)) { toast('提示词里已经有这个了', 'info'); return; }
+        ta.value = ta.value.replace(/\s+$/, '') + (ta.value.trim() ? ', ' : '') + en;
+        ta.focus();
+      };
+    });
+  })();
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => { projectId = picker.value; loadStoryboards(); load(); };
   container.querySelector('#reload').onclick = () => { loadStoryboards(); load(); };

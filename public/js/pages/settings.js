@@ -4,7 +4,7 @@
  */
 import { icon, esc, TEMPLATE_TYPES, modelChoices, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, spinner, confirm, options, setBusy, errBox } from '../ui.js';
+import { modal, toast, spinner, confirm, options, setBusy, errBox, twoClick } from '../ui.js';
 import { head } from './helpers.js';
 import { state, refreshState, syncViewParams } from '../app.js';
 
@@ -346,13 +346,11 @@ export default async function settings(container, params = {}) {
       p.querySelectorAll('[data-edit]').forEach((b) => {
         b.onclick = () => templateForm(templates.find((t) => t.id === b.getAttribute('data-edit')));
       });
-      p.querySelectorAll('[data-del]').forEach((b) => {
-        b.onclick = async () => {
-          const id = b.getAttribute('data-del');
-          if (!(await confirm({ text: '删除这个模板？', danger: true, okText: '删除' }))) return;
-          const r = await api.deleteTemplate(id);
+      p.querySelectorAll('[data-del]').forEach((b) => { // 3.4：模板删除两段式
+        twoClick(b, async () => {
+          const r = await api.deleteTemplate(b.getAttribute('data-del'));
           if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
-        };
+        });
       });
     } else if (section === 'data') {
       p.querySelector('#import-btn').onclick = importData;
