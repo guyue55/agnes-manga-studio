@@ -382,6 +382,58 @@ try {
       } finally { mock.close(); }
     }
 
+    group('批量队列 E2E（断页找回 + 取消）');
+    {
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      let imgHits = 0;
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        if (u.pathname === '/pixel.png') { res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': PNG.length }); return res.end(PNG); }
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          if (u.pathname === '/v1/images/generations') { imgHits++; setTimeout(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${bPort}/pixel.png` }] })); }, 300); return; }
+          res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{}');
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const bPort = mock.address().port;
+      try {
+        const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${bPort}/v1`, agnes_api_key: 'batch-mock-key', image_poll_interval: '2' }) });
+        const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+        for (let i = 0; i < 16; i++) await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: pid, episode_number: 42, shot_number: 4201 + i, scene_description: `批量 E2E 第 ${i} 镜`, image_prompt: `batch e2e prompt ${i}`, duration_seconds: 4 }) });
+        await cdp.eval(`localStorage.removeItem('agnes.batch.last'); location.hash = '#/storyboards?project=${pid}&episode=42'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#table tbody tr').length >= 16`), '批量镜头行齐');
+        await cdp.eval(`const sa=document.querySelector('#sel-all');sa.checked=true;sa.dispatchEvent(new Event('change'));return true;`);
+        await cdp.eval(`document.querySelector('#batch-img').click();return true;`);
+        await sleep(400);
+        const jobId = await cdp.eval(`return localStorage.getItem('agnes.batch.last');`);
+        ok('提交后 BKEY 即写（找回凭证）', !!jobId && jobId !== 'null', String(jobId));
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+        await sleep(250);
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=42'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelector('#batch-bar')?.innerText.includes('批量生成图片')`), '断页找回进度条', 8000);
+        ok('E7 断页找回：换页回来进度条续上', true);
+        await waitFor(async () => { const j = await J(`/api/batch/${jobId}`); return j && j.status && j.status !== 'running'; }, '首批跑完', 25000);
+        const j1 = await J(`/api/batch/${jobId}`);
+        ok('16/16 全部成功', j1.done === 16 && j1.ok === 16, JSON.stringify({ d: j1.done, o: j1.ok, f: j1.fail }));
+        const rows42 = (await J(`/api/storyboards?project_id=${pid}&episode=42`)).filter((r) => r.episode_number === 42);
+        ok('批量出图逐行回写关联（16 镜 image_ready）', rows42.length === 16 && rows42.every((r) => r.linked_image_id && r.status === 'image_ready'));
+        ok('BKEY 完结即清', (await cdp.eval(`return localStorage.getItem('agnes.batch.last');`)) === null);
+        await cdp.eval(`document.querySelector('#batch-img').click();return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('[data-cancel-batch]')`), '取消钮出现', 8000);
+        const jobId2 = await cdp.eval(`return localStorage.getItem('agnes.batch.last');`);
+        await cdp.eval(`document.querySelector('[data-cancel-batch]').click();return true;`);
+        await waitFor(() => cdp.eval(`document.querySelector('#batch-bar')?.innerText.includes('已取消')`), '条上见已取消', 10000);
+        const j2a = await J(`/api/batch/${jobId2}`);
+        const hitsA = imgHits;
+        await sleep(800);
+        const j2b = await J(`/api/batch/${jobId2}`);
+        ok('取消生效：job 停止且不再打新请求', j2b.status === 'cancelled' && j2b.done < 16 && imgHits === hitsA && j2b.done === j2a.done, JSON.stringify({ s: j2b.status, d: j2b.done, h: imgHits - hitsA }));
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '' }) });
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`); // 离开现场防 BKEY 残留干扰收尾
+      } finally { mock.close(); }
+    }
+
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
