@@ -38,7 +38,7 @@ export default async function videos(container, params) {
   container.innerHTML = `
     ${head({
       title: '视频生成',
-      desc: 'Agnes Video 2.0 · 异步任务，提交后由本地服务后台轮询，关掉页面也不丢',
+      desc: 'Agnes Video · 异步任务，提交后由本地服务后台轮询，关掉页面也不丢',
       actions: `
         ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
         <select class="select select-sm" id="model" style="width:180px"></select>
@@ -78,7 +78,19 @@ export default async function videos(container, params) {
   container.querySelector('#go-tasks').onclick = () => navigate('tasks');
 
   const mv = modelChoices(state.models, 'video', [state.settings.default_video_model || 'agnes-video-v2.0']);
-  container.querySelector('#model').innerHTML = options(mv, 'value', 'label', mv[0]?.value);
+  const modelSel = container.querySelector('#model');
+  modelSel.innerHTML = options(mv, 'value', 'label', mv[0]?.value);
+
+  // 2.5 系是新协议：无 frame_rate/num_frames/负向提示词，参数由后端自动折算，这里给出可见反馈
+  const note25 = document.createElement('div');
+  note25.className = 'note gold';
+  note25.style.cssText = 'font-size:11.5px;margin-bottom:12px;display:none';
+  note25.innerHTML = `${icon('info', 12)} <b>Agnes Video 2.5</b> 新协议：帧数按帧率折算为时长（4–12s）、分辨率映射为档位+画幅、负向提示词并入正向；图生视频走首帧、多图走参考模式。`;
+  const modeWrap = container.querySelector('#mode');
+  modeWrap.parentNode.insertBefore(note25, modeWrap.nextSibling);
+  const syncModel = () => { note25.style.display = /^agnes-video-2\.5/i.test(modelSel.value) ? '' : 'none'; };
+  modelSel.onchange = syncModel;
+  syncModel();
 
   container.querySelectorAll('#mode [data-mode]').forEach((b) => {
     b.onclick = () => {
