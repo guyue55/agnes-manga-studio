@@ -127,17 +127,17 @@ export default async function projects(container, params) {
     modal({
       title: isEdit ? '编辑项目' : '新建项目',
       body: `
-        <div class="field"><label>项目名称 *</label><input class="input" id="f-name" value="${esc(p.name)}" placeholder="例：都市逆袭之神级选择" /></div>
-        <div class="field"><label>简介</label><textarea class="textarea" id="f-desc" rows="3" placeholder="一句话说清这部漫剧讲什么">${esc(p.description)}</textarea></div>
+        <div class="field"><label for="f-name">项目名称 *</label><input class="input" id="f-name" value="${esc(p.name)}" placeholder="例：都市逆袭之神级选择" /></div>
+        <div class="field"><label for="f-desc">简介</label><textarea class="textarea" id="f-desc" rows="3" placeholder="一句话说清这部漫剧讲什么">${esc(p.description)}</textarea></div>
         <div class="grid g2" style="gap:0 14px">
-          <div class="field"><label>类型</label><select class="select" id="f-type">${options(PROJECT_TYPES, 'v', 'v', p.project_type)}</select></div>
-          <div class="field"><label>目标平台</label><select class="select" id="f-plat">${options(PLATFORMS, 'v', 'v', p.target_platform)}</select></div>
-          <div class="field"><label>视频比例</label><select class="select" id="f-ratio">${options(ASPECTS, 'v', 'v', p.aspect_ratio)}</select></div>
-          <div class="field"><label>画风</label><input class="input" id="f-style" value="${esc(p.art_style)}" placeholder="例：日漫厚涂、国漫写实（出图/出视频时统一注入，换画风无需重做提示词）" /></div>
-          <div class="field"><label>单集时长</label><input class="input" id="f-dur" value="${esc(p.episode_duration)}" placeholder="1分钟" /></div>
-          <div class="field"><label>预计集数</label><input class="input" id="f-eps" type="number" min="1" value="${esc(p.planned_episodes)}" /></div>
+          <div class="field"><label for="f-type">类型</label><select class="select" id="f-type">${options(PROJECT_TYPES, 'v', 'v', p.project_type)}</select></div>
+          <div class="field"><label for="f-plat">目标平台</label><select class="select" id="f-plat">${options(PLATFORMS, 'v', 'v', p.target_platform)}</select></div>
+          <div class="field"><label for="f-ratio">视频比例</label><select class="select" id="f-ratio">${options(ASPECTS, 'v', 'v', p.aspect_ratio)}</select></div>
+          <div class="field"><label for="f-style">画风</label><input class="input" id="f-style" value="${esc(p.art_style)}" placeholder="例：日漫厚涂、国漫写实（出图/出视频时统一注入，换画风无需重做提示词）" /></div>
+          <div class="field"><label for="f-dur">单集时长</label><input class="input" id="f-dur" value="${esc(p.episode_duration)}" placeholder="1分钟" /></div>
+          <div class="field"><label for="f-eps">预计集数</label><input class="input" id="f-eps" type="number" min="1" value="${esc(p.planned_episodes)}" /></div>
         </div>
-        <div class="field"><label>状态</label>
+        <div class="field"><label for="f-status">状态</label>
           <select class="select" id="f-status">
             <option value="active"${p.status === 'active' ? ' selected' : ''}>进行中</option>
             <option value="archived"${p.status === 'archived' ? ' selected' : ''}>已归档</option>

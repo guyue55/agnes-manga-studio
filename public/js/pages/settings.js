@@ -92,12 +92,12 @@ export default async function settings(container, params = {}) {
       <div class="card">
         <div class="card-title">${icon('key', 15)}Agnes API 配置</div>
         <div class="field">
-          <label>API Base URL</label>
+          <label for="s-base">API Base URL</label>
           <input class="input mono" id="s-base" value="${esc(settings.agnes_api_base_url || '')}" placeholder="https://apihub.agnes-ai.com/v1" />
           <div class="hint">文本走 /v1/chat/completions，图片走 /v1/images/generations，视频创建走 /v1/videos，查询走 /agnesapi。</div>
         </div>
         <div class="field">
-          <label>Agnes API Key</label>
+          <label for="s-key">Agnes API Key</label>
           <div class="row">
             <input class="input mono" id="s-key" type="${keyVisible ? 'text' : 'password'}"
               value="${esc(keyVisible ? draftKey : (settings.agnes_api_key_masked || ''))}"
@@ -140,18 +140,18 @@ export default async function settings(container, params = {}) {
           ${cache.error ? icon('alert', 13) + esc(cache.error) : icon('info', 13) + '模型目录会缓存到本机，Agnes 更新模型后点上面的按钮即可刷新。'}
           <span style="margin-left:8px;color:var(--text-3)">${esc(cacheText)} · ${esc(cache.source || 'fallback')} · ${Array.isArray(cache.models) ? cache.models.length : 0} 个模型</span>
         </div>
-        <div class="field"><label>默认文本模型</label>
+        <div class="field"><label for="m-text">默认文本模型</label>
           <select class="select" id="m-text">${options(textModels, 'value', 'label', settings.default_text_model)}</select></div>
-        <div class="field"><label>默认图像模型</label>
+        <div class="field"><label for="m-image">默认图像模型</label>
           <select class="select" id="m-image">${options(imageModels, 'value', 'label', settings.default_image_model)}</select></div>
-        <div class="field"><label>默认视频模型</label>
+        <div class="field"><label for="m-video">默认视频模型</label>
           <select class="select" id="m-video">${options(videoModels, 'value', 'label', settings.default_video_model)}</select></div>
         <div class="hint" style="margin-bottom:14px">模型列表来自 Agnes 的 OpenAI 兼容 <span style="font-family:var(--mono)">GET /v1/models</span>。即使新模型暂时无法识别类型，也会保留为可选项；旧模型会作为回退项保留。</div>
         <div class="grid g2" style="gap:0 14px">
-          <div class="field"><label>自动刷新模型目录</label>
+          <div class="field"><label for="m-auto">自动刷新模型目录</label>
             <div class="row"><button type="button" role="switch" class="switch ${settings.auto_refresh_models === '1' ? 'on' : ''}" id="m-auto" aria-checked="${settings.auto_refresh_models === '1'}"></button><span style="font-size:12px;color:var(--text-3)">程序启动时检查缓存是否过期</span></div>
           </div>
-          <div class="field"><label>模型缓存有效期（小时）</label><input class="input" id="m-ttl" type="number" min="1" value="${esc(settings.model_cache_ttl_hours || 24)}" /></div>
+          <div class="field"><label for="m-ttl">模型缓存有效期（小时）</label><input class="input" id="m-ttl" type="number" min="1" value="${esc(settings.model_cache_ttl_hours || 24)}" /></div>
         </div>
         <button class="btn btn-primary" id="save-model">${icon('save', 14)}保存模型设置</button>
       </div>`;
@@ -163,17 +163,17 @@ export default async function settings(container, params = {}) {
       <div class="card">
         <div class="card-title">${icon('layers', 15)}任务与轮询</div>
         <div class="grid g2" style="gap:0 14px">
-          <div class="field"><label>视频轮询间隔（秒）</label>
+          <div class="field"><label for="t-interval">视频轮询间隔（秒）</label>
             <input class="input" id="t-interval" type="number" min="2" value="${esc(settings.video_poll_interval || 8)}" /></div>
-          <div class="field"><label>最大轮询次数</label>
+          <div class="field"><label for="t-max">最大轮询次数</label>
             <input class="input" id="t-max" type="number" min="1" value="${esc(settings.video_max_polls || 60)}" /></div>
-          <div class="field"><label>批量默认并发数</label>
+          <div class="field"><label for="t-conc">批量默认并发数</label>
             <input class="input" id="t-conc" type="number" min="1" max="8" value="${esc(settings.default_concurrent_tasks || 3)}" /></div>
-          <div class="field"><label>提交超时（毫秒）</label>
+          <div class="field"><label for="t-timeout">提交超时（毫秒）</label>
             <input class="input" id="t-timeout" type="number" min="10000" step="5000" value="${esc(settings.request_timeout_ms || 150000)}" /></div>
         </div>
         <div class="field" style="margin-top:6px">
-          <label>视频完成后自动保存到本机</label>
+          <label for="t-auto">视频完成后自动保存到本机</label>
           <div class="row">
             <button type="button" role="switch" class="switch ${settings.auto_download_video === '1' ? 'on' : ''}" id="t-auto" aria-checked="${settings.auto_download_video === '1'}"></button>
             <span style="font-size:12px;color:var(--text-3)">开启后生成的视频会自动下载到本地素材库，不怕远端链接过期</span>
@@ -375,13 +375,13 @@ export default async function settings(container, params = {}) {
       wide: true,
       body: `
         <div class="grid g2" style="gap:0 14px">
-          <div class="field"><label>名称</label><input class="input" id="tf-name" value="${esc(x.name)}" /></div>
-          <div class="field"><label>类型</label><select class="select" id="tf-type">${options(TEMPLATE_TYPES, 'value', 'label', x.template_type)}</select></div>
+          <div class="field"><label for="tf-name">名称</label><input class="input" id="tf-name" value="${esc(x.name)}" /></div>
+          <div class="field"><label for="tf-type">类型</label><select class="select" id="tf-type">${options(TEMPLATE_TYPES, 'value', 'label', x.template_type)}</select></div>
         </div>
-        <div class="field"><label>System 提示词</label><textarea class="textarea" id="tf-sys" rows="2">${esc(x.system)}</textarea></div>
-        <div class="field"><label>提示词正文（可用 {{变量}}）</label><textarea class="textarea mono" id="tf-content" rows="8">${esc(x.content)}</textarea></div>
-        <div class="field"><label>负面提示词</label><textarea class="textarea mono" id="tf-neg" rows="2">${esc(x.negative_prompt)}</textarea></div>
-        <div class="field"><label>备注</label><input class="input" id="tf-notes" value="${esc(x.notes)}" /></div>`,
+        <div class="field"><label for="tf-sys">System 提示词</label><textarea class="textarea" id="tf-sys" rows="2">${esc(x.system)}</textarea></div>
+        <div class="field"><label for="tf-content">提示词正文（可用 {{变量}}）</label><textarea class="textarea mono" id="tf-content" rows="8">${esc(x.content)}</textarea></div>
+        <div class="field"><label for="tf-neg">负面提示词</label><textarea class="textarea mono" id="tf-neg" rows="2">${esc(x.negative_prompt)}</textarea></div>
+        <div class="field"><label for="tf-notes">备注</label><input class="input" id="tf-notes" value="${esc(x.notes)}" /></div>`,
       footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>保存</button>`,
       onMount(root, close) {
         root.querySelector('[data-no]').onclick = close;
@@ -407,11 +407,11 @@ export default async function settings(container, params = {}) {
       title: '导入备份',
       body: `
         <div class="field">
-          <label>选择备份 JSON 文件</label>
+          <label for="imp-file">选择备份 JSON 文件</label>
           <input type="file" id="imp-file" accept=".json" class="input" />
         </div>
         <div class="field">
-          <label>导入方式</label>
+          <label for="imp-mode">导入方式</label>
           <select class="select" id="imp-mode">
             <option value="merge">合并（保留现有数据，跳过重复 ID）</option>
             <option value="replace">替换（清空后导入）</option>

@@ -108,7 +108,7 @@ export default async function videos(container, params) {
       <div style="padding-top:16px;border-top:1px solid rgba(255,255,255,0.08);margin-top:16px">
         <div class="section-label">视频参数</div>
         ${opts.res !== false ? `
-          <div class="field"><label>分辨率</label>
+          <div class="field"><label for="f-res">分辨率</label>
             <select class="select" id="f-res">
               ${VIDEO_RESOLUTIONS.map((r, i) => `<option value="${i}"${i === (s.res || 0) ? ' selected' : ''}>${esc(r.label)}</option>`).join('')}
             </select>
@@ -121,11 +121,11 @@ export default async function videos(container, params) {
           <div class="hint">num_frames = <b>${DURATION_PRESETS[s.frames].frames}</b>（Agnes 要求 8n+1，最大 441）</div>
         </div>
         <div class="field">
-          <label>帧率 frame_rate</label>
+          <label for="f-fps">帧率 frame_rate</label>
           <input class="input" id="f-fps" type="number" min="1" max="60" value="${esc(s.fps)}" />
         </div>
         <div class="field">
-          <label>Seed（留空随机）</label>
+          <label for="f-seed">Seed（留空随机）</label>
           <input class="input mono" id="f-seed" value="${esc(s.seed)}" placeholder="随机" />
         </div>
       </div>`;
@@ -154,9 +154,9 @@ export default async function videos(container, params) {
     if (mode === 't2v') {
       box.innerHTML = `
         <div class="section-label">输入素材</div>
-        <div class="field"><label>视频提示词</label>
+        <div class="field"><label for="f-prompt">视频提示词</label>
           <textarea class="textarea mono" id="f-prompt" rows="6" placeholder="用英文描述画面、运动、镜头…">${esc(S.t2v.prompt)}</textarea></div>
-        <div class="field"><label>负面提示词</label>
+        <div class="field"><label for="f-neg">负面提示词</label>
           <textarea class="textarea mono" id="f-neg" rows="2">${esc(S.t2v.neg)}</textarea></div>
         ${paramsBlock('t2v')}
         <button class="btn btn-primary btn-block" id="submit">${icon('wand', 15)}创建视频任务</button>`;
@@ -166,7 +166,7 @@ export default async function videos(container, params) {
     } else if (mode === 'i2v') {
       box.innerHTML = `
         <div class="section-label">输入素材</div>
-        <div class="field"><label>参考图片（公网可访问 URL）</label>
+        <div class="field"><label for="f-image">参考图片（公网可访问 URL）</label>
           <input class="input mono" id="f-image" placeholder="https://…" value="${esc(S.i2v.image)}" />
           ${images.length ? `<select class="select select-sm" id="f-img-pick" style="margin-top:8px">
             <option value="">或从素材库选择…</option>
@@ -176,9 +176,9 @@ export default async function videos(container, params) {
           <div id="img-preview" style="margin-top:8px"></div>
         </div>
         <div class="section-label">视频描述</div>
-        <div class="field"><label>运动描述</label>
+        <div class="field"><label for="f-prompt">运动描述</label>
           <textarea class="textarea mono" id="f-prompt" rows="5">${esc(S.i2v.prompt)}</textarea></div>
-        <div class="field"><label>负面提示词</label>
+        <div class="field"><label for="f-neg">负面提示词</label>
           <textarea class="textarea mono" id="f-neg" rows="2">${esc(S.i2v.neg)}</textarea></div>
         ${paramsBlock('i2v', { res: false })}
         <button class="btn btn-primary btn-block" id="submit">${icon('image', 15)}图生视频</button>`;
@@ -199,7 +199,7 @@ export default async function videos(container, params) {
         <div id="mi-list" class="field"></div>
         ${S.multi.imgs.length < 8 ? `<button class="btn btn-sm btn-block" id="mi-add" style="margin-bottom:14px">${icon('plus', 13)}添加图片</button>` : ''}
         <div class="section-label">视频描述</div>
-        <div class="field"><label>视频提示词</label>
+        <div class="field"><label for="f-prompt">视频提示词</label>
           <textarea class="textarea mono" id="f-prompt" rows="4" placeholder="描述多图参考视频的内容…">${esc(S.multi.prompt)}</textarea></div>
         ${paramsBlock('multi', { res: false })}
         <button class="btn btn-primary btn-block" id="submit">${icon('layers', 15)}多图参考生成</button>`;
@@ -211,9 +211,9 @@ export default async function videos(container, params) {
     } else {
       box.innerHTML = `
         <div class="section-label">关键帧图片（公网 URL）</div>
-        <div class="field"><label>起始关键帧 *</label><input class="input mono" id="kf-start" value="${esc(S.kf.start)}" placeholder="https://…" /></div>
-        <div class="field"><label>中间帧（可选）</label><input class="input mono" id="kf-mid" value="${esc(S.kf.middle)}" /></div>
-        <div class="field"><label>结束关键帧 *</label><input class="input mono" id="kf-end" value="${esc(S.kf.end)}" /></div>
+        <div class="field"><label for="kf-start">起始关键帧 *</label><input class="input mono" id="kf-start" value="${esc(S.kf.start)}" placeholder="https://…" /></div>
+        <div class="field"><label for="kf-mid">中间帧（可选）</label><input class="input mono" id="kf-mid" value="${esc(S.kf.middle)}" /></div>
+        <div class="field"><label for="kf-end">结束关键帧 *</label><input class="input mono" id="kf-end" value="${esc(S.kf.end)}" /></div>
         <div class="section-label">过渡描述</div>
         <div class="field"><textarea class="textarea mono" id="f-prompt" rows="4">${esc(S.kf.prompt)}</textarea></div>
         ${paramsBlock('kf', { res: false })}
@@ -239,8 +239,8 @@ export default async function videos(container, params) {
     el.innerHTML = S.multi.imgs.map((im, i) => `
       <div class="row" style="margin-bottom:8px;align-items:flex-start">
         <div style="flex:1;min-width:0">
-          <input class="input mono input-sm" data-mi="${i}" value="${esc(im.url)}" placeholder="图片 ${i + 1} URL（公网）" style="height:36px;margin-bottom:6px" />
-          <select class="select select-xs" data-mr="${i}">${options(IMAGE_ROLES, 'v', 'v', im.role)}</select>
+          <input class="input mono input-sm" data-mi="${i}" aria-label="图片 ${i + 1} 的 URL" value="${esc(im.url)}" placeholder="图片 ${i + 1} URL（公网）" style="height:36px;margin-bottom:6px" />
+          <select class="select select-xs" data-mr="${i}" aria-label="图片 ${i + 1} 的角色">${options(IMAGE_ROLES, 'v', 'v', im.role)}</select>
         </div>
         ${S.multi.imgs.length > 2 ? `<button class="icon-btn danger" data-mdel="${i}" style="background:rgba(255,69,58,0.10);color:var(--err);margin-top:4px">${icon('trash', 13)}</button>` : ''}
       </div>`).join('');

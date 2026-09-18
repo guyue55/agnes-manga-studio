@@ -31,7 +31,7 @@ export default async function storyboards(container, params) {
 
     <div class="card" style="margin-bottom:18px">
       <div class="card-title">${icon('wand', 15)}从脚本一键生成分镜表</div>
-      <textarea class="textarea mono" id="script-in" rows="4" placeholder="粘贴单集脚本或分镜脚本内容，点「生成分镜」由 Agnes 拆成镜头表…"></textarea>
+      <textarea class="textarea mono" id="script-in" aria-label="脚本内容" rows="4" placeholder="粘贴单集脚本或分镜脚本内容，点「生成分镜」由 Agnes 拆成镜头表…"></textarea>
       <div class="row wrap" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" id="gen-sb">${icon('wand', 14)}生成第 ${episode} 集分镜</button>
         <button class="btn btn-sm" id="add-shot">${icon('plus', 14)}手动添加镜头</button>
@@ -162,7 +162,7 @@ export default async function storyboards(container, params) {
         ${rows.map((s) => {
           const st = STORYBOARD_STATUS[s.status] || STORYBOARD_STATUS.pending;
           return `<tr>
-            <td><input type="checkbox" data-sel="${esc(s.id)}" ${selected.has(s.id) ? 'checked' : ''} /></td>
+            <td><input type="checkbox" data-sel="${esc(s.id)}" aria-label="选择镜头 #${esc(s.shot_number)}" ${selected.has(s.id) ? 'checked' : ''} /></td>
             <td style="font-family:var(--mono);color:var(--text)">#${esc(s.shot_number)}</td>
             <td><span class="badge gray">${esc(s.shot_type)}</span></td>
             <td><div class="cell-ellipsis" style="max-width:260px" title="${esc(s.scene_description)}">${esc(s.scene_description || '—')}</div></td>
@@ -472,19 +472,19 @@ ${text}`,
       wide: true,
       body: `
         <div class="grid g2" style="gap:0 14px">
-          <div class="field"><label>镜头编号</label><input class="input" id="s-num" type="number" value="${esc(s.shot_number)}" /></div>
-          <div class="field"><label>景别</label><select class="select" id="s-type">${options(SHOT_TYPES, 'v', 'v', s.shot_type)}</select></div>
-          <div class="field" style="grid-column:1/-1"><label>画面描述</label><textarea class="textarea" id="s-desc" rows="2">${esc(s.scene_description)}</textarea></div>
-          <div class="field"><label>人物</label><input class="input" id="s-chars" value="${esc(s.characters)}" /></div>
-          <div class="field"><label>场景</label><input class="input" id="s-scene" value="${esc(s.scene)}" /></div>
-          <div class="field" style="grid-column:1/-1"><label>动作</label><input class="input" id="s-action" value="${esc(s.action)}" /></div>
-          <div class="field"><label>台词</label><textarea class="textarea" id="s-dlg" rows="2">${esc(s.dialogue)}</textarea></div>
-          <div class="field"><label>旁白</label><textarea class="textarea" id="s-nar" rows="2">${esc(s.narration)}</textarea></div>
-          <div class="field"><label>音效</label><input class="input" id="s-sfx" value="${esc(s.sound_effect)}" /></div>
-          <div class="field"><label>时长（秒）</label><input class="input" id="s-dur" type="number" value="${esc(s.duration_seconds)}" /></div>
-          <div class="field" style="grid-column:1/-1"><label>图片提示词</label><textarea class="textarea mono" id="s-ip" rows="3">${esc(s.image_prompt)}</textarea></div>
-          <div class="field" style="grid-column:1/-1"><label>视频提示词</label><textarea class="textarea mono" id="s-vp" rows="3">${esc(s.video_prompt)}</textarea></div>
-          <div class="field" style="grid-column:1/-1"><label>负面提示词</label><textarea class="textarea mono" id="s-np" rows="2">${esc(s.negative_prompt)}</textarea></div>
+          <div class="field"><label for="s-num">镜头编号</label><input class="input" id="s-num" type="number" value="${esc(s.shot_number)}" /></div>
+          <div class="field"><label for="s-type">景别</label><select class="select" id="s-type">${options(SHOT_TYPES, 'v', 'v', s.shot_type)}</select></div>
+          <div class="field" style="grid-column:1/-1"><label for="s-desc">画面描述</label><textarea class="textarea" id="s-desc" rows="2">${esc(s.scene_description)}</textarea></div>
+          <div class="field"><label for="s-chars">人物</label><input class="input" id="s-chars" value="${esc(s.characters)}" /></div>
+          <div class="field"><label for="s-scene">场景</label><input class="input" id="s-scene" value="${esc(s.scene)}" /></div>
+          <div class="field" style="grid-column:1/-1"><label for="s-action">动作</label><input class="input" id="s-action" value="${esc(s.action)}" /></div>
+          <div class="field"><label for="s-dlg">台词</label><textarea class="textarea" id="s-dlg" rows="2">${esc(s.dialogue)}</textarea></div>
+          <div class="field"><label for="s-nar">旁白</label><textarea class="textarea" id="s-nar" rows="2">${esc(s.narration)}</textarea></div>
+          <div class="field"><label for="s-sfx">音效</label><input class="input" id="s-sfx" value="${esc(s.sound_effect)}" /></div>
+          <div class="field"><label for="s-dur">时长（秒）</label><input class="input" id="s-dur" type="number" value="${esc(s.duration_seconds)}" /></div>
+          <div class="field" style="grid-column:1/-1"><label for="s-ip">图片提示词</label><textarea class="textarea mono" id="s-ip" rows="3">${esc(s.image_prompt)}</textarea></div>
+          <div class="field" style="grid-column:1/-1"><label for="s-vp">视频提示词</label><textarea class="textarea mono" id="s-vp" rows="3">${esc(s.video_prompt)}</textarea></div>
+          <div class="field" style="grid-column:1/-1"><label for="s-np">负面提示词</label><textarea class="textarea mono" id="s-np" rows="2">${esc(s.negative_prompt)}</textarea></div>
         </div>`,
       footer: `
         <button class="btn" data-no>取消</button>

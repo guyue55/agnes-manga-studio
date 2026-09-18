@@ -29,7 +29,7 @@ export default async function images(container, params) {
         <div class="card">
           <div class="card-title">${icon('image', 15)}生成参数</div>
           <div class="field">
-            <label>模型</label>
+            <label for="model">模型</label>
             <select class="select" id="model"></select>
           </div>
           <div class="segmented" id="mode" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
@@ -38,33 +38,33 @@ export default async function images(container, params) {
           </div>
 
           <div id="t2i-box">
-            <div class="field"><label>关联分镜（可选）</label><select class="select" id="sb-sel"></select></div>
+            <div class="field"><label for="sb-sel">关联分镜（可选）</label><select class="select" id="sb-sel"></select></div>
             <div class="field">
-              <label>图片提示词</label>
+              <label for="t2i-prompt">图片提示词</label>
               <textarea class="textarea mono" id="t2i-prompt" rows="6" placeholder="描述画面，支持中英文&#10;例：cinematic anime style, a young woman in red dress, golden hour, detailed background"></textarea>
               <div id="t2i-presets" aria-label="常用提示词预设"></div>
             </div>
             <div class="grid g2" style="gap:0 12px">
-              <div class="field"><label>尺寸</label><select class="select" id="t2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
-              <div class="field"><label>用途</label><select class="select" id="t2i-usage">${options(IMAGE_USAGES, 'value', 'label', 'storyboard')}</select></div>
+              <div class="field"><label for="t2i-size">尺寸</label><select class="select" id="t2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
+              <div class="field"><label for="t2i-usage">用途</label><select class="select" id="t2i-usage">${options(IMAGE_USAGES, 'value', 'label', 'storyboard')}</select></div>
             </div>
           </div>
 
           <div id="i2i-box" style="display:none">
             <div class="field">
-              <label>原图（公网可访问 URL）</label>
+              <label for="i2i-url">原图（公网可访问 URL）</label>
               <input class="input mono" id="i2i-url" placeholder="https://…" />
               <select class="select select-sm" id="i2i-pick" style="margin-top:8px"></select>
               <div class="hint">图生图需要 Agnes 能抓到的公网图片地址。本地生成的图片请先上传到公网图床，或把 <span style="font-family:var(--mono)">remote_url</span> 填进来。</div>
             </div>
             <div class="field">
-              <label>编辑指令</label>
+              <label for="i2i-prompt">编辑指令</label>
               <textarea class="textarea" id="i2i-prompt" rows="5" placeholder="描述想怎么改这张图…"></textarea>
             </div>
             <div class="grid g2" style="gap:0 12px">
-              <div class="field"><label>输出尺寸</label><select class="select" id="i2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
+              <div class="field"><label for="i2i-size">输出尺寸</label><select class="select" id="i2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
               <div class="field">
-                <label>保留原构图</label>
+                <label for="i2i-keep">保留原构图</label>
                 <div class="row"><button type="button" role="switch" class="switch on" id="i2i-keep" aria-checked="true"></button><span style="font-size:12px;color:var(--text-3)">开启后追加 preserve composition</span></div>
               </div>
             </div>

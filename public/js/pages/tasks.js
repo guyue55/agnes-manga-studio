@@ -50,7 +50,7 @@ export default async function tasks(container, params = {}) {
       </select>
       <div style="position:relative;flex:1;min-width:180px">
         <span style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-3)">${icon('search', 13)}</span>
-        <input class="input" id="search" placeholder="搜索提示词…" style="padding-left:32px;height:34px;border-radius:10px" />
+        <input class="input" id="search" aria-label="搜索提示词" placeholder="搜索提示词…" style="padding-left:32px;height:34px;border-radius:10px" />
       </div>
     </div>
     <div id="list">${spinner('加载任务…')}</div>`;

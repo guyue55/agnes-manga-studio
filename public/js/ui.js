@@ -210,7 +210,7 @@ export function prompt(o) {
       title: o.title || '请输入',
       body: `
         <div class="field">
-          <label>${esc(o.label || '')}</label>
+          <label for="prompt-input">${esc(o.label || '')}</label>
           <input class="input ${o.mono ? 'mono' : ''}" id="prompt-input" value="${esc(o.value || '')}" placeholder="${esc(o.placeholder || '')}" />
         </div>
         ${o.hint ? `<div class="hint">${o.hint}</div>` : ''}`,

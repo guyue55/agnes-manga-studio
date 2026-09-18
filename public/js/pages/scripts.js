@@ -107,9 +107,9 @@ export default async function scripts(container, params) {
           const val = fields.get(v) || '';
           return long
             ? `<div class="field" style="grid-column:1/-1"><label>${esc(v)}</label>
-                 <textarea class="textarea" data-var="${esc(v)}" rows="5" placeholder="粘贴${esc(v)}…">${esc(val)}</textarea></div>`
+                 <textarea class="textarea" data-var="${esc(v)}" aria-label="${esc(v)}" rows="5" placeholder="粘贴${esc(v)}…">${esc(val)}</textarea></div>`
             : `<div class="field"><label>${esc(v)}</label>
-                 <input class="input" data-var="${esc(v)}" value="${esc(val)}" /></div>`;
+                 <input class="input" data-var="${esc(v)}" aria-label="${esc(v)}" value="${esc(val)}" /></div>`;
         }).join('')}
       </div>`;
     box.querySelectorAll('[data-var]').forEach((el) => {
@@ -312,7 +312,7 @@ export default async function scripts(container, params) {
       const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
       modal({
         title: '导入到第几集',
-        body: `<div class="field"><label>集数</label><input class="input" id="ep" type="number" min="1" value="1" /></div>`,
+        body: `<div class="field"><label for="ep">集数</label><input class="input" id="ep" type="number" min="1" value="1" /></div>`,
         footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>导入</button>`,
         // R1：ESC/遮罩/× 关闭也 resolve(null)，导入流程不再静默挂起
         onDismiss: () => settle(null),

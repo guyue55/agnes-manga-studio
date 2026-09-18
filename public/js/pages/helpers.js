@@ -53,19 +53,19 @@ export function renderBatchBar(el, job, onCancel) {
 
 /** 通用表单片段：下拉 / 输入框 / 文本域 */
 export function selectField(label, id, optionsHtml, extra = '') {
-  return `<div class="field"><label>${esc(label)}</label><select class="select" id="${id}" ${extra}>${optionsHtml}</select></div>`;
+  return `<div class="field"><label for="${id}">${esc(label)}</label><select class="select" id="${id}" ${extra}>${optionsHtml}</select></div>`;
 }
 
 export function inputField(label, id, value = '', placeholder = '', type = 'text', cls = '') {
   return `<div class="field">
-    <label>${esc(label)}</label>
+    <label for="${id}">${esc(label)}</label>
     <input class="input ${cls}" id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}" />
   </div>`;
 }
 
 export function textareaField(label, id, value = '', placeholder = '', rows = 4, cls = '') {
   return `<div class="field">
-    <label>${esc(label)}</label>
+    <label for="${id}">${esc(label)}</label>
     <textarea class="textarea ${cls}" id="${id}" rows="${rows}" placeholder="${esc(placeholder)}">${esc(value)}</textarea>
   </div>`;
 }

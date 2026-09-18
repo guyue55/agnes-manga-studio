@@ -318,6 +318,57 @@ try {
       await fetch(`http://127.0.0.1:${port}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
     }
 
+    group('表单可达名契约（A11y：控件必须有可访问名称）');
+    {
+      const NAME_FN = `(el) => {
+        const al = el.getAttribute('aria-label'); if (al && al.trim()) return al.trim();
+        const lb = (el.labels && el.labels.length) ? Array.from(el.labels).map((l) => l.textContent).join(' ') : '';
+        if (lb.trim()) return lb.trim();
+        const t = el.getAttribute('title'); if (t && t.trim()) return t.trim();
+        return (el.textContent || '').trim();
+      }`;
+      const pages2 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/images', '#/videos', '#/tasks', '#/assets', '#/settings'];
+      const unnamed = [];
+      let total = 0;
+      for (const h of pages2) {
+        await cdp.eval(`location.hash = ${JSON.stringify(h)}; return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('.page')`), `页面就绪 ${h}`); // 裸表达式：带 return 的 body 必须含分号，否则被包成 return(return …) → SyntaxError 被 waitFor 吞成静默超时
+        await sleep(500);
+        const res = await cdp.eval(`const name = ${NAME_FN};
+          const els = Array.from(document.querySelectorAll('.page input, .page select, .page textarea, .page [role=switch]'))
+            .filter((e) => e.type !== 'hidden');
+          const bad = els.filter((e) => !name(e)).map((e) => (e.id || e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ')[0] : '')));
+          return { total: els.length, bad };`);
+        total += res.total;
+        if (res.bad.length) unnamed.push(`${h}: ${res.bad.join(', ')}`);
+      }
+      // 设置页一次只渲染一个分节，必须逐节遍历，否则多数控件根本没被扫到（首版即漏）
+      await cdp.eval(`location.hash = '#/settings'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-sec]')`), '设置页就绪');
+      const secs = await cdp.eval(`return Array.from(document.querySelectorAll('[data-sec]')).map((b) => b.getAttribute('data-sec'));`);
+      for (const sec of secs) {
+        await cdp.eval(`document.querySelector('[data-sec="${sec}"]').click(); return true;`);
+        await sleep(450);
+        const res = await cdp.eval(`const name = ${NAME_FN};
+          const els = Array.from(document.querySelectorAll('.page input, .page select, .page textarea, .page [role=switch]'))
+            .filter((e) => e.type !== 'hidden');
+          const bad = els.filter((e) => !name(e)).map((e) => (e.id || e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ')[0] : '')));
+          return { total: els.length, bad };`);
+        total += res.total;
+        if (res.bad.length) unnamed.push(`#/settings?sec=${sec}: ${res.bad.join(', ')}`);
+      }
+      ok('所有表单控件都有可访问名称', unnamed.length === 0, unnamed.join(' | '));
+      ok('确实扫到了表单控件（自证非空跑）', total > 20, `控件总数=${total}`);
+      // for 关联的实用价值：点标签应把焦点交给控件（鼠标用户也受益）
+      await cdp.eval(`document.querySelector('[data-sec="api"]').click(); return true;`);
+      await sleep(400);
+      const focusId = await cdp.eval(`const l = document.querySelector('label[for="s-base"]'); if (!l) return 'NO_LABEL'; l.click(); return document.activeElement ? document.activeElement.id : '';`);
+      ok('点标签可聚焦关联控件（for 生效的实用价值）', focusId === 's-base', String(focusId));
+      // 灵敏度对照：无 for 的等价标记点击后不会聚焦（证明上条不是"点什么都会聚焦"）
+      const ctrlId = await cdp.eval(`const d = document.createElement('div'); d.innerHTML = '<label>x</label><input id="__inp">'; document.body.appendChild(d); d.querySelector('label').click(); const got = document.activeElement ? document.activeElement.id : ''; d.remove(); return got;`);
+      ok('灵敏度对照：无 for 的标签点击不聚焦（探测有效）', ctrlId !== '__inp', String(ctrlId));
+    }
+
     group('转义汇点契约（XSS：共享字符串汇点必须转义）');
     {
       // 静态审计（第 62 轮）结论：toast/errBox/options/modal.title 四个共享汇点均 esc；
