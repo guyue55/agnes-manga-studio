@@ -97,6 +97,13 @@ node tools/run-all.mjs
 
 接口测试会自动启动本地 mock Agnes 服务，不会消耗真实 API 配额。
 
+按需运行的辅助验证（不进门禁）：
+
+```bash
+node tools/ui-audit.mjs     # 真机视觉度量报表：4 视口 × 9 页的溢出/微字号/对比度/截断无提示
+node tools/port-check.mjs   # 端口撞车防护三场景实测（复用 / 漂移 / 影子实例），违例退出码 1
+```
+
 ## 打包 Windows exe
 
 ```bash
