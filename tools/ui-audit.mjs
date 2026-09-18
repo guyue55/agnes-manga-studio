@@ -112,13 +112,15 @@ function effBg(el){ let n=el; while(n && n.nodeType===1){ const c=rgbOf(getCompu
 function sel(el){ let s=el.tagName.toLowerCase(); if(el.id) return '#'+el.id; if(el.className && typeof el.className==='string'){ const c=el.className.trim().split(/\\\\s+/).filter(x=>!x.startsWith('data-'))[0]; if(c) s+='.'+c; } return s; }
 function vis(el){ const r=el.getBoundingClientRect(); const st=getComputedStyle(el); return r.width>0&&r.height>0&&st.visibility!=='hidden'&&st.display!=='none'&&parseFloat(st.opacity)>0.05; }
 function hasOwnText(el){ for(const n of el.childNodes) if(n.nodeType===3&&n.textContent.trim()) return true; return false; }
-const VW=innerWidth; const res={overflow:{de:document.documentElement.scrollWidth>VW+2,culprits:[]},contrast:[],micro:[],tinyTap:0,scanned:0,samples:0,chips:0};
+const VW=innerWidth; const res={overflow:{de:document.documentElement.scrollWidth>VW+2,culprits:[]},contrast:[],micro:[],tinyTap:0,noName:0,scanned:0,samples:0,chips:0};
 for(const el of document.querySelectorAll('body *')){ if(!vis(el)) continue; res.scanned++; if(el.className&&String(el.className).includes('chip'))res.chips++;
   const r=el.getBoundingClientRect();
   if(r.right>VW+2 && r.width>8){ if(res.overflow.culprits.length<4) res.overflow.culprits.push(sel(el)+' w='+Math.round(r.width)); }
   const fs0=parseFloat(getComputedStyle(el).fontSize);
   if(fs0<10 && hasOwnText(el) && el.textContent.trim().length>1){ if(res.micro.length<4) res.micro.push(sel(el)+' '+fs0+'px'); }
-  if(el.matches('button,a,.chip,.icon-btn')){ if(r.height<23&&r.width<23) res.tinyTap++; }
+  if(el.matches('button,a,.chip,.icon-btn')){ if(r.height<23&&r.width<23) res.tinyTap++;
+    const hasName = el.textContent.trim() || el.getAttribute('aria-label') || el.getAttribute('title') || (el.getAttribute('data-copy-prompt')?'x':'') || el.closest('[title]');
+    if(el.matches('button,a') && !el.textContent.trim() && !el.getAttribute('aria-label') && !hasName) res.noName++; }
 }
 for(const q of ['body','.page-title','.sub','h3','.nav-item','.btn','.btn-sm','.note','.note.gold','.note.muted','.cell-ellipsis','.chip','.badge','.muted','.seg-btn','label','th','.prompt-cell']){
   const els=[...document.querySelectorAll(q)].filter(vis).slice(0,3); res.samples+=els.length;
@@ -187,6 +189,7 @@ try {
       for (const c of res.contrast) lines.push(`对比度 ${w}px ${name}: ${c.q} = ${c.ratio}:1（需≥${c.min}，${c.color}）`);
       if (res.micro.length) lines.push(`微字号 ${w}px ${name}: [${res.micro.join(' | ')}]`);
       if (res.tinyTap > 2) lines.push(`小目标 ${w}px ${name}: ${res.tinyTap} 个 <23px 可点元素`);
+      if (res.noName > 0) lines.push(`无障碍 ${w}px ${name}: ${res.noName} 个无文本无标签的图标钮`);
     }
   }
   console.log(`── UI 度量审计（${viewports.length} 视口 × ${pages.length} 页）──`);
