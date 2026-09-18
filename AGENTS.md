@@ -9,7 +9,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 - 后端链路：`server.js` → `lib/routes.js`（全部 /api 端点）→ `lib/agnes.js`（Agnes 云 API 客户端）→ 外部 API；异步任务链 `lib/jobs.js` + `lib/poller.js`（后台轮询 + SSE 推送）；持久化基石 `lib/store.js`
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（10 个页面模块）；共享设施 `api.js` / `ui.js` / `consts.js` / `pages/helpers.js`
-- 测试：`tools/` 下四套自研脚本（selftest / apitest / uitest / browser-test），`node tools/run-all.mjs` 全量跑
+- 测试：`tools/` 下四套断言脚本（selftest 128 / apitest 206 / uitest 452 / browser-test 38），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度度量报表，按需跑、非门禁）
 
 ---
 
@@ -67,7 +67,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 | `layer:backend-api` | HTTP 接口与路由层 | 2 |
 | `layer:backend-service` | 后端服务层（agnes/jobs/poller） | 3 |
 | `layer:data-persistence` | 数据持久化层（store/seed） | 2 |
-| `layer:test` | 测试层（tools/ 四套测试 + run-all） | 5 |
+| `layer:test` | 测试层（tools/ 四套测试 + run-all；另有度量报表 ui-audit.mjs 待图谱更新收录） | 5 |
 | `layer:build-tooling` | 构建工具（build-exe / build-graph-data） | 2 |
 | `layer:documentation` | 文档与静态图谱查看器（docs/） | 6 |
 | `layer:config` | 项目配置 | 3 |
