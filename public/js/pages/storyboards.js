@@ -4,12 +4,12 @@
  * 支持批量补提示词、批量出图、批量出视频（带队列进度）。
  */
 import {
-  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase,
+  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
-import { state, onEvent, syncViewParams } from '../app.js';
+import { state, onEvent, syncViewParams, loadCharacters } from '../app.js';
 
 export default async function storyboards(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
@@ -122,7 +122,8 @@ export default async function storyboards(container, params) {
       el.innerHTML = `<div class="card">${empty('请先选择项目', '右上角下拉选一个项目，或去「项目管理」新建', 'folder', { label: '去项目管理', go: '#/projects' })}</div>`;
       return;
     }
-    const [r, imgs] = await Promise.all([api.storyboards(projectId, episode), api.images(projectId)]);
+    // 角色档案与分镜并行拉：预览要显示角色注入，快照过期会让预览与后端不一致
+    const [r, imgs] = await Promise.all([api.storyboards(projectId, episode), api.images(projectId), loadCharacters(projectId)]);
     if (!r.ok) { el.innerHTML = `<div class="note red">${esc(r.error)}</div>`; return; }
     rows = r.data || [];
     // 分镜 → 图片的映射，批量生成视频时用来判断是否走图生视频
@@ -171,8 +172,8 @@ export default async function storyboards(container, params) {
             <td>${charCell(s)}</td>
             <td><div class="cell-ellipsis" style="max-width:150px;color:var(--text-3)" title="${esc(s.dialogue)}">${esc(s.dialogue || '—')}</div></td>
             <td>${esc(s.duration_seconds)}s</td>
-            <td>${promptCell(s.image_prompt)}</td>
-            <td>${promptCell(s.video_prompt)}</td>
+            <td>${promptCell(s, 'image_prompt')}</td>
+            <td>${promptCell(s, 'video_prompt')}</td>
             <td><span class="badge ${st.cls}">${esc(st.label)}</span></td>
             <td>
               <div class="row" style="gap:4px">
@@ -231,15 +232,26 @@ export default async function storyboards(container, params) {
     </div>`;
   }
 
-  function promptCell(text) {
+  /**
+   * 提示词单元格（B4.2 计算态 + R15 角色维度）：
+   * 预览必须与后端 finalPrompt 同序（内容 → 角色 → 画风），否则"看到的"和"发出去的"会分叉。
+   * 徽标只标"哪一层被注入了"，完整最终词放 tooltip —— 表格里塞全文会撑爆列宽。
+   */
+  function promptCell(s, field) {
+    const text = s[field];
     if (!text) return `<span style="color:var(--text-4);font-size:11.5px">待生成</span>`;
-    // B4.2：预览即计算态——tooltip 展示生成时真正会发出的完整提示词（内容+系统注入的画风）
     const style = (state.projects.find((p) => p.id === projectId) || {}).art_style || '';
-    const final = artStylePhrase(text, style);
-    return `<div class="row" style="gap:6px">
-      <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${style && final !== text ? `生成时实际发出（含画风注入）：\n${esc(final)}` : esc(text)}">${esc(text)}</span>
-      ${style && final !== text ? `<span style="flex:none;color:var(--gold-light);font-size:11px" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
-      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
+    const chars = (Array.isArray(s.character_ids) ? s.character_ids : [])
+      .map((id) => charsOf().find((c) => c.id === id)).filter(Boolean);
+    const withChars = characterPhrase(text, chars);
+    const final = artStylePhrase(withChars, style);
+    const injected = chars.filter((c) => withChars.includes(c.name));
+    // data-prompt 给测试与后续就地编辑一个稳定锚点（列内还有别的 .cell-ellipsis，靠选择器顺序取会取错）
+    return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
+      <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${final !== text ? `生成时实际发出：\n${esc(final)}` : esc(text)}">${esc(text)}</span>
+      ${withChars !== text ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
+      ${style && final !== withChars ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
+      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的角色与画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }
 

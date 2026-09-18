@@ -159,6 +159,23 @@ export async function refreshState() {
   }
 }
 
+/**
+ * R15：拉取某项目的角色档案并合并进 state.characters。
+ * 为什么不让页面直接用 bootstrap 的快照：分镜/图片页要显示"生成时真正发出什么"的计算态预览，
+ * 而注入是后端按库里最新数据做的 —— 快照过期 = 预览骗人。进页面时对齐一次，本地调用极快。
+ * 合并而不是整体替换：别的项目的角色不该被这次请求抹掉。
+ */
+export async function loadCharacters(projectId) {
+  if (!projectId) return [];
+  const r = await api.characters(projectId);
+  const list = (r.ok && r.data) || [];
+  if (r.ok) {
+    const others = (state.characters || []).filter((c) => c.project_id !== projectId);
+    state.characters = [...others, ...list];
+  }
+  return list;
+}
+
 /** 给页面用：改了项目/设置之后刷新侧边栏与统计 */
 export async function softRefresh() {
   await refreshState();

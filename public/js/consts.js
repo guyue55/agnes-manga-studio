@@ -245,6 +245,31 @@ export function artStylePhrase(prompt, style) {
   return `${prompt}, ${phrase}`;
 }
 
+/**
+ * R15 前端镜像：与 lib/routes.js 的 characterPhrase **逐字同构**（uitest 有文本比对钉）。
+ * 用途 = 在分镜表里预览"生成时真正发出的完整提示词"，让角色注入这个计算态在界面上可见。
+ * 逻辑一漂移，预览就开始骗人 —— 这正是 B4.2 那条教训的延续。
+ */
+export function characterPhrase(prompt, chars) {
+  const list = Array.isArray(chars) ? chars.filter(Boolean) : [];
+  if (!list.length) return prompt;
+  const p = String(prompt || '');
+  const lower = p.toLowerCase();
+  const parts = [];
+  for (const c of list) {
+    const name = String(c.name || '').trim();
+    const outfit = String(c.outfit || '').trim();
+    const look = [String(c.appearance || '').trim(), outfit ? `身着${outfit}` : ''].filter(Boolean).join('，');
+    if (!look) continue;
+    if (lower.includes(look.toLowerCase())) continue;
+    if (!c.is_locked && name && lower.includes(name.toLowerCase())) continue;
+    parts.push(name ? `${name}：${look}` : look);
+  }
+  if (!parts.length) return prompt;
+  const block = `出场角色——${parts.join('；')}`;
+  return p.trim() ? `${p}, ${block}` : block;
+}
+
 export const STORYBOARD_STATUS = {
   pending: { label: '待处理', cls: 'gray' },
   image_ready: { label: '有图片', cls: 'blue' },

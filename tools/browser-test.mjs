@@ -1185,6 +1185,37 @@ try {
         .then(() => true).catch(() => false);
       const card = await cdp.eval(`const el = document.querySelector('.char-card[data-id="${c.id}"]'); return el ? { txt: el.innerText, lock: !!el.querySelector('.flag') } : null;`);
       ok('角色卡渲染外貌与锁定标记', cardShown && !!card && card.txt.includes('银色短发') && card.lock === true, JSON.stringify(card));
+      // R15：分镜行的"计算态预览"必须体现角色注入（后端真的注入、界面也真的显示）
+      const lockChar = await J('/api/characters', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: pid, name: '预览角色', appearance: '栗色卷发、琥珀色瞳孔', outfit: '米色风衣', is_locked: true }),
+      });
+      const sbPreview = await J('/api/storyboards', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: pid, episode_number: 1, shot_number: 98, scene_description: '注入预览探针',
+          image_prompt: 'a girl walking down the street', character_ids: [lockChar.id],
+        }),
+      });
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#table tbody tr')`), '分镜表就绪（注入预览）', 12000);
+      // 逐列取（列内有多个 .cell-ellipsis，靠顺序取会取到「画面描述」列），徽标要取全而不是第一个
+      const tag = await cdp.eval(`const row = Array.from(document.querySelectorAll('#table tbody tr')).find((tr) => tr.innerText.includes('注入预览探针'));
+        if (!row) return null;
+        const cell = row.querySelector('.prompt-cell'); // 列内首个提示词单元格 = 图片列
+        const tags = Array.from(cell.querySelectorAll('.prompt-tag'));
+        return { tags: tags.map((t) => t.innerText.trim()), charTip: (tags.find((t) => t.innerText.includes('角色')) || {}).getAttribute ? tags.find((t) => t.innerText.includes('角色')).getAttribute('title') : '', full: cell.querySelector('.cell-ellipsis').getAttribute('title') };`);
+      ok('分镜行标出「+角色」注入徽标', !!tag && tag.tags.includes('+角色'), JSON.stringify(tag && tag.tags));
+      ok('徽标 tooltip 列出被注入的角色名', !!tag && String(tag.charTip).includes('预览角色'), JSON.stringify(tag && tag.charTip));
+      // 预览的完整最终词必须与后端一致（前端镜像是"看得见的承诺"，漂移就是骗人；
+      // 后端侧的实际注入由 apitest 的 R15 组用 mock 逐字验证）
+      ok('预览最终词含角色外貌与服装（与后端 finalPrompt 同序同文）',
+        !!tag && String(tag.full).includes('出场角色——预览角色：栗色卷发、琥珀色瞳孔，身着米色风衣'), String(tag && tag.full).slice(0, 140));
+      await fetch(`http://127.0.0.1:${port}/api/storyboards/${sbPreview.id}`, { method: 'DELETE' });
+      await fetch(`http://127.0.0.1:${port}/api/characters/${lockChar.id}`, { method: 'DELETE' });
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+
       // 参考图路径：卡片封面必须真的渲染成 <img>（只存 id 不渲染 = 没接上）
       const refImg = await J('/api/images', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

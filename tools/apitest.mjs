@@ -997,6 +997,76 @@ group('B4.1 画风分层注入');
   await api('DELETE', '/api/projects/' + PID + '?cascade=1');
 }
 
+group('R15 角色注入（使用点 / 锁定语义 / 去重 / 视频口径 / 导出）');
+{
+  const proj = await api('POST', '/api/projects', { name: '角色注入测试', art_style: '日漫厚涂' });
+  const PID = proj.data.id;
+  const mk = async (name, extra) => (await api('POST', '/api/characters', Object.assign({ project_id: PID, name }, extra))).data;
+  const lin = await mk('林岚', { appearance: '黑色长直发、丹凤眼', outfit: '白色衬衫', is_locked: true });
+  const zhou = await mk('老周', { appearance: '灰白短发、络腮胡', is_locked: false });
+  const hollow = await mk('无貌', {}); // 没填外貌：注入不了任何东西
+  const sbAll = await api('POST', '/api/storyboards', {
+    project_id: PID, shot_number: 1, scene_description: '开场', image_prompt: 'a girl stands on the rooftop',
+    character_ids: [lin.id, zhou.id, hollow.id],
+  });
+  const sbLin = await api('POST', '/api/storyboards', {
+    project_id: PID, shot_number: 2, scene_description: '特写', image_prompt: 'a close-up shot', character_ids: [lin.id],
+  });
+  const sbZhou = await api('POST', '/api/storyboards', {
+    project_id: PID, shot_number: 3, scene_description: '过肩', image_prompt: 'an over-the-shoulder shot', character_ids: [zhou.id],
+  });
+
+  // ① 出图：绑定的角色都被注入（含外貌 + 服装），没填外貌的不产出空壳
+  await api('POST', '/api/agnes/image', { prompt: 'a girl stands on the rooftop', project_id: PID, storyboard_id: sbAll.data.id, size: '1024x1024' });
+  const wire = String(lastImageCreate && lastImageCreate.prompt);
+  ok('出图注入出场角色（外貌 + 服装）',
+    wire.includes('出场角色——') && wire.includes('林岚：黑色长直发、丹凤眼，身着白色衬衫') && wire.includes('老周：灰白短发、络腮胡'),
+    wire.slice(0, 160));
+  ok('没填外貌的角色不产出「无貌：」这种空壳', !wire.includes('无貌'));
+  ok('顺序固定：内容 → 角色 → 画风（前端预览按同序复算）',
+    wire.indexOf('出场角色——') > 0 && wire.indexOf('出场角色——') < wire.indexOf('japanese anime style'));
+
+  // ② 锁定语义：提示词里提到名字时，锁定角色照注入，未锁定角色跳过
+  await api('POST', '/api/agnes/image', { prompt: '林岚回头看了一眼', project_id: PID, storyboard_id: sbLin.data.id, size: '1024x1024' });
+  ok('锁定角色即使提示词提到名字也照注入（一致性的来源）', String(lastImageCreate.prompt).includes('林岚：黑色长直发、丹凤眼，身着白色衬衫'), String(lastImageCreate.prompt));
+  await api('POST', '/api/agnes/image', { prompt: '老周点点头', project_id: PID, storyboard_id: sbZhou.data.id, size: '1024x1024' });
+  eq('未锁定角色在提示词已提名字时不重复注入（尊重用户自己写的）',
+    String(lastImageCreate.prompt), '老周点点头, japanese anime style, thick painterly shading');
+
+  // ③ 去重：提示词里已经有同样的长相描述 → 不追加
+  await api('POST', '/api/agnes/image', { prompt: '黑色长直发、丹凤眼，身着白色衬衫的女孩', project_id: PID, storyboard_id: sbLin.data.id, size: '1024x1024' });
+  eq('同样的长相描述已在提示词里 → 不重复追加',
+    String(lastImageCreate.prompt), '黑色长直发、丹凤眼，身着白色衬衫的女孩, japanese anime style, thick painterly shading');
+
+  // ④ 无绑定 → 不注入（角色库不能变成"到处都在注入"）
+  await api('POST', '/api/agnes/image', { prompt: 'empty street', project_id: PID, size: '1024x1024' });
+  eq('镜头未绑定角色 → 不注入', String(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
+
+  // ⑤ 显式 character_ids（调用方不必先建分镜）—— 图片页/外部脚本可走这条路
+  await api('POST', '/api/agnes/image', { prompt: 'portrait', project_id: PID, character_ids: [lin.id], size: '1024x1024' });
+  ok('显式 character_ids 也能注入', String(lastImageCreate.prompt).includes('林岚：黑色长直发'), String(lastImageCreate.prompt));
+
+  // ⑥ 视频口径与画风完全一致：t2v 注入，i2v 不注入
+  await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'hero walks forward', project_id: PID, storyboard_id: sbLin.data.id });
+  ok('t2v 注入角色', String(lastVideoCreate && lastVideoCreate.prompt).includes('出场角色——'), String(lastVideoCreate && lastVideoCreate.prompt));
+  await api('POST', '/api/videos', { mode: 'image_to_video', prompt: 'animate this', image: 'http://127.0.0.1:1/x.png', project_id: PID, storyboard_id: sbLin.data.id });
+  eq('i2v 不注入角色（长相由参考图决定）', String(lastVideoCreate.prompt), 'animate this');
+
+  // ⑦ 落库的是"最终发出的词"（否则下载/复盘看到的与实际不一致）
+  const imgs = await api('GET', `/api/images?project_id=${PID}`);
+  ok('素材记录里存的是最终发出的提示词', (imgs.data || []).some((i) => String(i.generation_prompt).includes('出场角色——')));
+
+  // ⑧ 导出必须与发出的一致，且说清图生模式的口径
+  const csvText = new TextDecoder().decode(new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer()));
+  ok('CSV 表头标明含角色与画风', csvText.includes('含角色与画风'));
+  ok('CSV 新增「绑定角色」列', csvText.includes('绑定角色') && csvText.includes('林岚、老周、无貌'));
+  ok('CSV 最终词含角色注入', csvText.includes('林岚：黑色长直发、丹凤眼，身着白色衬衫'));
+  const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
+  ok('MD 最终词含角色注入', mdText.includes('出场角色——'));
+  ok('MD 说清图生模式实际不注入（导出不骗人）', mdText.includes('图生/多帧视频'));
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('B4.6 导出矩阵');
 {
   const proj = await api('POST', '/api/projects', { name: '导出测试', art_style: '水彩' });
@@ -1006,7 +1076,7 @@ group('B4.6 导出矩阵');
   const csvBuf = new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer());
   ok('CSV 带 UTF-8 BOM 字节', csvBuf[0] === 0xEF && csvBuf[1] === 0xBB && csvBuf[2] === 0xBF);
   const csvText = new TextDecoder().decode(csvBuf);
-  ok('CSV 表头双语列', csvText.includes('图片提示词·含画风'));
+  ok('CSV 表头双语列', csvText.includes('图片提示词·最终词（含角色与画风）'));
   ok('CSV 注入映射画风', csvText.includes('watercolor illustration, soft paper texture'));
   const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
   ok('MD 含镜头代码块', mdText.includes('```') && mdText.includes('camera slowly pulls back'));

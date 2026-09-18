@@ -130,7 +130,10 @@ for(const el of document.querySelectorAll('.cell-ellipsis,[class*=truncate],[sty
     if(!res.noHint.includes(sig)) res.noHint.push(sig);
   }
 }
-for(const q of ['body','.page-title','.sub','h3','.nav-item','.btn','.btn-sm','.note','.note.gold','.note.muted','.cell-ellipsis','.chip','.badge','.muted','.seg-btn','label','th','.prompt-cell']){
+// 采样清单里的每个选择器都必须在源码里真实存在，否则那条采样是"死采样"：
+// 元素数 0、报表全绿，看着像量过，实际什么都没量（本轮发现 .note.muted/.muted/.seg-btn/.prompt-cell
+// 四个都是死的）。uitest 有对应硬检查，防止再写进不存在的选择器。
+for(const q of ['body','.page-title','.page-desc','h3','.nav-item','.btn','.btn-sm','.note','.note.gold','.note.red','.cell-ellipsis','.chip','.badge','.hint-sm','.hint-xs','.segmented > button','label','th','.prompt-cell']){
   const els=[...document.querySelectorAll(q)].filter(vis).slice(0,3); res.samples+=els.length;
   for(const el of els){ if(!hasOwnText(el)&&q!=='body') continue;
     const cs=getComputedStyle(el); const fg=rgbOf(cs.color); if(!fg) continue;

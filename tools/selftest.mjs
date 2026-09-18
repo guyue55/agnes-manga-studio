@@ -501,6 +501,34 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('角色注入纯函数（R15：锁定语义 / 去重 / 空壳防护）');
+{
+  const { characterPhrase } = createRoutes;
+  const lin = { name: '林岚', appearance: '黑色长直发、丹凤眼', outfit: '白色衬衫', is_locked: true };
+  const zhou = { name: '老周', appearance: '灰白短发', is_locked: false };
+  eq('无角色 → 原样返回（不留分隔符）', characterPhrase('a girl', []), 'a girl');
+  eq('undefined 安全（批量项可能没有角色字段）', characterPhrase('a girl', undefined), 'a girl');
+  // 空提示词时不能产出前导 ", " —— 生成链路有 finalPrompt 兜底，但纯函数自身也不该吐坏串
+  eq('空提示词不产出前导逗号', characterPhrase('', [lin]), '出场角色——林岚：黑色长直发、丹凤眼，身着白色衬衫');
+  eq('锁定角色无条件注入（含服装）', characterPhrase('a girl', [lin]), 'a girl, 出场角色——林岚：黑色长直发、丹凤眼，身着白色衬衫');
+  eq('未锁定角色名字未被提到 → 也注入', characterPhrase('a girl', [zhou]), 'a girl, 出场角色——老周：灰白短发');
+  eq('未锁定角色名字已被提到 → 跳过（尊重用户自己写的）', characterPhrase('老周点点头', [zhou]), '老周点点头');
+  eq('锁定角色名字已被提到 → 照注入', characterPhrase('林岚回头', [lin]), '林岚回头, 出场角色——林岚：黑色长直发、丹凤眼，身着白色衬衫');
+  eq('同样的长相描述已在提示词里 → 不重复追加',
+    characterPhrase('黑色长直发、丹凤眼，身着白色衬衫的女孩', [lin]), '黑色长直发、丹凤眼，身着白色衬衫的女孩');
+  eq('没填外貌 → 不产出「名字：」空壳', characterPhrase('a girl', [{ name: '无貌', appearance: '', outfit: '', is_locked: true }]), 'a girl');
+  eq('只有服装也能注入', characterPhrase('a girl', [{ name: '甲', outfit: '红裙' }]), 'a girl, 出场角色——甲：身着红裙');
+  eq('多角色用分号分隔、顺序保持', characterPhrase('x', [lin, zhou]), 'x, 出场角色——林岚：黑色长直发、丹凤眼，身着白色衬衫；老周：灰白短发');
+  eq('无名字只有长相 → 不产出多余的「：」', characterPhrase('x', [{ appearance: '独眼' }]), 'x, 出场角色——独眼');
+  // 灵敏度对照：拿一个"没有锁定判定"的朴素实现做对照，证明该分支真的在起作用
+  const naive = (prompt, chars) => {
+    const parts = chars.filter(Boolean).map((c) => `${c.name}：${c.appearance}`);
+    return parts.length ? `${prompt}, 出场角色——${parts.join('；')}` : prompt;
+  };
+  ok('灵敏度对照：去掉锁定判定后未锁定角色会被误注入',
+    naive('老周点点头', [zhou]) !== characterPhrase('老周点点头', [zhou]));
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

@@ -239,9 +239,33 @@ group('B4 画风分层');
   const constsSrc = read(path.join(PUB, 'js', 'consts.js'));
   const sbSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js'));
-  ok('4.1 后端使用点注入（图+视频 t2v）', routesSrc.includes('function artStylePhrase')
-    && routesSrc.includes("artStylePhrase(str(body.prompt).trim(), styleOf(body.project_id))")
-    && (routesSrc.match(/artStylePhrase\(str\(body\.prompt\)/g) || []).length >= 2);
+  // 括号配平取函数体：切片长度猜不准，多切一行就可能把别的函数的注入算进来（假绿/假红都可能）
+  const bodyOf = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') d++;
+      else if (src[j] === '}') { d--; if (!d) return src.slice(i, j + 1); }
+    }
+    return '';
+  };
+  // R15 后统一走 finalPrompt（内容 → 角色 → 画风）：使用点恰好 6 个
+  // = 图片 1 + 文生视频 1 + CSV（图/视频各 1）+ MD（图/视频各 1）
+  ok('4.1 后端使用点注入：图片 + 文生视频 + CSV/MD 各两列（恰好 6 个使用点）',
+    routesSrc.includes('function artStylePhrase')
+    && (routesSrc.match(/finalPrompt\(body\.prompt|finalPrompt\(r\.(?:image|video)_prompt/g) || []).length === 6);
+  ok('4.1 入库只存镜头内容（写入点绝不注入）',
+    !/artStylePhrase|characterPhrase|finalPrompt/.test(bodyOf(routesSrc, 'function storyboardRow')));
+  // R15：角色注入的前后端镜像必须逐字同构（逻辑一漂移，界面预览就开始骗人）
+  const phraseBody = (src) => {
+    const i = src.indexOf('function characterPhrase(prompt, chars) {');
+    return i < 0 ? '' : bodyOf(src, 'function characterPhrase(prompt, chars) {').replace(/\s+/g, '');
+  };
+  ok('4.1 角色注入前后端同构（逐字比对，去空白）',
+    phraseBody(routesSrc).length > 300 && phraseBody(routesSrc) === phraseBody(constsSrc));
+  ok('4.1 角色注入含锁定语义与去重（自证非空跑）',
+    /is_locked/.test(phraseBody(routesSrc)) && /出场角色——/.test(phraseBody(routesSrc)));
   const keysOf = (src) => {
     const m = src.match(/ART_STYLE_MAP = \{([\s\S]*?)\n\};/);
     return m ? [...m[1].matchAll(/'([^']+)':/g)].map((x) => x[1]).sort().join(',') : '';
@@ -342,6 +366,33 @@ console.log(`\n${'═'.repeat(52)}`);
 // 检查器自身也曾误报（首版 3 条全是假阳性）：①扫到自己注释里的示例文本
 // ②#p-picker 是动态 id（页面传 {id:'p-picker'}，源码写 id="${id}"）。
 // 教训：会喊狼来了的检查器比没有更糟——故此处剥注释 + 对动态值给出明确解析规则。
+group('ui-audit 采样选择器必须真实存在（防"死采样"）');
+{
+  // 事故：ui-audit 的对比度采样清单里 .note.muted / .muted / .seg-btn / .sub / .prompt-cell 五个
+  // 选择器在源码里根本不存在 —— 那条采样从写下的那天起就是 0 个元素，报表照样全绿。
+  // 「会喊狼来了的检查器比没有更糟」，但"什么都不量的检查器"同样更糟：这里把它变成硬检查。
+  const css = read(path.join(PUB, 'css', 'app.css'));
+  const html = read(path.join(PUB, 'index.html'));
+  const js = [...listJs(path.join(PUB, 'js')), ...listJs(path.join(PUB, 'js', 'pages'))].map(read).join('\n');
+  const known = new Set();
+  for (const m of css.matchAll(/\.([A-Za-z][\w-]*)/g)) known.add(m[1]);
+  // 只认 class="..." 里的整词，避免 "sub" 命中 submit 这类子串（首版检查器就栽在这）
+  for (const m of (js + html).matchAll(/class="([^"$]*)"/g)) m[1].split(/\s+/).forEach((t) => t && known.add(t));
+  const audit = read(path.join(ROOT, 'tools', 'ui-audit.mjs'));
+  const m = audit.match(/for\(const q of \[([^\]]+)\]/);
+  const sels = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [];
+  ok('采样清单解析成功（自证解析器有效）', sels.length >= 15, `sels=${sels.length}`);
+  const dead = [];
+  for (const q of sels) {
+    if (q === 'body' || /^[a-z]+$/.test(q)) continue;
+    const first = q.split('>')[0].trim();
+    const miss = [...first.matchAll(/\.([A-Za-z][\w-]*)/g)].map((x) => x[1]).filter((t) => !known.has(t));
+    if (miss.length) dead.push(`${q}(缺 ${miss.join(',')})`);
+  }
+  ok('ui-audit 采样的每个 class 都真实存在（死采样会让报表假绿）', dead.length === 0, dead.join(' | '));
+  ok('灵敏度对照：不存在的 class 会被检出', !known.has('definitely-not-a-class'));
+}
+
 group('测试选择器一致性');
 {
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
@@ -614,6 +665,11 @@ group('角色库（R14：档案 + 绑定 + 引用守卫）');
   ok('分镜行展示绑定角色与失效引用（悬空 id 要看得见）',
     /function charCell\(/.test(sbs) && /绑定的角色已被删除/.test(sbs));
   ok('分镜行保留自由文本人物（老数据不丢信息）', /s\.characters/.test(sbs) && /人物（自由文本）/.test(sbs));
+  // R15：计算态预览必须与后端注入同源。用 bootstrap 快照会在"别处新建了角色"时显示过期结果
+  // （预览说没注入、后端实际注入了 = 骗人），故进页面时对齐一次角色档案。
+  ok('分镜页进页面即对齐角色档案（预览不得基于过期快照）',
+    /loadCharacters\(projectId\)/.test(sbs) && /export async function loadCharacters/.test(read(path.join(PUB, 'js', 'app.js'))));
+  ok('预览标注角色注入徽标与最终词', /\+角色/.test(sbs) && /data-prompt="\$\{field\}"/.test(sbs));
   // 灵敏度对照：把"绑定"删掉，行渲染守卫必须能发现
   ok('灵敏度对照：charCell 缺失会被检出', !/function charCell\(/.test('const x = 1;'));
 }
