@@ -19,9 +19,13 @@ const TAB_TPL = {
 
 export default async function scripts(container, params) {
   let tab = params.tab && TAB_TPL[params.tab] ? params.tab : 'story_concept';
-  let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  let projectId = params.project && state.projects.some((p) => p.id === params.project)
+    ? params.project
+    : (state.projects[0] && state.projects[0].id) || '';
+  if (params.project && projectId !== params.project) toast.warn('链接指向的项目不存在（可能已删除），已切到现有项目。', 6000); // E4 死链拦截
   let templates = [];
   let result = '';
+  let resultCtx = null; // E4：结果诞生时的项目/页签上下文，跨语境保存前必须过问
   let generating = false;
   let saved = [];
   const fields = new Map();
@@ -60,10 +64,10 @@ export default async function scripts(container, params) {
     </div>`;
 
   const picker = container.querySelector('#p-picker');
-  picker.onchange = () => { projectId = picker.value; loadSaved(); };
+  picker.onchange = () => { projectId = picker.value; clearResult(); loadSaved(); };
   container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); };
   container.querySelector('#tabs').querySelectorAll('[data-tab]').forEach((b) => {
-    b.onclick = () => { tab = b.getAttribute('data-tab'); syncTabs(); renderFields(); syncViewParams({ tab }); };
+    b.onclick = () => { tab = b.getAttribute('data-tab'); clearResult(); syncTabs(); renderFields(); syncViewParams({ tab }); };
   });
   container.querySelector('#gen').onclick = generate;
 
@@ -163,7 +167,13 @@ export default async function scripts(container, params) {
 
     if (!r.ok) { toast.err(r.error); return; }
     result = r.data.content || '';
+    resultCtx = { projectId, tab };
     renderResult();
+  }
+  function clearResult() {
+    result = ''; resultCtx = null;
+    const w = container.querySelector('#result-wrap');
+    if (w) w.innerHTML = '';
   }
 
   function renderResult() {
@@ -258,6 +268,7 @@ export default async function scripts(container, params) {
     }
     if (!r.ok) { toast.err(r.error); return; }
     result = r.data.content || result;
+    resultCtx = { projectId, tab }; // 润色后同样盖上下文戳
     renderResult();
     toast.ok(`已${tpl.name}`);
   }
@@ -344,7 +355,7 @@ export default async function scripts(container, params) {
     el.querySelectorAll('[data-use]').forEach((b) => {
       b.onclick = () => {
         const s = saved.find((x) => x.id === b.getAttribute('data-use'));
-        if (s) { result = s.content; renderResult(); toast.ok('已载入'); }
+        if (s) { result = s.content; resultCtx = { projectId, tab: s.script_type || tab }; renderResult(); toast.ok('已载入'); }
       };
     });
     el.querySelectorAll('[data-del]').forEach((b) => {

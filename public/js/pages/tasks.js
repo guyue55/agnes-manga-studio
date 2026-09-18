@@ -85,10 +85,23 @@ export default async function tasks(container, params = {}) {
     timer = setTimeout(() => { search = e.target.value.trim().toLowerCase(); render(); }, 220);
   };
 
+  // E5：SSE 刷新不再" surprise 重绘"——有视频在播就挂起，播完 800ms 轮询补渲染（60s 兜底）
+  let e5Pending = false;
+  const anyPlaying = () => [...container.querySelectorAll('#list video')].some((v) => !v.paused && !v.ended);
+  function scheduleRender() {
+    if (!anyPlaying()) { render(); return; }
+    if (e5Pending) return;
+    e5Pending = true;
+    const timer = setInterval(() => {
+      if (anyPlaying()) return;
+      clearInterval(timer); e5Pending = false; render();
+    }, 800);
+    setTimeout(() => { if (e5Pending) { clearInterval(timer); e5Pending = false; render(); } }, 60000);
+  }
   const off = onEvent('video', (v) => {
     const i = videos.findIndex((x) => x.id === v.id);
     if (i >= 0) videos[i] = v; else videos.unshift(v);
-    render();
+    scheduleRender();
   });
 
   async function load() {

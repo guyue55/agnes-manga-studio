@@ -247,8 +247,8 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 - **E1 ✅ SSE 断线重连后无 resync（任务/角标永久陈旧）+ dashboard 每条事件全量 refreshState 无防抖**（`app.js:138-157`；`poller.js:28` 帧无 id 无 Last-Event-ID 补拉）。es.onopen 补一次 load 即可修大半。
 - **E2 ✅ `#batch-bar` 被 SSE 批量进度与本地"批量补提示词"进度互相覆盖**（`storyboards.js:80-87` vs `:281,295-296`）。
 - **E3 ✅ 批量补提示词把尝试数当成功数上报**（`storyboards.js:288-295` 失败不计数不展示）。
-- **E4 🐛 脚本页切项目/切页签不清 result、不重载已保存列表 → 旧 tab 结果以新 tab 类型存进新项目（张冠李戴）；指向已删项目的 params.project 无拦截**（`scripts.js:22,63-67,208-217,316`）。
-- **E5 🐛 任务页每条 SSE 全表重绘：播放中的 video 被打断、滚动/焦点丢失**（`tasks.js:74-78,111`）；refresh 钮无早退可连点（`tasks.js:216-223`）、文本/图片删除无 confirm（`tasks.js:295-298`）。
+- **E4 ✅ 脚本页切项目/切页签不清 result、不重载已保存列表 → 旧 tab 结果以新 tab 类型存进新项目（张冠李戴）；指向已删项目的 params.project 无拦截**（`scripts.js:22,63-67,208-217,316`）。UI 批处理：切项目/切页签 clearResult；结果盖 {projectId,tab} 上下文戳，跨语境保存弹确认；死链参数回落现有项目并 toast 言明。
+- **E5 ✅ 任务页每条 SSE 全表重绘：播放中的 video 被打断、滚动/焦点丢失**（`tasks.js:74-78,111`）；refresh 钮无早退可连点（`tasks.js:216-223`）、文本/图片删除无 confirm（`tasks.js:295-298`）。 UI 批处理：任务页 SSE 改 scheduleRender——有视频在播挂起重绘、播完 800ms 补、60s 兜底。
 - **E6 ✅ 清空/导入后设置页内部 templates/settings 变量陈旧：显示已删模板、编辑得 404、replace 后表单旧值**（`settings.js:353-355,412-424` 成功分支缺 `await load()`）。
 - **E7 🐛 批量任务切页失联、无找回、无取消钮（服务端 `GET /api/batch`、`:id/cancel` 完好，前端 api.batch/cancelBatch 零调用）**（`api.js:94-95`；`storyboards.js:468` 退订即失忆 → 回来再点=重复提交）。
 - **E8 🐛 数值校验缺位：预计集数/镜号/时长可负入库（min 属性对 JS 取值无效）、fps=999 直透远端、seed 非法串静默变 0、轮询间隔输 0 显示 0 实际钳 2s（显示值≠生效值）**（`projects.js:136,159`、`storyboards.js:416-446`、`videos.js:123-127`、`settings.js:154-160`、`poller.js:47`）。
