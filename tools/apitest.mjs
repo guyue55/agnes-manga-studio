@@ -41,6 +41,8 @@ const VIDEO_ID = 'vid_mock_001';
 let lastVideoCreate = null;
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
+// 按提示词标记统计 /v1/videos 实际到达次数：验证「限流后重试」与「4xx 不重试」
+const videoCalls = {};
 const mock = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://127.0.0.1');
   const send = (code, obj) => {
@@ -85,6 +87,16 @@ const mock = http.createServer((req, res) => {
     }
     if (u.pathname === '/v1/videos') {
       try { lastVideoCreate = JSON.parse(body); } catch { lastVideoCreate = { bad_json: body }; }
+      const p = String(lastVideoCreate.prompt || '');
+      const mm = /__retry(\d+)__/.exec(p);            // 前 N 次返回 503（排队满），之后成功
+      const key = mm ? `r${mm[1]}` : /__bad400__/.test(p) ? 'bad' : 'plain';
+      videoCalls[key] = (videoCalls[key] || 0) + 1;
+      if (mm && videoCalls[key] <= Number(mm[1])) {
+        return send(503, { code: 'video_queue_full', message: 'video queue is full, please retry later (mock)' });
+      }
+      if (/__bad400__/.test(p)) {
+        return send(400, { code: 'invalid_request', message: 'frame_rate is not an allowed request field (mock)', data: { param: 'frame_rate' } });
+      }
       return send(200, { id: VIDEO_ID, video_id: VIDEO_ID, task_id: 'task_mock', status: 'queued' });
     }
     send(404, { error: 'unknown path' });
@@ -435,6 +447,55 @@ group('视频 2.5 新协议');
   ok('video_url 来自 metadata.url', String(a25 && a25.video_url).endsWith('/video.mp4'));
   ok('查询带了 model_name', /model_name=agnes-video-2\.5-flash/.test(String(last25QueryUrl)), String(last25QueryUrl).slice(0, 80));
   await api('DELETE', `/api/videos/${vid}`);
+}
+
+// ── 8.7 提交限流自动退避重试（免费档 queue full / 429 实测会批量扫荡） ──
+group('视频提交限流自动重试');
+{
+  await api('PUT', '/api/settings', { video_submit_retries: '3', video_submit_backoff_s: '1' });
+
+  // 单发：前两次 503 排队满，第三次成功 → 整体应报成功
+  const r = await api('POST', '/api/videos', { prompt: '__retry2__ 雨夜街道', mode: 'text_to_video', model: 'agnes-video-2.5-flash' });
+  eq('限流后自动退避最终成功', r.data.ok, true);
+  eq('恰好消耗 3 次提交', videoCalls.r2, 3);
+
+  // 预算耗尽：1+3 次全 503 → 落一条失败记录，报错给中文限流解释
+  const f = await api('POST', '/api/videos', { prompt: '__retry9__ 运气不佳', mode: 'text_to_video', model: 'agnes-video-2.5-flash' });
+  eq('重试预算耗尽后失败', f.data.ok, false);
+  ok('失败提示为中文限流说明', /排队已满或限流/.test(String(f.data.error)), String(f.data.error).slice(0, 40));
+  eq('重试止步于预算', videoCalls.r9, 4);
+
+  // 4xx schema 类错误不重试，不放大无意义请求
+  const b = await api('POST', '/api/videos', { prompt: '__bad400__ x', mode: 'text_to_video', model: 'agnes-video-2.5-flash' });
+  eq('400 直接失败', b.data.ok, false);
+  eq('400 不重试', videoCalls.bad, 1);
+
+  // 批量：一项限流一次后成功 + 一项直接成功 → 整批应全绿
+  const bj = await api('POST', '/api/batch/videos', {
+    items: [
+      { prompt: '__retry1__ 镜头一', mode: 'text_to_video', model: 'agnes-video-2.5-flash' },
+      { prompt: 'apitest plain shot2', mode: 'text_to_video', model: 'agnes-video-2.5-flash' },
+    ],
+  });
+  eq('批量任务受理', bj.data.ok, true);
+  let job = null;
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    job = (await api('GET', `/api/batch/${bj.data.jobId}`)).data;
+    if (job && job.status === 'done') break;
+  }
+  eq('批量全部成功', job && job.ok, 2);
+  eq('批量零失败', job && job.fail, 0);
+  eq('限流项自动重试 1 次', videoCalls.r1, 2);
+
+  // 清理本次调试记录，不留垃圾
+  const all = await api('GET', '/api/videos');
+  for (const v of all.data) {
+    if (/__retry|__bad400__|^apitest plain shot2$/.test(String(v.video_prompt))) {
+      await api('DELETE', `/api/videos/${v.id}`);
+    }
+  }
+  await api('PUT', '/api/settings', { video_submit_retries: '4', video_submit_backoff_s: '3' });
 }
 
 // ── 9. 手动刷新与补录 ────────────────────────────────────────
