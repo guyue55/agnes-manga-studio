@@ -292,8 +292,8 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 ### 8.8 工程链审计补充（T 系列终版；含 09 残留实证：本会话实测 build/ 遗留 4 个 ui-* 目录）
 
 - **T3 ✅ apitest mock 从不读请求头（本会话复核 grep 0 命中）**：`Authorization` 丢失/改名测试仍全绿、线上全 401——结构性盲区。mock 校验 Bearer 前缀 + 错 key 负例。
-- **T4 🐛 chat 的 response_format 4xx 降级路径零覆盖**（`agnes.js:152-168`；mock 恒 200）：分镜 json_mode 兜底坏了测不出。
-- **T5 🐛 事故级分支 mock 不可达**：提交超时/HTTP200 内嵌 error/图片 URL 分支/downloadVideo 瞬态重试——全部只靠线上验证。补 /slow、/error200、flaky.mp4 mock。
+- **T4 ✅ chat 的 response_format 4xx 降级路径零覆盖**（`agnes.js:152-168`；mock 恒 200）：分镜 json_mode 兜底坏了测不出。已修：mock 认模型名分流（reject-json→400、deny-key→401），断言首发带 format、降级不带、401 绝不降级三事。
+- **T5 ◐ 事故级分支 mock 不可达**：提交超时/HTTP200 内嵌 error/图片 URL 分支/downloadVideo 瞬态重试——全部只靠线上验证。已覆盖前两者：/slow mock（11.5s）验证超时记 submit_timeout_unknown 三态；200 内嵌 error 验证落库 submit_failed+error_message 可复盘。余：图片 URL 分支与 downloadVideo 瞬态重试仍无 mock（收益递减，半 open 留档）。
 - **T6 ✅ apitest 不验证被测服务身份**（本会话复核 waitHealth 只看 `r.ok`，`apitest.mjs:120-129`）：随机端口撞车时破坏性用例（级联删/replace）打在陌生 Agnes 实例上。校验 `health.data_home === HOME` + `listen(0)` 预探。
 - T7 ✅ apitest 无 try/finally：中途异常泄漏服务进程与数据目录（`apitest.mjs:698-701`）。
 - T8 ✅ build-exe 的 VERSION 是死代码（本会话复核：`build-exe.mjs:32` 读后不用；`server.js:26` 双源硬编码）：发版注入是假动作。SEA stamp 仅比对版本号（`server.js:60-63`，本会话复核）→ 忘 bump 时新 exe 永远跑旧 lib/public——与 P3 同根，**stamp 应改内容哈希**。
