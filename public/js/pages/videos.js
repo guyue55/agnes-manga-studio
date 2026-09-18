@@ -8,7 +8,7 @@ import {
   IMAGE_ROLES, statusBadge, relTime, modelChoices,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -27,11 +27,11 @@ export default async function videos(container, params) {
       neg: 'low quality, blurry, distorted face, flickering, unstable motion',
       frames: 1, fps: 24, seed: '',
     },
-    multi: { imgs: [{ url: '', role: '角色参考' }, { url: '', role: '场景参考' }], prompt: '', frames: 1, seed: '' },
+    multi: { imgs: [{ url: '', role: '角色参考' }, { url: '', role: '场景参考' }], prompt: '', frames: 1, fps: 24, seed: '' },
     kf: {
       start: '', middle: '', end: '',
       prompt: 'Create a smooth cinematic transition between keyframes, maintaining character identity, consistent lighting, natural motion',
-      frames: 1, seed: '',
+      frames: 1, fps: 24, seed: '',
     },
   };
 
@@ -42,7 +42,7 @@ export default async function videos(container, params) {
       actions: `
         ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
         <select class="select select-sm" id="model" style="width:180px"></select>
-        <button class="btn" id="reload">${icon('refresh', 16)}</button>`,
+        <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="grid" style="grid-template-columns:minmax(340px,1fr) minmax(0,1.25fr);gap:20px">
       <div>
@@ -62,8 +62,19 @@ export default async function videos(container, params) {
     </div>`;
 
   const picker = container.querySelector('#p-picker');
-  picker.onchange = () => { projectId = picker.value; loadImages(); loadRecent(); };
-  container.querySelector('#reload').onclick = () => { loadImages(); loadRecent(); };
+  // 素材下拉的数据源是 images 数组：切项目必须重渲染表单，否则选到旧项目的图。
+  // 提交进行中不重建（会移除 #submit 按钮打断回调链）
+  picker.onchange = async () => {
+    projectId = picker.value;
+    await loadImages();
+    if (!submitting) renderForm();
+    loadRecent();
+  };
+  container.querySelector('#reload').onclick = async () => {
+    await loadImages();
+    if (!submitting) renderForm();
+    loadRecent();
+  };
   container.querySelector('#go-tasks').onclick = () => navigate('tasks');
 
   const mv = modelChoices(state.models, 'video', [state.settings.default_video_model || 'agnes-video-v2.0']);
@@ -261,7 +272,7 @@ export default async function videos(container, params) {
       Object.assign(payload, {
         mode: 'multi_image', prompt: S.multi.prompt, source_images: valid,
         width: 1152, height: 768, num_frames: DURATION_PRESETS[S.multi.frames].frames,
-        frame_rate: 24, seed: S.multi.seed || undefined,
+        frame_rate: S.multi.fps, seed: S.multi.seed || undefined,
       });
     } else {
       if (!S.kf.start.trim() || !S.kf.end.trim()) { toast.err('起始帧和结束帧都要填'); return; }
@@ -270,20 +281,22 @@ export default async function videos(container, params) {
       Object.assign(payload, {
         mode: 'keyframe', prompt: S.kf.prompt, source_images: frames, mode_flag: 'keyframes',
         width: 1152, height: 768, num_frames: DURATION_PRESETS[S.kf.frames].frames,
-        frame_rate: 24, seed: S.kf.seed || undefined,
+        frame_rate: S.kf.fps, seed: S.kf.seed || undefined,
       });
     }
 
     submitting = true;
     const btn = container.querySelector('#submit');
-    btn.disabled = true;
-    btn.innerHTML = `<div class="spinner sm"></div>提交中…（图生视频可能要等 1-2 分钟）`;
+    setBusy(btn, true, '提交中（图生视频可能 1-2 分钟）');
 
-    const r = await api.createVideo(payload);
-    submitting = false;
-    btn.disabled = false;
-    btn.innerHTML = icon('wand', 15) + '重新提交';
-    btn.onclick = submit;
+    let r;
+    try {
+      r = await api.createVideo(payload);
+    } finally {
+      // 网络断连时 res.text() 会抛出；不释放锁就永久卡在"提交中"无法重试
+      submitting = false;
+      setBusy(btn, false);
+    }
 
     if (!r.ok) { toast.err(r.error); showDiag(null, r.error); return; }
     const d = r.data;

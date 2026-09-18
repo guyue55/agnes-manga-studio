@@ -4,7 +4,7 @@
  */
 import { icon, esc, TEMPLATE_TYPES, modelChoices, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, spinner, confirm, options } from '../ui.js';
+import { modal, toast, spinner, confirm, options, setBusy } from '../ui.js';
 import { head } from './helpers.js';
 import { state, refreshState } from '../app.js';
 
@@ -136,7 +136,7 @@ export default async function settings(container) {
         <div class="hint" style="margin-bottom:14px">模型列表来自 Agnes 的 OpenAI 兼容 <span style="font-family:var(--mono)">GET /v1/models</span>。即使新模型暂时无法识别类型，也会保留为可选项；旧模型会作为回退项保留。</div>
         <div class="grid g2" style="gap:0 14px">
           <div class="field"><label>自动刷新模型目录</label>
-            <div class="row"><div class="switch ${settings.auto_refresh_models === '1' ? 'on' : ''}" id="m-auto"></div><span style="font-size:12px;color:var(--text-3)">程序启动时检查缓存是否过期</span></div>
+            <div class="row"><button type="button" role="switch" class="switch ${settings.auto_refresh_models === '1' ? 'on' : ''}" id="m-auto" aria-checked="${settings.auto_refresh_models === '1'}"></button><span style="font-size:12px;color:var(--text-3)">程序启动时检查缓存是否过期</span></div>
           </div>
           <div class="field"><label>模型缓存有效期（小时）</label><input class="input" id="m-ttl" type="number" min="1" value="${esc(settings.model_cache_ttl_hours || 24)}" /></div>
         </div>
@@ -162,7 +162,7 @@ export default async function settings(container) {
         <div class="field" style="margin-top:6px">
           <label>视频完成后自动保存到本机</label>
           <div class="row">
-            <div class="switch ${settings.auto_download_video === '1' ? 'on' : ''}" id="t-auto"></div>
+            <button type="button" role="switch" class="switch ${settings.auto_download_video === '1' ? 'on' : ''}" id="t-auto" aria-checked="${settings.auto_download_video === '1'}"></button>
             <span style="font-size:12px;color:var(--text-3)">开启后生成的视频会自动下载到本地素材库，不怕远端链接过期</span>
           </div>
         </div>
@@ -264,11 +264,13 @@ export default async function settings(container) {
       };
       p.querySelector('#refresh-models-api').onclick = async (e) => {
         const btn = e.currentTarget;
-        btn.disabled = true;
-        btn.innerHTML = `<div class="spinner sm"></div>拉取中…`;
-        const r = await api.refreshModels();
-        btn.disabled = false;
-        btn.innerHTML = `${icon('refresh', 13)}拉取模型目录`;
+        setBusy(btn, true, '拉取中');
+        let r;
+        try {
+          r = await api.refreshModels();
+        } finally {
+          setBusy(btn, false); // 断连也要解锁，否则永久停在"拉取中"
+        }
         if (r.ok) {
           state.models = r.data.models;
           toast.ok(`已拉取 ${r.data.models.models.length} 个模型`);
@@ -289,14 +291,17 @@ export default async function settings(container) {
         };
       });
     } else if (section === 'model') {
-      p.querySelector('#m-auto').onclick = () => p.querySelector('#m-auto').classList.toggle('on');
+      const sw = p.querySelector('#m-auto');
+      sw.onclick = () => { const on = sw.classList.toggle('on'); sw.setAttribute('aria-checked', on); };
       p.querySelector('#refresh-models').onclick = async (e) => {
         const btn = e.currentTarget;
-        btn.disabled = true;
-        btn.innerHTML = `<div class="spinner sm"></div>拉取中…`;
-        const r = await api.refreshModels();
-        btn.disabled = false;
-        btn.innerHTML = `${icon('refresh', 13)}重新拉取模型`;
+        setBusy(btn, true, '拉取中');
+        let r;
+        try {
+          r = await api.refreshModels();
+        } finally {
+          setBusy(btn, false);
+        }
         if (r.ok) {
           state.models = r.data.models;
           toast.ok(`已拉取 ${r.data.models.models.length} 个模型`);
@@ -315,7 +320,7 @@ export default async function settings(container) {
       });
     } else if (section === 'task') {
       const auto = p.querySelector('#t-auto');
-      auto.onclick = () => auto.classList.toggle('on');
+      auto.onclick = () => auto.setAttribute('aria-checked', auto.classList.toggle('on'));
       p.querySelector('#save-task').onclick = () => save({
         video_poll_interval: p.querySelector('#t-interval').value,
         video_max_polls: p.querySelector('#t-max').value,

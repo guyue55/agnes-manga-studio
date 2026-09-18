@@ -4,7 +4,7 @@
  */
 import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -21,7 +21,7 @@ export default async function images(container, params) {
       desc: 'Agnes 图像模型 · 生成结果自动保存到本机素材库',
       actions: `
         ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
-        <button class="btn" id="reload">${icon('refresh', 16)}</button>`,
+        <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="grid" style="grid-template-columns:minmax(320px,0.85fr) minmax(0,2fr);gap:20px">
       <div>
@@ -37,7 +37,7 @@ export default async function images(container, params) {
           </div>
 
           <div id="t2i-box">
-            ${projectId ? `<div class="field"><label>关联分镜（可选）</label><select class="select" id="sb-sel"></select></div>` : ''}
+            <div class="field"><label>关联分镜（可选）</label><select class="select" id="sb-sel"></select></div>
             <div class="field">
               <label>图片提示词</label>
               <textarea class="textarea mono" id="t2i-prompt" rows="6" placeholder="描述画面，支持中英文&#10;例：cinematic anime style, a young woman in red dress, golden hour, detailed background"></textarea>
@@ -63,7 +63,7 @@ export default async function images(container, params) {
               <div class="field"><label>输出尺寸</label><select class="select" id="i2i-size">${options(IMAGE_SIZES, 'value', 'label', '1024x1024')}</select></div>
               <div class="field">
                 <label>保留原构图</label>
-                <div class="row"><div class="switch on" id="i2i-keep"></div><span style="font-size:12px;color:var(--text-3)">开启后追加 preserve composition</span></div>
+                <div class="row"><button type="button" role="switch" class="switch on" id="i2i-keep" aria-checked="true"></button><span style="font-size:12px;color:var(--text-3)">开启后追加 preserve composition</span></div>
               </div>
             </div>
           </div>
@@ -83,8 +83,8 @@ export default async function images(container, params) {
     </div>`;
 
   const picker = container.querySelector('#p-picker');
-  picker.onchange = () => { projectId = picker.value; load(); };
-  container.querySelector('#reload').onclick = () => load();
+  picker.onchange = () => { projectId = picker.value; loadStoryboards(); load(); };
+  container.querySelector('#reload').onclick = () => { loadStoryboards(); load(); };
   container.querySelector('#gen').onclick = generate;
   container.querySelectorAll('#mode [data-mode]').forEach((b) => {
     b.onclick = () => {
@@ -95,7 +95,7 @@ export default async function images(container, params) {
     };
   });
   const keep = container.querySelector('#i2i-keep');
-  keep.onclick = () => keep.classList.toggle('on');
+  keep.onclick = () => keep.setAttribute('aria-checked', keep.classList.toggle('on'));
 
   // 模型下拉
   const ms = modelChoices(state.models, 'image', [state.settings.default_image_model || 'agnes-image-2.1-flash', 'agnes-image-2.0-flash']);
@@ -103,10 +103,16 @@ export default async function images(container, params) {
 
   // 分镜下拉
   async function loadStoryboards() {
-    if (!projectId) return;
-    const r = await api.storyboards(projectId);
     const sel = container.querySelector('#sb-sel');
     if (!sel) return;
+    if (!projectId) {
+      // 没选项目时明确置空并禁用，避免残留上一个项目的选项
+      sel.innerHTML = '<option value="">请先选择项目</option>';
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    const r = await api.storyboards(projectId);
     const list = (r.ok && r.data) || [];
     sel.innerHTML = `<option value="">不关联</option>`
       + list.map((s) => `<option value="${esc(s.id)}">#${esc(s.shot_number)} ${esc(s.shot_type)} - ${esc(String(s.scene_description).slice(0, 22))}</option>`).join('');
@@ -151,13 +157,19 @@ export default async function images(container, params) {
     }
 
     generating = true;
-    container.querySelector('#gen').disabled = true;
+    const genBtn = container.querySelector('#gen');
+    setBusy(genBtn, true);
     st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px">生成中，Agnes 出图通常需要十几秒…</span></div>`;
 
-    const r = await api.genImage(payload);
-    generating = false;
-    container.querySelector('#gen').disabled = false;
-    st.innerHTML = '';
+    let r;
+    try {
+      r = await api.genImage(payload);
+    } finally {
+      // 断连时 res.text() 会抛出，必须保证锁被释放，否则按钮永久禁用
+      generating = false;
+      setBusy(genBtn, false);
+      st.innerHTML = '';
+    }
     if (!r.ok) { toast.err(r.error); return; }
     toast.ok('图片已生成并保存到素材库');
     load();

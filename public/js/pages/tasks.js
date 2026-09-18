@@ -8,7 +8,7 @@ import {
   relTime, fmtTime, copyText,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy } from '../ui.js';
 import { head } from './helpers.js';
 import { onEvent } from '../app.js';
 
@@ -233,9 +233,15 @@ export default async function tasks(container) {
       const r = await api.bindVideo(id, vid);
       if (r.ok) { toast.ok('已绑定，开始查询'); load(); } else toast.err(r.error);
     });
-    bindOne('save', async (id) => {
-      toast.info('正在下载视频到本地…');
-      const r = await api.downloadVideo(id);
+    bindOne('save', async (id, btn) => {
+      if (btn.disabled) return;
+      setBusy(btn, true);
+      let r;
+      try {
+        r = await api.downloadVideo(id);
+      } finally {
+        setBusy(btn, false);
+      }
       if (r.ok) { toast.ok(`已保存到本机（${(r.data.bytes / 1024 / 1024).toFixed(1)} MB）`); load(); }
       else toast.err(r.error);
     });
@@ -293,12 +299,18 @@ export default async function tasks(container) {
   }
 
   async function batchFix() {
-    toast.info('正在查询缺失地址的任务…');
-    const r = await api.batchRefreshVideos();
-    if (!r.ok) { toast.err(r.error); return; }
-    if (r.data.found) toast.ok(`已为 ${r.data.found} / ${r.data.total} 个任务补到视频地址`);
-    else toast.warn(`查了 ${r.data.total} 个任务，都还没返回地址，稍后再试`);
-    load();
+    const btn = container.querySelector('#batch-fix');
+    if (btn.disabled) return;
+    setBusy(btn, true, '查询中');
+    try {
+      const r = await api.batchRefreshVideos();
+      if (!r.ok) { toast.err(r.error); return; }
+      if (r.data.found) toast.ok(`已为 ${r.data.found} / ${r.data.total} 个任务补到视频地址`);
+      else toast.warn(`查了 ${r.data.total} 个任务，都还没返回地址，稍后再试`);
+      load();
+    } finally {
+      setBusy(btn, false);
+    }
   }
 
   await load();

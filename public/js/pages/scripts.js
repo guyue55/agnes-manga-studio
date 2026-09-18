@@ -32,7 +32,7 @@ export default async function scripts(container, params) {
       desc: '用 Agnes 文本模型从构思走到单集脚本，提示词模板可在设置页调整',
       actions: `
         ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
-        <button class="btn" id="reload">${icon('refresh', 16)}</button>`,
+        <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="grid" style="grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px">
       <div>
@@ -120,6 +120,7 @@ export default async function scripts(container, params) {
   }
 
   async function generate() {
+    if (generating) return; // 双击会重复烧一次 API 配额
     const tpl = tplOf(TAB_TPL[tab]);
     if (!tpl) return;
     if (!state.settings.agnes_api_key) {
@@ -140,21 +141,25 @@ export default async function scripts(container, params) {
       if (el) el.textContent = `Agnes 正在生成… ${Math.round((Date.now() - t0) / 1000)}s`;
     }, 1000);
 
-    const r = await api.genText({
-      messages: [
-        { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。请用中文回答。' },
-        { role: 'user', content: prompt },
-      ],
-      model: container.querySelector('#model').value,
-      project_id: projectId || null,
-      note: tpl.name,
-      json_mode: true, // 模板要求的都是结构化 JSON，走约束解码不再吐坏 JSON
-    });
-
-    clearInterval(tmr);
-    generating = false;
-    container.querySelector('#gen').disabled = false;
-    st.innerHTML = '';
+    let r;
+    try {
+      r = await api.genText({
+        messages: [
+          { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。请用中文回答。' },
+          { role: 'user', content: prompt },
+        ],
+        model: container.querySelector('#model').value,
+        project_id: projectId || null,
+        note: tpl.name,
+        json_mode: true, // 模板要求的都是结构化 JSON，走约束解码不再吐坏 JSON
+      });
+    } finally {
+      // 断连抛出也要清定时器 + 解锁，否则按钮永久禁用且 interval 泄漏
+      clearInterval(tmr);
+      generating = false;
+      container.querySelector('#gen').disabled = false;
+      st.innerHTML = '';
+    }
 
     if (!r.ok) { toast.err(r.error); return; }
     result = r.data.content || '';
@@ -227,20 +232,26 @@ export default async function scripts(container, params) {
   }
 
   async function optimize(tpl) {
-    if (!tpl || !result) return;
+    if (!tpl || !result || generating) return;
+    generating = true;
     const st = container.querySelector('#gen-status');
     st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px">正在${esc(tpl.name)}…</span></div>`;
     const prompt = (tpl.content || '').replace(/\{\{[^}]+\}\}/g, result);
-    const r = await api.genText({
-      messages: [
-        { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。' },
-        { role: 'user', content: prompt },
-      ],
-      model: container.querySelector('#model')?.value,
-      project_id: projectId || null,
-      note: tpl.name,
-    });
-    st.innerHTML = '';
+    let r;
+    try {
+      r = await api.genText({
+        messages: [
+          { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。' },
+          { role: 'user', content: prompt },
+        ],
+        model: container.querySelector('#model')?.value,
+        project_id: projectId || null,
+        note: tpl.name,
+      });
+    } finally {
+      generating = false;
+      st.innerHTML = '';
+    }
     if (!r.ok) { toast.err(r.error); return; }
     result = r.data.content || result;
     renderResult();
