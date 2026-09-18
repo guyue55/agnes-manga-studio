@@ -804,6 +804,28 @@ group('SSE');
   ok('SSE 多客户端广播（双标签页场景）', b1 === true && b2 === true, JSON.stringify({ b1, b2 }));
 }
 
+group('B6 请求体闸门（413 契约）');
+{
+  // 120MB 上限（API 体唯一显式限）：超限必须"先送 413 再断流"，客户端要能读到 JSON 错误而非连接重置
+  const portNum = Number(new URL(BASE).port);
+  const outcome = await new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port: portNum, path: '/api/agnes/text', method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    // 分块灌过 120MB 真限（readBody 唯一调用点的显式值），让服务端在读流中途触发上限
+    req.on('error', (e) => resolve({ connError: String(e.code || e.message) }));
+    const MB = 'x'.repeat(1024 * 1024);
+    req.write('{\"prompt\":\"');
+    for (let i = 0; i < 121; i++) req.write(MB);
+    req.end('\"}');
+  });
+  ok('超限请求收到 413（非连接重置）', outcome.status === 413 && String(outcome.body).includes('请求体过大'), JSON.stringify(outcome).slice(0, 160));
+  const after = await api('GET', '/api/settings');
+  eq('超限连接处置后服务照常', after.status, 200);
+}
+
 // ── 16. 清理 ─────────────────────────────────────────────────
 group('T4/T5 事故级路径');
 {
