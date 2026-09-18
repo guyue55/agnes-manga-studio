@@ -52,6 +52,8 @@ export default async function storyboards(container, params) {
         <div class="spacer"></div>
         <button class="btn btn-sm" id="batch-img">${icon('image', 14)}批量生成图片</button>
         <button class="btn btn-sm" id="batch-vid">${icon('video', 14)}批量生成视频</button>
+        <button class="btn btn-sm" id="exp-csv" title="本集分镜表 CSV（UTF-8 BOM，Excel 直开）">${icon('download', 13)}CSV</button>
+        <button class="btn btn-sm" id="exp-md" title="本集提示词 Markdown（含画风注入，可直接交给外协管线）">${icon('download', 13)}MD</button>
         <button class="btn btn-sm btn-danger" id="clear-ep">${icon('trash', 14)}清空本集</button>
       </div>
     </div>
@@ -72,6 +74,9 @@ export default async function storyboards(container, params) {
   container.querySelector('#batch-img').onclick = () => batchImages();
   container.querySelector('#batch-vid').onclick = () => batchVideos();
   container.querySelector('#clear-ep').onclick = clearEpisode;
+  // B4.6：导出跟着"当前项目+当前集"语境走
+  container.querySelector('#exp-csv').onclick = () => { if (projectId) window.open(`/api/projects/${projectId}/export.csv?episode=${episode}`, '_blank'); else toast.err('请先选择项目——右上角下拉选一个，或去「项目管理」新建'); };
+  container.querySelector('#exp-md').onclick = () => { if (projectId) window.open(`/api/projects/${projectId}/export.md?episode=${episode}`, '_blank'); else toast.err('请先选择项目——右上角下拉选一个，或去「项目管理」新建'); };
   container.querySelector('#sel-all').onchange = (e) => {
     selected.clear();
     if (e.target.checked) rows.forEach((r) => selected.add(r.id));

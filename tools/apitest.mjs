@@ -758,6 +758,22 @@ group('B4.1 画风分层注入');
   await api('DELETE', '/api/projects/' + PID + '?cascade=1');
 }
 
+group('B4.6 导出矩阵');
+{
+  const proj = await api('POST', '/api/projects', { name: '导出测试', art_style: '水彩' });
+  const PID = proj.data.id;
+  const sb = await api('POST', '/api/storyboards', { project_id: PID, shot_number: 9, scene_description: '雨中告别', image_prompt: 'two people under an umbrella', video_prompt: 'camera slowly pulls back', duration_seconds: 4 });
+  await api('PUT', `/api/storyboards/${sb.data.id}`, { image_prompt: 'two people under an umbrella' });
+  const csvBuf = new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer());
+  ok('CSV 带 UTF-8 BOM 字节', csvBuf[0] === 0xEF && csvBuf[1] === 0xBB && csvBuf[2] === 0xBF);
+  const csvText = new TextDecoder().decode(csvBuf);
+  ok('CSV 表头双语列', csvText.includes('图片提示词·含画风'));
+  ok('CSV 注入映射画风', csvText.includes('watercolor illustration, soft paper texture'));
+  const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
+  ok('MD 含镜头代码块', mdText.includes('```') && mdText.includes('camera slowly pulls back'));
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('B3.5 引用守卫删除');
 {
   // 删图/删视频不再是"悬挂引用制造机"：全量解关联并回传镜头号，状态同步回退
