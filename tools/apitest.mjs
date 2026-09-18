@@ -703,8 +703,17 @@ group('导入导出');
 // T3 负例：mock 已强制 Bearer 校验——错 Key 必须炸出 ok:false（旧 mock 不读头，永远测不出鉴权回归）
 {
   await api('PUT', '/api/settings', { agnes_api_key: '__NOAUTH__' });
+  const tasksBefore = (await api('GET', '/api/tasks')).data.length;
   const badKey = await api('POST', '/api/agnes/text', { messages: [{ role: 'user', content: 'hi' }] });
   ok('错 Key → 业务失败', badKey.data.ok === false, JSON.stringify(badKey.data).slice(0, 90));
+  eq('错 Key 类型化为 invalid_api_key（UI 才能显示"Key 无效"而非笼统失败）', badKey.data.errorType, 'invalid_api_key');
+  ok('错 Key 错误文案非空且含上游原因', typeof badKey.data.error === 'string' && badKey.data.error.length > 4, JSON.stringify(badKey.data.error));
+  const tasksAfter = (await api('GET', '/api/tasks')).data;
+  const failedRec = tasksAfter.find((t) => t.status === 'failed' && /invalid|api key|401/i.test(String(t.error_message || '')));
+  ok('失败也留任务记录（任务页历史承诺）', tasksAfter.length > tasksBefore && !!failedRec, `before=${tasksBefore} after=${tasksAfter.length}`);
+  const conn = await api('POST', '/api/settings/test', { kind: 'text' });
+  ok('设置页连通性测试错 Key → ok:false', conn.data.ok === false, JSON.stringify(conn.data).slice(0, 110));
+  eq('连通性测试错 Key 同样类型化', conn.data.errorType, 'invalid_api_key');
   await api('PUT', '/api/settings', { agnes_api_key: MOCK_KEY });
   const back = await api('POST', '/api/agnes/text', { messages: [{ role: 'user', content: 'hi' }] });
   ok('恢复 Key → 成功', back.data.ok === true, JSON.stringify(back.data).slice(0, 90));
