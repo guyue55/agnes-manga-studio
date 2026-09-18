@@ -715,6 +715,24 @@ try {
       key('Enter', 'Enter', 2); // Ctrl+Enter
       await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), 'Ctrl+Enter 提交关闭', 6000);
       ok('Ctrl+Enter 走主按钮提交路径', true);
+      // A11y（APG）：关闭弹窗后焦点必须回到打开它的元素，否则键盘用户下次 Tab 从页首开始
+      await cdp.eval(`location.hash = '#/projects'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-act="edit"]')`), '编辑钮就绪');
+      await cdp.eval(`document.querySelector('[data-act="edit"]').focus(); document.querySelector('[data-act="edit"]').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.modal-mask')`), '焦点归还探针弹窗');
+      key('Escape', 'Escape');
+      await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), '探针弹窗关闭', 6000);
+      await sleep(250);
+      ok('关闭后焦点归还触发者（APG）', await cdp.eval(`document.activeElement === document.querySelector('[data-act="edit"]')`), await cdp.eval(`document.activeElement ? document.activeElement.tagName + '/' + (document.activeElement.getAttribute('data-edit') || document.activeElement.id || '') : 'none'`));
+      // 灵敏度对照：触发者在弹窗打开期间被移除 → 不得抛错、焦点不得停在游离节点
+      await cdp.eval(`const b = document.querySelector('[data-act="edit"]'); b.focus(); b.click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.modal-mask')`), '对照弹窗');
+      await cdp.eval(`const b = document.querySelector('[data-act="edit"]'); window.__removedOpener = b; b.remove(); return true;`);
+      key('Escape', 'Escape');
+      await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), '对照弹窗关闭', 6000);
+      await sleep(250);
+      ok('灵敏度对照：触发者已移除时不抛错、焦点不在游离节点',
+        await cdp.eval(`return window.__removedOpener.isConnected === false && (!document.activeElement || document.activeElement.isConnected) && document.activeElement !== window.__removedOpener;`));
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 

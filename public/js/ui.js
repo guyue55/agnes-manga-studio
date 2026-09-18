@@ -44,6 +44,8 @@ toast.info = (m, ms) => toast(m, 'info', ms);
  */
 export function modal(o) {
   const root = document.getElementById('modal-root');
+  // A11y（WAI-ARIA APG）：记住打开弹窗的元素，关闭后把焦点还回去
+  const opener = (document.activeElement && document.activeElement !== document.body) ? document.activeElement : null;
   const mask = document.createElement('div');
   mask.className = 'modal-mask';
   mask.innerHTML = `
@@ -117,6 +119,10 @@ export function modal(o) {
       obs.disconnect();
       document.removeEventListener('keydown', onKey);
       if (!root.querySelector('.modal-mask')) document.body.classList.remove('modal-open');
+      // 仅当焦点确实已丢失（掉到 body）且触发者仍在文档中才归还，避免抢走调用方主动设置的焦点
+      if (opener && opener.isConnected && (!document.activeElement || document.activeElement === document.body)) {
+        try { opener.focus(); } catch { /* 已不可聚焦 */ }
+      }
       if (o.onDismiss) o.onDismiss(); // R1：ESC/遮罩/× 关闭也有明确信号，调用方 Promise 不会永挂
     }
   });
