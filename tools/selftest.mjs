@@ -116,11 +116,11 @@ group('导入导出');
   copy.projects = copy.projects.map((p) => ({ ...p, id: `${p.id}_copy` }));
   const before = store.count('projects');
   const n = store.importAll({ collections: copy }, 'merge');
-  ok('合并导入有新增', n > 0);
+  ok('合并导入有新增', n.added > 0);
   ok('合并后条数增加', store.count('projects') > before);
 
   const n2 = store.importAll({ collections: { projects: [{ id: 'only-one', name: '替换测试' }] } }, 'replace');
-  ok('替换导入返回条数', n2 >= 1);
+  ok('替换导入返回条数', n2.added >= 1);
   eq('替换后只剩一条', store.count('projects'), 1);
   // 新语义：replace 时备份里没有的集合也要一起清空（旧写法 continue 跳过 → 「清空全部数据」空转）
   eq('替换会清掉未提供的集合', store.count('scripts'), 0);
@@ -128,6 +128,33 @@ group('导入导出');
   eq('空 collections 替换 = 全库清空', store.count('projects'), 0);
   store.importAll({ collections: copy }, 'merge'); // 恢复给后续组用
   ok('合并恢复后又有数据', store.count('projects') >= 1);
+
+  // ── 审核批 H3/H4 钉子 ────────────────────────────────────
+  eq('fsync 真实生效（失败计数为 0）', store.fsyncMisses, 0); // 上一版 flags 写错时 fsync 是死代码
+  const bad = store.importAll({
+    collections: {
+      image_assets: [
+        { id: 'img_ok', local_file: `${store.imagesDir()}/keep.png` },
+        { id: 'img_evil', local_file: '/tmp/should_survive.txt' },
+        { id: 'img_rel', local_file: '../../etc/passwd' },
+        null, { name: '无 id 僵尸行' }, 42,
+      ],
+    },
+  }, 'merge');
+  eq('导入清洗越界 local_file 置空', store.get('image_assets', 'img_evil').local_file, '');
+  eq('导入保留素材根内合法路径', store.get('image_assets', 'img_ok').local_file, path.join(store.imagesDir(), 'keep.png'));
+  eq('非法路径行不留残值', store.get('image_assets', 'img_rel').local_file, '');
+  eq('坏行数如实上报 skipped', bad.skipped, 3);
+  eq('skipped 不混进 added（img 表只进 3 行）', store.list('image_assets').filter((r) => r.id.startsWith('img_')).length, 3);
+  store.removeWhere('image_assets', (r) => String(r.id).startsWith('img_'));
+  // replace 模式带 null 行：旧实现会把 MEM 写脏并落盘 → 全站永久 500（"一锤死"）
+  store.importAll({ collections: { projects: [{ id: 'p_alive', name: '活项目' }] } }, 'replace');
+  const nbad = store.importAll({ collections: { projects: [null, { id: 'p_x' }, { name: '无 id' }] } }, 'replace');
+  eq('replace 拒绝脏行不炸库（skipped=2）', nbad.skipped, 2);
+  ok('replace 后 stats() 仍可用（未写脏）', (() => { try { return typeof store.stats().total_projects === 'number'; } catch { return false; } })());
+  eq('replace 只留合法行', store.count('projects'), 1);
+  eq('合法行 id 正确', store.get('projects', 'p_x')?.id, 'p_x');
+  store.importAll({ collections: copy }, 'merge');
 }
 
 // ── 4. 统计 ──────────────────────────────────────────────────

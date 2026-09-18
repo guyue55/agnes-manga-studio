@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -90,7 +91,22 @@ async function main() {
   const mainPath = path.join(BUILD, 'main.cjs');
   const configPath = path.join(BUILD, 'sea-config.json');
   const blobPath = path.join(BUILD, 'sea-prep.blob');
-  const mainSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  let mainSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  // T8 修复：此前 VERSION 读了不用（假注入），且 ASSETS_VERSION 恒等于 VERSION——
+  // 忘 bump 时新 exe 里的 stamp 不变，用户永远跑旧 lib/public。
+  // 现在打包时真注入两处：版本号来自 package.json；资源戳 = 全部内嵌资源的内容哈希。
+  const hash = crypto.createHash('sha256');
+  for (const key of Object.keys(assets).sort()) {
+    hash.update(key);
+    hash.update(fs.readFileSync(assets[key]));
+  }
+  const assetsStamp = `sea-${VERSION}-${hash.digest('hex').slice(0, 16)}`;
+  // 判"命中"不能比较替换前后是否变化——版本号恰好已同步时替换是恒等的，会误中止发布
+  assert(/const VERSION = '[^']*';/.test(mainSrc), 'VERSION 注入失败：server.js 中未找到 VERSION 常量（发布链中止）');
+  mainSrc = mainSrc.replace(/const VERSION = '[^']*';/, `const VERSION = '${VERSION}';`);
+  assert(/const ASSETS_VERSION = VERSION;/.test(mainSrc), '资源戳注入失败：server.js 中未找到 ASSETS_VERSION 定义（发布链中止）');
+  mainSrc = mainSrc.replace(/const ASSETS_VERSION = VERSION;/, `const ASSETS_VERSION = '${assetsStamp}';`);
+  console.log(`  注入：VERSION=${VERSION}  资源戳=${assetsStamp}`);
   // server.js 自己不依赖外部包；lib/public 通过 sea.getAsset() 释放。
   fs.writeFileSync(mainPath, mainSrc, 'utf8');
   fs.writeFileSync(configPath, JSON.stringify({

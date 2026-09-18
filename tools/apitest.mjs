@@ -32,6 +32,8 @@ const HOME = path.join(os.tmpdir(), `agnes-apitest-${process.pid}`);
 fs.rmSync(HOME, { recursive: true, force: true });
 fs.mkdirSync(HOME, { recursive: true });
 
+// T3 审核加强：mock 认死值（只校格式则任何假 Key 都放行，「张冠李戴」回归测不出）；常量单源防多处硬编码漂移
+const MOCK_KEY = 'sk-mock-key-1234567890';
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 // ── mock Agnes ───────────────────────────────────────────────
@@ -50,6 +52,12 @@ const mock = http.createServer((req, res) => {
     res.writeHead(code, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(s) });
     res.end(s);
   };
+  // T3：真实 Agnes 全端点要 Bearer。mock 此前从不读请求头——agnes.js 丢头/错头测试也全绿。
+  const auth = String(req.headers.authorization || '');
+  if (auth !== `Bearer ${MOCK_KEY}`) {
+    // 审核加强：值精确匹配注入 Key——只校格式的话任何假 token 都放行，错 Key 链路回归测不出
+    return send(401, { error: { message: /^Bearer \S+$/.test(auth) ? 'invalid api key (mock)' : 'missing bearer (mock guard)' } });
+  }
   if (req.method === 'GET' && u.pathname === '/agnesapi') {
     lastVideoQueryUrl = req.url;
     if (/2\.5/.test(String(u.searchParams.get('model_name') || ''))) {
@@ -150,12 +158,37 @@ srv = spawn(NODE, [path.join(ROOT, 'server.js')], {
 });
 BASE = `http://127.0.0.1:${srvPort}`;
 
+// T7 审核前移：进程/临时目录收尾在 spawn 之后立即注册——
+// 旧顺序里 waitHealth/T6 身份检查之前的任何同步抛出都会漏杀 srv 子进程、漏删 HOME。
+let cleaned = false;
+const cleanup = () => {
+  if (cleaned) return; cleaned = true;
+  try { srv.kill(); } catch { /* gone */ }
+  try { mock.close(); } catch { /* gone */ }
+  try { fs.rmSync(HOME, { recursive: true, force: true }); } catch { /* gone */ }
+};
+process.on('exit', cleanup);
+process.on('SIGINT', () => { cleanup(); process.exit(130); });
+process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+process.on('uncaughtException', (e) => { console.error(e); cleanup(); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(e); cleanup(); process.exit(1); });
+
 if (!await waitHealth(BASE)) {
   console.error('✗ 服务没起来');
-  srv.kill(); mock.close();
+  cleanup();
   process.exit(1);
 }
 console.log(`\nmock Agnes: ${MOCK_BASE}\n被测服务:   ${BASE}\n数据目录:   ${HOME}`);
+{
+  // T6：破坏性用例（级联删/replace 导入）前必须确认"BASE 上就是本测试刚起的实例"。
+  // 端口随机撞车 + server 自动换端口时，不校验就会把删除打在陌生工作台的数据上。
+  const hid = await (await fetch(`${BASE}/api/health`)).json().catch(() => ({}));
+  if (!hid.ok || path.resolve(String(hid.data_home || '')) !== path.resolve(HOME)) {
+    console.error(`✗ 被测实例身份不符（data_home=${hid.data_home}），端口可能被占用。拒绝执行破坏性用例。`);
+    cleanup();
+    process.exit(1);
+  }
+}
 
 // ── 1. 基础 ──────────────────────────────────────────────────
 group('基础接口');
@@ -178,7 +211,7 @@ group('设置');
 {
   const r = await api('PUT', '/api/settings', {
     agnes_api_base_url: `${MOCK_BASE}/v1`,
-    agnes_api_key: 'sk-mock-key-1234567890',
+    agnes_api_key: MOCK_KEY,
     video_poll_interval: '1',
     video_max_polls: '20',
     auto_download_video: '1',
@@ -597,6 +630,16 @@ group('导入导出');
   ok('单项目导出含图片', Array.isArray(peData.image_assets));
 }
 
+// T3 负例：mock 已强制 Bearer 校验——错 Key 必须炸出 ok:false（旧 mock 不读头，永远测不出鉴权回归）
+{
+  await api('PUT', '/api/settings', { agnes_api_key: '__NOAUTH__' });
+  const badKey = await api('POST', '/api/agnes/text', { messages: [{ role: 'user', content: 'hi' }] });
+  ok('错 Key → 业务失败', badKey.data.ok === false, JSON.stringify(badKey.data).slice(0, 90));
+  await api('PUT', '/api/settings', { agnes_api_key: MOCK_KEY });
+  const back = await api('POST', '/api/agnes/text', { messages: [{ role: 'user', content: 'hi' }] });
+  ok('恢复 Key → 成功', back.data.ok === true, JSON.stringify(back.data).slice(0, 90));
+}
+
 // ── 13. 安全 ─────────────────────────────────────────────────
 group('安全');
 {
@@ -610,10 +653,18 @@ group('安全');
 
   const good = await fetch(`${BASE}/api/projects`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1' },
+    // X2 收紧后：Origin 必须 host+port 全匹配（真实浏览器的 Origin 总是带端口的完整源）
+    headers: { 'Content-Type': 'application/json', Origin: BASE },
     body: JSON.stringify({ name: '合法来源' }),
   });
   ok('同源 POST 放行', good.status === 200, String(good.status));
+
+  const wrongPort = await fetch(`${BASE}/api/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:99' },
+    body: JSON.stringify({ name: '本机错端口' }),
+  });
+  eq('本机异端口 Origin 写被拒 403', wrongPort.status, 403);
 
   // 路径穿越
   const trav = await fetch(`${BASE}/assets/images/..%2f..%2fserver.js`);
@@ -623,7 +674,7 @@ group('安全');
 
   // Key 不能从任何接口泄露
   const s = await api('GET', '/api/settings');
-  ok('设置接口不含明文 Key', !JSON.stringify(s.data).includes('sk-mock-key-1234567890'));
+  ok('设置接口不含明文 Key', !JSON.stringify(s.data).includes(MOCK_KEY));
 }
 
 // ── 14. 静态资源 ─────────────────────────────────────────────

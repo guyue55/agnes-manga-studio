@@ -240,6 +240,41 @@ group('用户系统残留检查');
   ok('不存在注册页面文件', !fs.existsSync(path.join(PUB, 'js', 'pages', 'register.js')));
 }
 
+// ── 顶层标识符冲突（E1 修复轮教训：与已导出的 softRefresh 重名 → ESM 语法错误整页白屏）──
+group('顶层标识符');
+{
+  const files = [
+    'public/js/app.js', 'public/js/api.js', 'public/js/ui.js', 'public/js/consts.js',
+    ...fs.readdirSync(path.join(ROOT, 'public/js/pages')).filter((f) => f.endsWith('.js')).map((f) => `public/js/pages/${f}`),
+  ];
+  for (const rel of files) {
+    const src = read(rel);
+    if (!src) continue;
+    const seen = new Map(); // name -> 出处描述
+    const lines = src.split('\n');
+    lines.forEach((ln, i) => {
+      // 仅扫顶格声明/导入（本项目顶层语句不缩进；模板字符串内的行有缩进，不会误伤）
+      const m = /^(?:export\s+)?(?:async\s+)?(?:function|class)\s+([A-Za-z_$][\w$]*)/.exec(ln)
+        || /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*[=(:]/.exec(ln)
+        || /^import\s+\{([^}]+)\}/.exec(ln) && null;
+      if (m) {
+        const name = m[1];
+        if (seen.has(name)) { fail++; failures.push(`${rel}: 顶层标识符重复 "${name}"（${seen.get(name)} vs 第${i + 1}行）`); }
+        else seen.set(name, `第${i + 1}行`);
+      }
+      const im = /^import\s+\{([^}]+)\}\s+from/.exec(ln);
+      if (im) for (const b of im[1].split(',')) {
+        const name = b.split(/\s+as\s+/).pop().trim();
+        if (!name) continue;
+        if (seen.has(name)) { fail++; failures.push(`${rel}: 导入名 "${name}" 与顶层声明冲突（${seen.get(name)} vs 第${i + 1}行）`); }
+        else seen.set(name, `第${i + 1}行`);
+      }
+    });
+    if (!failures.some((f) => f.startsWith(rel + ':'))) ok(`${rel} 顶层无重名`, true);
+  }
+}
+
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
