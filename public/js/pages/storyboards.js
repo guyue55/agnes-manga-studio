@@ -102,6 +102,18 @@ export default async function storyboards(container, params) {
 
   // E7/4.5：批量任务跨页签、跨刷新找回——记 id、进页续订、可取消
   const BKEY = 'agnes.batch.last';
+  /**
+   * R22：批量任务里"每一行现在是什么状态"。key 是分镜 id（任务项里原样回传的 key），
+   * 值是 pending|running|ok|fail|cancelled。表格据此画产出点——只看 job.done/total 的话，
+   * 用户永远不知道是哪一镜在跑、哪一镜失败了。
+   */
+  let jobRowState = new Map();
+  function syncJobRows(j) {
+    const m = new Map();
+    if (j && Array.isArray(j.items)) for (const it of j.items) if (it.key) m.set(it.key, it.state || 'pending');
+    jobRowState = m;
+  }
+
   const cancelBatch = () => {
     if (!job || !job.id) return;
     api.cancelBatch(job.id).then((r) => {
@@ -114,9 +126,14 @@ export default async function storyboards(container, params) {
     if (j.status !== 'running') localStorage.removeItem(BKEY);
     if (promptBusy) return; // E2：「批量补提示词」正占着 #batch-bar，结束后会补渲染，别互踩
     renderBatchBar(container.querySelector('#batch-bar'), j, cancelBatch);
+    // R22：产出点要跟着任务实时变——只在结束时重绘的话，"正在跑"这个状态永远看不到。
+    // 只重画表格（不动别的 DOM），避免把用户正在填的粘贴框或选中态冲掉。
+    const prev = jobRowState;
+    syncJobRows(j);
+    if (rows.length && (prev.size || jobRowState.size)) renderTable();
     if (j.status !== 'running') {
       load();
-      setTimeout(() => { job = null; renderBatchBar(container.querySelector('#batch-bar'), null); }, 4000);
+      setTimeout(() => { job = null; jobRowState = new Map(); renderBatchBar(container.querySelector('#batch-bar'), null); }, 4000);
     }
   });
   (async () => {
@@ -126,6 +143,7 @@ export default async function storyboards(container, params) {
     if (!r.ok) { localStorage.removeItem(BKEY); return; } // 服务重启后旧 job 已蒸发，别拿 404 骚扰
     if (r.data.status === 'running') {
       job = r.data;
+      syncJobRows(r.data);
       if (!promptBusy) renderBatchBar(container.querySelector('#batch-bar'), r.data, cancelBatch);
       toast('发现进行中的批量任务，进度已续上', 'info');
     } else localStorage.removeItem(BKEY);
@@ -173,6 +191,7 @@ export default async function storyboards(container, params) {
         <th style="width:54px">时长</th>
         <th style="min-width:200px">图片提示词</th>
         <th style="min-width:200px">视频提示词</th>
+        <th style="width:64px" title="提示词 / 分镜图 / 视频 三道关的状态">产出</th>
         <th style="width:80px">状态</th>
         <th style="width:150px">操作</th>
       </tr></thead>
@@ -190,6 +209,7 @@ export default async function storyboards(container, params) {
             <td>${esc(s.duration_seconds)}s</td>
             <td>${promptCell(s, 'image_prompt')}</td>
             <td>${promptCell(s, 'video_prompt')}</td>
+            <td>${outputCell(s)}</td>
             <td><span class="badge ${st.cls}">${esc(st.label)}</span></td>
             <td>
               <div class="row" style="gap:4px">
@@ -226,6 +246,74 @@ export default async function storyboards(container, params) {
     el.querySelectorAll('[data-copy-prompt]').forEach((b) => {
       b.onclick = () => copyText(b.getAttribute('data-copy-prompt')).then(() => toast.ok('已复制提示词'));
     });
+    // R23：提示词列就地编辑（见 inlineEdit 的注释）
+    el.querySelectorAll('[data-inline]').forEach((b) => {
+      b.onclick = () => inlineEdit(b);
+    });
+  }
+
+  /**
+   * R23 提示词就地编辑。
+   *
+   * 原来改一条提示词要开 15 个字段的宽弹窗——而"看着表格把几条英文提示词顺一遍"是最常见的动作，
+   * 每次都开弹窗等于每次都要重新定位。这里点击直接把单元格换成 textarea。
+   *
+   * 三条刻意的取舍：
+   * ① **保存后不 `load()`**：整表重渲染会把其它行的编辑态和选中态冲掉，还有与在途请求的竞态。
+   *    只改 `rows` 里那一项 + 就地换回文本（报告的"风险注记"说的就是这个）。
+   * ② **没改动不发请求**：blur 时值没变就直接收摊——否则点一下单元格再点别处就会写一次盘。
+   * ③ **Esc 取消、Ctrl/⌘+Enter 立即保存**：长文本编辑里鼠标离开是常态，得有个"不改了"的出口。
+   */
+  function inlineEdit(btn) {
+    const id = btn.getAttribute('data-inline');
+    const cell = btn.closest('[data-prompt]');
+    const field = cell.getAttribute('data-prompt');
+    const row = rows.find((x) => x.id === id);
+    if (!row) return;
+    const before = String(row[field] || '');
+    const ta = document.createElement('textarea');
+    ta.className = 'textarea mono inline-edit';
+    ta.rows = 3;
+    ta.value = before;
+    ta.setAttribute('aria-label', field === 'image_prompt' ? '就地编辑图片提示词' : '就地编辑视频提示词');
+    cell.replaceChildren(ta);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    let closed = false;  // 编辑态已收摊（收摊后不能再收一次）
+    let saving = false;  // 保存中（防重复提交）
+    const restore = (text) => {
+      if (closed) return;
+      closed = true;
+      // 就地换回只读文本：走一次 renderTable 会把整表重建（丢焦点、丢选中），代价不值得
+      const fresh = promptCell({ ...row, [field]: text }, field);
+      const holder = document.createElement('div');
+      holder.innerHTML = fresh;
+      cell.replaceWith(holder.firstElementChild);
+      const nb = container.querySelector(`[data-prompt="${field}"] [data-inline]`);
+      if (nb) nb.onclick = () => inlineEdit(nb);
+    };
+    const save = async () => {
+      if (closed || saving) return;
+      const val = ta.value.trim();
+      if (val === before) { restore(before); return; }
+      saving = true;
+      const r = await api.updateStoryboard(id, { [field]: val });
+      if (!r.ok) {
+        // 保存失败**不收摊**：用户刚敲的字不能因为一次网络抖动就蒸发，留在框里让他重试
+        saving = false;
+        toast.err(`${r.error}（内容还在编辑框里，可直接重试）`);
+        return;
+      }
+      row[field] = val; // 只改这一项：rows 是渲染的唯一来源
+      toast.ok(val ? '提示词已保存' : '提示词已清空');
+      restore(val);
+    };
+    ta.onblur = save;
+    ta.onkeydown = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); restore(before); }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+    };
   }
 
   /**
@@ -253,9 +341,46 @@ export default async function storyboards(container, params) {
    * 预览必须与后端 finalPrompt 同序（内容 → 角色 → 画风），否则"看到的"和"发出去的"会分叉。
    * 徽标只标"哪一层被注入了"，完整最终词放 tooltip —— 表格里塞全文会撑爆列宽。
    */
+  /**
+   * R22 产出三状态点：提示词 / 图片 / 视频。
+   *
+   * 为什么是这三个：这是本产品一条镜头真正要经过的三道关（我们没有 TTS，硬凑一个音频点
+   * 只会是永远灰着的装饰）。原来只有一个 `status` 单值，且它是"最后一道关"的结论——
+   * 用户看不出"提示词齐了但图没出"和"图出了但视频没提交"的区别，而那恰恰是要不要点按钮的依据。
+   *
+   * 状态来自两处：持久字段（linked_image_id / linked_video_id / 提示词是否为空）
+   * 与当前批量任务的逐项状态（在跑/失败）。
+   */
+  function dot(state, title) {
+    const zh = { ok: '已完成', running: '进行中', fail: '失败', idle: '未开始', pending: '排队中', cancelled: '已取消' }[state] || state;
+    return `<span class="dot ${esc(state)}" title="${esc(title)}：${esc(zh)}" role="img" aria-label="${esc(title)}${esc(zh)}"></span>`;
+  }
+
+  function outputCell(s) {
+    const jobState = jobRowState.get(s.id);
+    // 提示词：两条都有才算齐（缺哪条就生成不了对应产物）
+    const hasIp = !!String(s.image_prompt || '').trim();
+    const hasVp = !!String(s.video_prompt || '').trim();
+    const promptState = hasIp && hasVp ? 'ok' : (hasIp || hasVp ? 'pending' : 'idle');
+    const promptTitle = `提示词（图片${hasIp ? '有' : '无'}／视频${hasVp ? '有' : '无'}）`;
+    // 图片：持久字段优先；没有就吃批量任务的在跑/失败态
+    const imgState = s.linked_image_id ? 'ok'
+      : (jobState === 'running' ? 'running' : (jobState === 'fail' ? 'fail' : (rowInflight.has(s.id) ? 'running' : 'idle')));
+    const vidState = s.linked_video_id ? 'ok' : 'idle';
+    return `<div class="dots">${
+      dot(promptState, promptTitle)}${
+      dot(imgState, '分镜图')}${
+      dot(vidState, '视频')}</div>`;
+  }
+
   function promptCell(s, field) {
     const text = s[field];
-    if (!text) return `<span style="color:var(--text-4);font-size:11.5px">待生成</span>`;
+    // 空提示词也给一个就地编辑入口：以前"待生成"是个死文本，只能开 15 字段的弹窗才能填
+    if (!text) {
+      return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
+        <button type="button" class="link-btn" data-inline="${esc(s.id)}" title="就地填写${field === 'image_prompt' ? '图片' : '视频'}提示词">待生成（点此填写）</button>
+      </div>`;
+    }
     const style = (state.projects.find((p) => p.id === projectId) || {}).art_style || '';
     const chars = (Array.isArray(s.character_ids) ? s.character_ids : [])
       .map((id) => charsOf().find((c) => c.id === id)).filter(Boolean);
@@ -267,7 +392,7 @@ export default async function storyboards(container, params) {
     const injected = chars.filter((c) => withChars.includes(c.name));
     // data-prompt 给测试与后续就地编辑一个稳定锚点（列内还有别的 .cell-ellipsis，靠选择器顺序取会取错）
     return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
-      <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${final !== text ? `生成时实际发出：\n${esc(final)}` : esc(text)}">${esc(text)}</span>
+      <button type="button" class="cell-ellipsis inline-target" data-inline="${esc(s.id)}" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3);text-align:left" title="点击就地编辑\n${final !== text ? `生成时实际发出：\n${esc(final)}` : esc(text)}">${esc(text)}</button>
       ${withChars !== text ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
       ${withCam !== withChars ? `<span class="prompt-tag" title="运镜由系统统一注入：${esc(cam)}">+运镜</span>` : ''}
       ${style && final !== withCam ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
@@ -427,6 +552,8 @@ ${text}`,
           prompt: s.image_prompt,
           size: sizeForAspect(aspectOf(), 'image'),
           usage_type: 'storyboard',
+          label: `镜头 #${s.shot_number}`, // R22：随任务回传，刷新后进度链仍对得上镜头号
+          key: s.id,                      // R22：逐项状态映射回表格行
         })),
         concurrency: 3,
       });
@@ -462,6 +589,8 @@ ${text}`,
         negative_prompt: s.negative_prompt,
         num_frames: secondsToFrames(s.duration_seconds),
         frame_rate: 24,
+        label: `镜头 #${s.shot_number}`, // R22：同图片批量
+        key: s.id,
         ...sizeForAspect(aspectOf(), 'video'),
       };
     });

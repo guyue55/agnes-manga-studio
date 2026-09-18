@@ -738,6 +738,17 @@ try {
         await sleep(400);
         const jobId = await cdp.eval(`return localStorage.getItem('agnes.batch.last');`);
         ok('提交后 BKEY 即写（找回凭证）', !!jobId && jobId !== 'null', String(jobId));
+        // R22：进度链从一提交就存在（按下标预填），不是"完成一条冒一个"
+        const chain0 = await cdp.eval(`
+          const el = document.querySelector('#batch-bar');
+          const dots = Array.from(el.querySelectorAll('.chain-dot'));
+          return { n: dots.length, states: dots.map((d) => d.className.replace('chain-dot', '').trim()),
+            titles: dots.slice(0, 2).map((d) => d.getAttribute('title')) };`);
+        ok('R22 进度链一提交就按镜头数预填（不是完成一条冒一个）',
+          chain0.n === 16 && chain0.states.filter((x) => x === 'pending' || x === 'running' || x === 'ok').length === 16,
+          JSON.stringify({ n: chain0.n, states: chain0.states.slice(0, 5) }));
+        ok('R22 链上每项标明是第几镜（hover 可读）',
+          /镜头 #/.test(chain0.titles[0] || '') && /镜头 #/.test(chain0.titles[1] || ''), JSON.stringify(chain0.titles));
         await cdp.eval(`location.hash = '#/dashboard'; return true;`);
         await sleep(250);
         await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=42'; return true;`);
@@ -746,6 +757,14 @@ try {
         await waitFor(async () => { const j = await J(`/api/batch/${jobId}`); return j && j.status && j.status !== 'running'; }, '首批跑完', 25000);
         const j1 = await J(`/api/batch/${jobId}`);
         ok('16/16 全部成功', j1.done === 16 && j1.ok === 16, JSON.stringify({ d: j1.done, o: j1.ok, f: j1.fail }));
+        // R22：逐项终态 + label/key 回传（界面靠 key 把状态映射回表格行）
+        ok('R22 逐项状态全部落到 ok（不是只有汇总数字）',
+          j1.items.length === 16 && j1.items.every((i) => i.state === 'ok' && i.ok === true)
+          && j1.items.map((i) => i.index).join(',') === Array.from({ length: 16 }, (_, k) => k).join(','),
+          JSON.stringify(j1.items.slice(0, 2)));
+        ok('R22 每项都带镜头号 label 与分镜 key（刷新后进度链仍对得上）',
+          j1.items.every((i) => /^镜头 #\d+$/.test(i.label) && typeof i.key === 'string' && i.key.length > 0),
+          JSON.stringify(j1.items[0]));
         const rows42 = (await J(`/api/storyboards?project_id=${pid}&episode=42`)).filter((r) => r.episode_number === 42);
         ok('批量出图逐行回写关联（16 镜 image_ready）', rows42.length === 16 && rows42.every((r) => r.linked_image_id && r.status === 'image_ready'));
         ok('BKEY 完结即清', (await cdp.eval(`return localStorage.getItem('agnes.batch.last');`)) === null);
@@ -759,6 +778,11 @@ try {
         await sleep(800);
         const j2b = await J(`/api/batch/${jobId2}`);
         ok('取消生效：job 停止且不再打新请求', j2b.status === 'cancelled' && j2b.done < 16 && imgHits === hitsA && j2b.done === j2a.done, JSON.stringify({ s: j2b.status, d: j2b.done, h: imgHits - hitsA }));
+        // R22：取消后未轮到的项必须收成 cancelled，否则界面永远挂着一排"待处理"，看着像卡死
+        ok('R22 取消后未轮到的项标成 cancelled（不留一排假"待处理"）',
+          j2b.items.every((i) => ['ok', 'fail', 'cancelled'].includes(i.state))
+          && j2b.items.some((i) => i.state === 'cancelled'),
+          JSON.stringify(j2b.items.map((i) => i.state).join(',')));
         await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '' }) });
         await cdp.eval(`location.hash = '#/dashboard'; return true;`); // 离开现场防 BKEY 残留干扰收尾
       } finally { mock.close(); }
@@ -1166,6 +1190,159 @@ try {
       const cleaned = (await Jget('/api/projects')).length;
       ok('连点探针已清理（项目数复原）', cleaned === before, `before=${before} cleaned=${cleaned}`);
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
+    group('分镜工作台契约（批 6：R22 产出三状态点 / R23 提示词就地编辑 / R24 进度链渲染）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return document.querySelectorAll('#table tbody tr').length > 0;`), '分镜表就绪', 12000);
+      await sleep(400);
+
+      // ── R22 产出三状态点：每行三个点，状态由持久字段决定
+      const dots = await cdp.eval(`
+        const tr = document.querySelector('#table tbody tr');
+        const ds = Array.from(tr.querySelectorAll('.dots .dot'));
+        return { n: ds.length, cls: ds.map((d) => d.className.replace('dot', '').trim()),
+          titles: ds.map((d) => d.getAttribute('title')), labels: ds.map((d) => d.getAttribute('aria-label')) };`);
+      ok('R22 每行三个产出点（提示词 / 分镜图 / 视频）', dots.n === 3, JSON.stringify(dots));
+      ok('R22 三个点各自可读（title 说清是哪一道关 + 状态）',
+        /提示词/.test(dots.titles[0]) && /分镜图/.test(dots.titles[1]) && /视频/.test(dots.titles[2]), JSON.stringify(dots.titles));
+      ok('R22 点不只是颜色（aria-label 把状态说给读屏）',
+        dots.labels.every((x) => /已完成|进行中|失败|未开始|排队中|已取消/.test(x)), JSON.stringify(dots.labels));
+      // 灵敏度对照：给第一行补一条图片关联 → 图片点必须变绿
+      const first = (await J(`/api/storyboards?episode=1&project_id=${pid}`))[0];
+      // 探针必须留痕可复原：本分组要改这一行的提示词与图片关联，后面的分组（批 5 的运镜契约）
+      // 依赖"存在一行图文提示词都齐"，不还原就会把后面的分组搞红——这正是"探针污染"的老毛病。
+      const orig = { image_prompt: first.image_prompt || '', video_prompt: first.video_prompt || '', linked_image_id: first.linked_image_id || '' };
+      await J(`/api/storyboards/${first.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ linked_image_id: 'probe_img_x' }) });
+      await cdp.eval(`document.querySelector('#reload')?.click(); return true;`);
+      await sleep(900);
+      const dot2 = await cdp.eval(`
+        const tr = document.querySelector('#table tbody tr');
+        const ds = Array.from(tr.querySelectorAll('.dots .dot'));
+        return ds.map((d) => d.className.replace('dot', '').trim());`);
+      ok('灵敏度对照：关联图片后图片点转绿（点确实跟着数据走）', dot2[1] === 'ok', JSON.stringify(dot2));
+      // 提示词齐全的行 → 提示词点绿；清空后 → 灰
+      ok('R22 提示词两条都在时提示词点为绿', dot2[0] === 'ok', JSON.stringify(dot2));
+      await J(`/api/storyboards/${first.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ linked_image_id: '', video_prompt: '' }) });
+      await cdp.eval(`document.querySelector('#reload')?.click(); return true;`);
+      await sleep(900);
+      const dot3 = await cdp.eval(`
+        const tr = document.querySelector('#table tbody tr');
+        const ds = Array.from(tr.querySelectorAll('.dots .dot'));
+        return ds.map((d) => d.className.replace('dot', '').trim());`);
+      // 视频点不断言：这一行可能被更早的分组关联过视频（跨分组残留），断言它会把别的分组的状态带进来
+      ok('灵敏度对照：缺视频提示词 → 提示词点降级为"排队中"、图片点回到未开始',
+        dot3[0] === 'pending' && dot3[1] === 'idle', JSON.stringify(dot3));
+
+      // ── R23 就地编辑：点击 → textarea → blur 保存，且**不整表重渲染**
+      const rowId = first.id;
+      await cdp.eval(`document.querySelector('[data-edit="${rowId}"]')?.click(); return true;`); // 先确保行存在
+      await sleep(300);
+      await cdp.eval(`document.querySelector('.modal [data-no]')?.click(); return true;`);
+      await sleep(300);
+      // "没被重渲染"的证据必须是 **DOM 身份**，不能是勾选状态：
+      // 选中态存在 selected 这个 Set 里，整表重建后依然会勾上——拿它当证据是假敏感。
+      // 给当前 tbody 首行打个戳，重渲染会换掉元素，戳就没了。
+      await cdp.eval(`document.querySelector('#table tbody tr').__probe = 'keep'; return true;`);
+      await cdp.eval(`const c = document.querySelector('[data-sel="${rowId}"]'); c.checked = true; c.dispatchEvent(new Event('change')); return true;`);
+      await sleep(200);
+      const beforeVal = (await J(`/api/storyboards?episode=1&project_id=${pid}`)).find((r) => r.id === rowId).image_prompt;
+      await cdp.eval(`document.querySelector('[data-prompt="image_prompt"] [data-inline]').click(); return true;`);
+      await sleep(300);
+      const opened = await cdp.eval(`
+        const ta = document.querySelector('[data-prompt="image_prompt"] textarea.inline-edit');
+        return { has: !!ta, focused: ta === document.activeElement, val: ta ? ta.value : null };`);
+      ok('R23 点击提示词单元格就地变成 textarea 且自动聚焦（不用开 15 字段弹窗）',
+        opened.has && opened.focused, JSON.stringify({ has: opened.has, focused: opened.focused }));
+      ok('R23 编辑框里是当前值（不是空的）', opened.val === beforeVal, JSON.stringify({ v: opened.val, b: beforeVal }));
+      // 改值 → blur → 落库
+      await cdp.eval(`const ta = document.querySelector('[data-prompt="image_prompt"] textarea.inline-edit'); ta.value = 'inline edited prompt'; ta.dispatchEvent(new Event('blur')); return true;`);
+      await sleep(900);
+      const afterSave = (await J(`/api/storyboards?episode=1&project_id=${pid}`)).find((r) => r.id === rowId);
+      ok('R23 blur 即保存到后端（不用再点保存）', afterSave.image_prompt === 'inline edited prompt', JSON.stringify(afterSave.image_prompt));
+      const backToText = await cdp.eval(`
+        const cell = document.querySelector('[data-prompt="image_prompt"]');
+        return { text: cell.innerText, stillTextarea: !!cell.querySelector('textarea'),
+          checked: !!document.querySelector('[data-sel="${rowId}"]')?.checked,
+          domKept: document.querySelector('#table tbody tr').__probe === 'keep' };`);
+      ok('R23 保存后就地换回文本（不是留着一个 textarea）',
+        !backToText.stillTextarea && /inline edited prompt/.test(backToText.text), JSON.stringify(backToText));
+      ok('R23 保存**不整表重渲染**（首行的 DOM 身份还在——整表重建会换掉元素）',
+        backToText.domKept === true, JSON.stringify(backToText));
+      // Esc 取消：改值后按 Esc 必须不落库
+      await cdp.eval(`document.querySelector('[data-prompt="image_prompt"] [data-inline]').click(); return true;`);
+      await sleep(250);
+      await cdp.eval(`
+        const ta = document.querySelector('[data-prompt="image_prompt"] textarea.inline-edit');
+        ta.value = 'ESC 不应该被保存';
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        return true;`);
+      await sleep(700);
+      const afterEsc = (await J(`/api/storyboards?episode=1&project_id=${pid}`)).find((r) => r.id === rowId);
+      ok('R23 Esc 取消不落库（长文本编辑必须有"不改了"的出口）',
+        afterEsc.image_prompt === 'inline edited prompt', JSON.stringify(afterEsc.image_prompt));
+      // 没改动就 blur：不发请求（用 mtime 无法直接看，这里验证值没被写坏 + 界面正常收摊）
+      await cdp.eval(`document.querySelector('[data-prompt="image_prompt"] [data-inline]').click(); return true;`);
+      await sleep(250);
+      await cdp.eval(`const ta = document.querySelector('[data-prompt="image_prompt"] textarea.inline-edit'); ta.dispatchEvent(new Event('blur')); return true;`);
+      await sleep(600);
+      const afterNoop = await cdp.eval(`return { stillTextarea: !!document.querySelector('[data-prompt="image_prompt"] textarea'), text: document.querySelector('[data-prompt="image_prompt"]').innerText };`);
+      ok('R23 值没变时 blur 也能正常收摊（不留死 textarea）',
+        !afterNoop.stillTextarea && /inline edited prompt/.test(afterNoop.text), JSON.stringify(afterNoop));
+
+      // ── R24 进度链渲染（用真渲染函数喂合成任务：五态各自可辨）
+      // 用真实的挂载点 #batch-bar 渲染合成任务：既不新造 id（测试选择器棘轮要求 id 在源码里），
+      // 也顺带验证这个渲染器确实能挂进页面上那个容器
+      await cdp.eval(`
+        const m = await import('/js/pages/helpers.js');
+        const el = document.querySelector('#batch-bar');
+        m.renderBatchBar(el, { id: 'probe', type: 'images', total: 5, done: 2, ok: 1, fail: 1, status: 'running',
+          items: [
+            { index: 0, label: '镜头 #1', state: 'ok' },
+            { index: 1, label: '镜头 #2', state: 'fail', error: '上游模型超时' },
+            { index: 2, label: '镜头 #3', state: 'running' },
+            { index: 3, label: '镜头 #4', state: 'pending' },
+            { index: 4, label: '镜头 #5', state: 'cancelled' },
+          ] }, null);
+        return true;`);
+      await sleep(200);
+      const chain = await cdp.eval(`
+        const dots = Array.from(document.querySelectorAll('#batch-bar .chain-dot'));
+        return { n: dots.length, cls: dots.map((d) => d.className.replace('chain-dot', '').trim()),
+          failTitle: dots[1].getAttribute('title'), runningAnim: getComputedStyle(dots[2]).animationName };`);
+      ok('R24 进度链五态各自成类（pending/running/ok/fail/cancelled）',
+        chain.n === 5 && chain.cls.join(',') === 'ok,fail,running,pending,cancelled', JSON.stringify(chain.cls));
+      ok('R24 失败项 hover 给出原因（"哪一镜失败、为什么"一眼可见）',
+        /镜头 #2/.test(chain.failTitle) && /上游模型超时/.test(chain.failTitle), JSON.stringify(chain.failTitle));
+      ok('R24 进行中的点在动（不是静止的琥珀色块）', chain.runningAnim === 'chainPulse', chain.runningAnim);
+      await cdp.eval(`const m = await import('/js/pages/helpers.js'); m.renderBatchBar(document.querySelector('#batch-bar'), null); return true;`);
+
+      // ── R24 焦点环：键盘聚焦时必须出现双层环（内层底色 + 外层金色）
+      await cdp.eval(`location.hash = '#/projects'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#new-project');`), '项目页就绪');
+      await sleep(300);
+      const ring = await cdp.eval(`
+        const b = document.querySelector('#new-project');
+        b.focus();
+        const cs = getComputedStyle(b);
+        return { shadow: cs.boxShadow, outline: cs.outlineColor + ' ' + cs.outlineWidth,
+          focusVisible: b.matches(':focus-visible') };`);
+      const layers = (String(ring.shadow).match(/rgba?\(/g) || []).length;
+      ok('R24 焦点环是双层（内层底色隔开 + 外层金色），单层半透明在浅色底上会糊',
+        ring.focusVisible && layers >= 2, JSON.stringify(ring));
+      ok('R24 保留 outline 兜底（高对比模式下 box-shadow 常被忽略）',
+        /rgba?\(/.test(ring.outline) && /px/.test(ring.outline), JSON.stringify(ring.outline));
+      await cdp.eval(`document.activeElement?.blur(); return true;`);
+      // 复原探针改动（见 orig 的注释）：测试也要"谁污染谁治理"
+      await J(`/api/storyboards/${rowId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orig) });
+      const restored = (await J(`/api/storyboards?episode=1&project_id=${pid}`)).find((r) => r.id === rowId);
+      ok('探针改动已复原（不给后续分组留污染）',
+        restored.image_prompt === orig.image_prompt && restored.video_prompt === orig.video_prompt
+        && (restored.linked_image_id || '') === orig.linked_image_id,
+        JSON.stringify({ ip: restored.image_prompt === orig.image_prompt, vp: restored.video_prompt === orig.video_prompt }));
     }
 
     group('提示词资产化契约（批 5：R19 运镜 / R20 平台画幅 / R21 变体）');

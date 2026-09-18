@@ -442,10 +442,16 @@ group('测试选择器一致性');
   // 字面量属性选择器 [data-x="v"]（跳过模板字面量 ${...}）：源码里必须有同名属性值
   const pairs = [...new Set([...testSrc.matchAll(/\[data-([a-z0-9-]+)="([^"$\\]+)"\]/g)].map((m) => `${m[1]}|${m[2]}`))]
     .map((x) => x.split('|'));
+  // 动态值也算命中：源码里写的是 data-prompt="${field}"，测试里只能写字面量值——
+  // 这时要求"属性名存在且值来自模板"，而不是要求源码里出现同一个值（否则动态属性永远过不了）。
   const dead = pairs.filter(([a, v]) =>
-    !srcAll.includes(`data-${a}="${v}"`) && !srcAll.includes(`data-${a}='${v}'`) && !(a === 'sec' && secIds.includes(v)));
+    !srcAll.includes(`data-${a}="${v}"`) && !srcAll.includes(`data-${a}='${v}'`)
+    && !srcAll.includes(`data-${a}="\${`) && !srcAll.includes(`data-${a}='\${`)
+    && !(a === 'sec' && secIds.includes(v)));
   ok('测试中的字面量属性选择器均存在于源码', dead.length === 0,
     dead.map(([a, v]) => `[data-${a}="${v}"]`).join(',') || `${pairs.length} 个全部命中`);
+  ok('灵敏度对照：源码里没有的属性名仍会被检出（动态值放行不等于放行一切）',
+    !srcAll.includes('data-definitely-absent=') && !srcAll.includes('data-definitely-absent="\${'));
 
   // #id：静态 id="x" 或动态 id="${x}" 的实参字面量（如 projectPicker(..., {id:'p-picker'})）都算命中
   const ids = [...new Set([...testSrc.matchAll(/querySelector(?:All)?\(['"`]#([a-zA-Z0-9_-]+)/g)].map((m) => m[1]))];
@@ -822,6 +828,87 @@ group('批 5：提示词资产化（R19 运镜字典 / R20 平台画幅 / R21 �
     && /variation: prompt === lastPrompt \? lastVariation \+ 1 : 0/.test(imgSrc));
   ok('R21 变体只改"机位/时段/构图"（不得改动叙事内容）',
     cm.VARIATION_POOL.every((v) => !/character|costume|story|plot/.test(v)));
+}
+
+group('批 6：分镜工作台体验（R22 产出三状态点 / R23 提示词就地编辑 / R24 视觉细节）');
+{
+  const sbs = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const helperSrc = read(path.join(PUB, 'js', 'pages', 'helpers.js'));
+  const jobsSrc = read(path.join(ROOT, 'lib', 'jobs.js'));
+  const css = read(path.join(PUB, 'css', 'app.css'));
+  const auditSrc = read(path.join(ROOT, 'tools', 'ui-audit.mjs'));
+
+  // ① R22 后端：逐项状态必须"按下标预填、原地改"，否则并发下进度链会错位
+  ok('R22 任务项按下标预填（并发下 push 顺序 ≠ 镜头顺序）',
+    /job\.items = items\.map\(\(it, i\) => \(\{/.test(jobsSrc) && /index: i,/.test(jobsSrc));
+  ok('R22 任务项有 pending/running/ok/fail 四态（只有完成态就看不出"哪条在跑"）',
+    /state: 'pending'/.test(jobsSrc) && /rec\.state = 'running'/.test(jobsSrc)
+    && /rec\.state = 'ok'/.test(jobsSrc) && /rec\.state = 'fail'/.test(jobsSrc));
+  ok('R22 key 原样回传（界面据此把状态映射回具体那一行，刷新后依然成立）',
+    /key: \(it && typeof it === 'object' && it\.key != null\) \? String\(it\.key\) : null/.test(jobsSrc));
+  ok('R22 取消时未轮到的项标成 cancelled（否则界面永远显示一排"待处理"，像卡住了）',
+    /rec\.state === 'pending' \|\| rec\.state === 'running'\) rec\.state = 'cancelled'/.test(jobsSrc));
+
+  // ② R22 前端：产出列 + 状态链
+  ok('R22 分镜表新增「产出」列（提示词/图片/视频三道关）',
+    /<th style="width:64px" title="提示词 \/ 分镜图 \/ 视频 三道关的状态">产出<\/th>/.test(sbs) && /function outputCell/.test(sbs));
+  ok('R22 三个点各自带文字化的状态（不靠颜色单一维度）',
+    /function dot\(state, title\)/.test(sbs) && /role="img" aria-label=/.test(sbs)
+    && /dot\(promptState, promptTitle\)/.test(sbs) && /dot\(imgState, '分镜图'\)/.test(sbs) && /dot\(vidState, '视频'\)/.test(sbs));
+  ok('R22 图片点吃批量任务的在跑/失败态（不只吃持久字段）',
+    /jobState === 'running' \? 'running'/.test(sbs) && /jobState === 'fail' \? 'fail'/.test(sbs) && /rowInflight\.has\(s\.id\)/.test(sbs));
+  ok('R22 任务进行中也要重绘表格（只在结束时重绘 → "正在跑"永远看不到）',
+    /if \(rows\.length && \(prev\.size \|\| jobRowState\.size\)\) renderTable\(\)/.test(sbs));
+  ok('R22 状态链上限 60 项（再多会挤成一片糊，百分比条足够）',
+    /items\.length <= 60/.test(helperSrc) && /class="chain"/.test(helperSrc) && /chain-dot/.test(helperSrc));
+  ok('R22 状态链每项 hover 出镜头号与失败原因',
+    /it\.label \|\| `第 \$\{it\.index \+ 1\} 项`/.test(helperSrc) && /it\.error \? `——\$\{esc\(it\.error\)\}`/.test(helperSrc));
+  ok('R22 批量项带上 label 与 key（刷新后进度链仍对得上镜头号）',
+    (sbs.match(/label: `镜头 #\$\{s\.shot_number\}`/g) || []).length >= 2 && (sbs.match(/key: s\.id/g) || []).length >= 2);
+
+  // ③ R23 就地编辑
+  ok('R23 提示词列可点击就地编辑（不必开 15 字段弹窗）',
+    /data-inline="\$\{esc\(s\.id\)\}"/.test(sbs) && /function inlineEdit/.test(sbs) && /ta\.className = 'textarea mono inline-edit'/.test(sbs));
+  ok('R23 空提示词也给入口（"待生成"不再是死文本）',
+    /待生成（点此填写）/.test(sbs));
+  ok('R23 保存后不整表 load()（会冲掉其它行的编辑态与选中态，还有竞态）',
+    /row\[field\] = val; \/\/ 只改这一项/.test(sbs) && !/api\.updateStoryboard\(id, \{ \[field\]: val \}\)[\s\S]{0,120}load\(\)/.test(sbs));
+  ok('R23 值没变不发请求（点一下再点别处不该写盘）',
+    /if \(val === before\) \{ restore\(before\); return; \}/.test(sbs));
+  ok('R23 Esc 取消 / Cmd+Enter 立即保存（长文本编辑必须有"不改了"的出口）',
+    /e\.key === 'Escape'/.test(sbs) && /e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)/.test(sbs));
+
+  // ④ R24 视觉细节
+  ok('R24 焦点环是双层（内层底色隔开 + 外层金色），单层半透明在浅色/金色底上会糊',
+    /--focus-ring: 0 0 0 2px var\(--bg\), 0 0 0 4px rgba\(245, 213, 138, 0\.75\)/.test(css));
+  ok('R24 焦点环只有一处定义（两份并存 = 改一处不生效）',
+    (css.match(/box-shadow: var\(--focus-ring\)/g) || []).length === 1
+    && !css.includes('outline: 2px solid rgba(245, 213, 138, 0.6)'));
+  ok('R24 保留 outline 兜底（高对比模式下 box-shadow 常被忽略）',
+    /outline: 1px solid rgba\(245, 213, 138, 0\.72\)/.test(css));
+  ok('R24 长列表 content-visibility 节流 + 接近真实高度的 contain-intrinsic-size',
+    /\.content-auto \{ content-visibility: auto; contain-intrinsic-size: auto 240px; \}/.test(css)
+    && /contain-intrinsic-size: auto 72px/.test(css));
+  ok('R24 节流已挂到素材卡与任务行（有类没挂 = 白写）',
+    /class="asset-card content-auto"/.test(read(path.join(PUB, 'js', 'pages', 'assets.js')))
+    && /class="task-row content-auto"/.test(read(path.join(PUB, 'js', 'pages', 'tasks.js'))));
+  ok('R24 中英混排基线校正（等宽英文数字夹在中文里不再"掉下去"）',
+    /\.cjk-latin \{ font-size-adjust: 0\.56; vertical-align: -0\.15em; \}/.test(css)
+    && /class="mono-sm cjk-latin"/.test(read(path.join(PUB, 'js', 'pages', 'videos.js'))));
+  ok('R22/R23 新组件有样式（.dot / .chain-dot / .inline-target / .link-btn）',
+    /\.dot \{/.test(css) && /\.dot\.running/.test(css) && /\.chain-dot\.fail/.test(css)
+    && /\.inline-target/.test(css) && /\.link-btn/.test(css));
+
+  // ⑤ R24 ui-audit 弹窗钩子（B56 记下的覆盖缺口）
+  ok('R24 审计页清单带弹窗动作钩子（弹窗此前是度量盲区）',
+    /const pages = \[/.test(auditSrc) && /\['projects', '#\/projects', `document\.querySelector\('#new-project'\)\?\.click\(\);`\]/.test(auditSrc)
+    && /\['storyboards', `#\/storyboards\?project=\$\{pid\}`, `document\.querySelector\('\[data-edit\]'\)\?\.click\(\);`\]/.test(auditSrc));
+  ok('R24 弹窗动作钩子有自检（声明了动作却没开出弹窗 → 报成发现，钩子不会静默烂掉）',
+    /弹窗未打开 \$\{w\}px \$\{name\}: 动作钩子声明了弹窗但没出现/.test(auditSrc));
+  ok('R24 审计单独检查弹窗自身的横向溢出（弹窗内部滚动，页面级 overflow 抓不到）',
+    /弹窗溢出 \$\{w\}px \$\{name\}/.test(auditSrc) && /弹窗越界/.test(auditSrc));
+  ok('R24 审计种子补了素材与视频（空态下卡片样式根本没被量到）',
+    /audit_img_1/.test(auditSrc) && /audit_vid_1/.test(auditSrc) && /image_assets: \[\{/.test(auditSrc));
 }
 
 group('角色库（R14：档案 + 绑定 + 引用守卫）');

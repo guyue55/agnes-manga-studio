@@ -404,7 +404,7 @@ export default async function videos(container, params) {
         </div>
         <div class="body">
           <div class="prompt-line">${esc(v.video_prompt)}</div>
-          <div class="mono-sm">${esc(v.num_frames)}帧 · ${esc(v.frame_rate)}fps · ${esc(v.model_name)}</div>
+          <div class="mono-sm cjk-latin">${esc(v.num_frames)}帧 · ${esc(v.frame_rate)}fps · ${esc(v.model_name)}</div>
         </div>
       </div>`).join('');
   }

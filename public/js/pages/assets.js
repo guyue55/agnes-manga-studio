@@ -82,7 +82,7 @@ export default async function assets(container, params) {
       const list = filtered(images);
       if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有图片素材', '去「图片生成」生成一张', 'image', { label: '去图片生成', go: '#/images' })}</div>`; return; }
       el.innerHTML = list.map((img) => `
-        <div class="asset-card" data-id="${esc(img.id)}">
+        <div class="asset-card content-auto" data-id="${esc(img.id)}">
           ${img.is_favorited ? `<span class="flag">${icon('star', 14)}</span>` : ''}
           ${imgWithFallback(img.url, { alt: String(img.prompt || '素材图片').slice(0, 40) })}
           <div class="ovl">
@@ -103,7 +103,7 @@ export default async function assets(container, params) {
       const list = filtered(videos);
       if (!list.length) { el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('没有视频素材', '去「视频生成」提交一个任务', 'video', { label: '去视频生成', go: '#/videos' })}</div>`; return; }
       el.innerHTML = list.map((v) => `
-        <div class="asset-card" data-vid="${esc(v.id)}">
+        <div class="asset-card content-auto" data-vid="${esc(v.id)}">
           ${v.is_favorited ? `<span class="flag">${icon('star', 14)}</span>` : ''}
           <span class="status-flag">${statusBadge(v.status)}</span>
           ${v.local_file

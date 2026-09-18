@@ -26,12 +26,28 @@ export function projectPicker(projects, selected, opts = {}) {
     </select>`;
 }
 
-/** 批量任务进度（SSE 驱动） */
+/**
+ * 批量任务进度（SSE 驱动）。
+ *
+ * R22：进度条上方多一条**逐项状态链**。只给 "5/12" 是没用的——用户真正要知道的是
+ * "哪一镜失败了、现在跑到哪一镜"。链上的每一项 hover 出镜头号与失败原因。
+ * 竞品的做法是"阶段链"（图/视频/音频三个阶段的徽标），但我们的批量任务本身是单阶段的
+ * （一次全是图或全是视频），所以这里把"阶段"落在**逐项**上——这才是本产品里真正有用的粒度。
+ * 项数上限 60：再多的链会挤成一片糊，也失去可读性（那种情况百分比条足够）。
+ */
 export function renderBatchBar(el, job, onCancel) {
   if (!el) return;
   if (!job) { el.innerHTML = ''; return; }
   const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
   const title = job.type === 'images' ? '批量生成图片' : '批量提交视频';
+  const items = Array.isArray(job.items) ? job.items : [];
+  const chain = items.length && items.length <= 60
+    ? `<div class="chain" role="list" aria-label="逐项状态">${items.map((it) => {
+      const label = it.label || `第 ${it.index + 1} 项`;
+      const stateZh = { pending: '待处理', running: '进行中', ok: '成功', fail: '失败', cancelled: '已取消' }[it.state] || '待处理';
+      return `<span class="chain-dot ${esc(it.state || 'pending')}" role="listitem" title="${esc(label)}：${esc(stateZh)}${it.error ? `——${esc(it.error)}` : ''}"></span>`;
+    }).join('')}</div>`
+    : '';
   el.innerHTML = `
     <div class="note gold" style="display:flex;align-items:center;gap:14px">
       ${job.status === 'running' ? '<div class="spinner sm"></div>' : icon('check', 16)}
@@ -41,6 +57,7 @@ export function renderBatchBar(el, job, onCancel) {
           <span style="color:var(--ok)">成功 ${job.ok}</span>
           ${job.fail ? `<span style="color:var(--err)">失败 ${job.fail}</span>` : ''}
         </div>
+        ${chain}
         <div class="progress" style="max-width:none"><i style="width:${pct}%"></i></div>
       </div>
       ${job.status === 'running' && job.id && onCancel ? '<button class="btn btn-sm" data-cancel-batch>取消</button>' : ''}

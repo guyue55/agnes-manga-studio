@@ -191,30 +191,95 @@ try {
       body: JSON.stringify({ project_id: projReq.id, name: nm, role: '主角', appearance: app, outfit, is_locked: lock }),
     });
   }
+  // 素材/任务页此前是**空态**在受检——空态没有卡片，卡片的截断/对比度/可点目标全都没被量到
+  // （与"角色卡必须有内容"同一个坑）。用 /api/import 塞一条图片与一条已完成视频，
+  // 让这两页也落在真实密度上；顺带让弹窗钩子有东西可点。
+  const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  await fetch(`http://127.0.0.1:${port}/api/import`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'merge',
+      data: { collections: {
+        image_assets: [{
+          id: 'audit_img_1', project_id: projReq.id, name: '审计素材·超长名称占位用于测量截断行为', url: tinyPng,
+          usage_type: 'storyboard', generation_prompt: 'cinematic close-up of a girl holding a transparent umbrella on a rain-soaked rooftop at night, neon reflections shimmering across puddles, melancholic atmosphere',
+          model_name: 'audit-model', created_at: new Date().toISOString(),
+        }],
+        video_assets: [{
+          id: 'audit_vid_1', project_id: projReq.id, storyboard_id: null, status: 'completed',
+          video_prompt: 'camera slowly dollies in from wide shot to the girl face, rain streaks falling, subtle hair movement in wind, neon flicker reflections',
+          model_name: 'audit-video-model', generation_mode: 'text_to_video',
+          num_frames: 120, frame_rate: 24, progress: 100, remote_url: 'https://example.invalid/x.mp4',
+          created_at: new Date().toISOString(),
+        }],
+      } },
+    }),
+  });
   const pid = projReq.id;
+  /**
+   * 页面清单。第三项是**弹窗动作钩子**（可选）——页面渲染后执行一段脚本把弹窗打开，再度量。
+   *
+   * 为什么需要它：审计此前只量"页面本身"，而弹窗是全站最密的交互面（15 字段的分镜弹窗、
+   * 模板编辑器、素材大图…），它的溢出/微字号/对比度/小目标至今是**盲区**。
+   * 钩子里的选择器缺失不会静默跳过——下面的自检会把"声明了动作但没打开弹窗"报成一条发现，
+   * 否则钩子会随着界面改名慢慢烂掉，而报表依然"零发现"。
+   */
   const pages = [
-    ['dashboard', '#/dashboard'], ['projects', '#/projects'], ['storyboards', `#/storyboards?project=${pid}`],
-    ['assets', '#/assets'], ['images', `#/images?project=${pid}`], ['videos', `#/videos?project=${pid}`],
-    ['tasks', '#/tasks'], ['scripts', `#/scripts?project=${pid}`], ['characters', `#/characters?project=${pid}`], ['settings', '#/settings'],
+    ['dashboard', '#/dashboard'],
+    ['projects', '#/projects', `document.querySelector('#new-project')?.click();`],
+    ['storyboards', `#/storyboards?project=${pid}`, `document.querySelector('[data-edit]')?.click();`],
+    ['assets', '#/assets', `(document.querySelector('[data-zoom]')||document.querySelector('.asset-card')||{}).click?.();`],
+    ['images', `#/images?project=${pid}`, `document.querySelector('[data-zoom]')?.click();`],
+    ['videos', `#/videos?project=${pid}`],
+    ['tasks', '#/tasks', `(document.querySelector('[data-detail]')||document.querySelector('[data-detailt]')||{}).click?.();`],
+    ['scripts', `#/scripts?project=${pid}`],
+    ['characters', `#/characters?project=${pid}`, `document.querySelector('#new-char')?.click();`],
+    ['settings', '#/settings?sec=templates', `document.querySelector('#t-new')?.click();`],
   ];
   const viewports = [[1440, 900], [1280, 800], [1024, 768], [900, 700]];
+  let modalRuns = 0;
   for (const [w, h] of viewports) {
     await cdp.viewport(w, h);
-    for (const [name, hash] of pages) {
+    for (const [name, hash, action] of pages) {
       await cdp.eval(`location.hash = '${hash}'; return true;`);
       await waitFor(() => cdp.eval(`!!document.querySelector('.page') && !document.querySelector('.spinner')`), `${name}@${w}`);
       await sleep(120);
+      let modalOn = false;
+      if (action) {
+        // 弹窗钩子：先开弹窗，再连同弹窗一起度量（PROBE 扫的是整篇文档，弹窗内容自然在内）
+        await cdp.eval(`${action} return true;`);
+        modalOn = await waitFor(() => cdp.eval(`return !!document.querySelector('.modal');`), `${name} 弹窗@${w}`, 4000).then(() => true).catch(() => false);
+        if (!modalOn) lines.push(`弹窗未打开 ${w}px ${name}: 动作钩子声明了弹窗但没出现（选择器可能已改名）`);
+        await sleep(180); // 入场动画
+      }
       const res = JSON.parse(await cdp.eval(PROBE));
       if (name === 'storyboards' && w === 1440) console.log(`  [自证] scanned=${res.scanned} contrastSamples=${res.samples} chips=${res.chips} trunc=${res.truncN} noHint=${res.noHint.length} hash=${await cdp.eval('location.hash')}`);
+      if (modalOn) modalRuns++;
       if (res.overflow.de) lines.push(`溢出   ${w}px ${name}: 页面横向滚动 [${res.overflow.culprits.join(' | ')}]`);
+      if (modalOn) {
+        const mOver = await cdp.eval(`
+          const m = document.querySelector('.modal');
+          if (!m) return null;
+          const bad = [];
+          for (const el of m.querySelectorAll('*')) {
+            const r = el.getBoundingClientRect();
+            if (r.width === 0) continue;
+            if (r.right > innerWidth + 2 || r.left < -2) bad.push(el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''));
+            if (bad.length > 4) break;
+          }
+          return { scroll: m.scrollWidth > m.clientWidth + 2, bad };`);
+        if (mOver && mOver.scroll) lines.push(`弹窗溢出 ${w}px ${name}: 弹窗内容横向滚动 [${mOver.bad.join(' | ')}]`);
+        if (mOver && mOver.bad.length) lines.push(`弹窗越界 ${w}px ${name}: [${mOver.bad.join(' | ')}]`);
+      }
       for (const c of res.contrast) lines.push(`对比度 ${w}px ${name}: ${c.q} = ${c.ratio}:1（需≥${c.min}，${c.color}）`);
       if (res.micro.length) lines.push(`微字号 ${w}px ${name}: [${res.micro.join(' | ')}]`);
       if (res.tinyTap > 2) lines.push(`小目标 ${w}px ${name}: ${res.tinyTap} 个 <23px 可点元素`);
       if (res.noName > 0) lines.push(`无障碍 ${w}px ${name}: ${res.noName} 个无文本无标签的图标钮`);
       for (const h of res.noHint) lines.push(`截断无提示 ${w}px ${name}: ${h}`);
+      if (modalOn) { await cdp.eval(`document.querySelector('.modal [data-no]')?.click(); document.querySelector('.modal [data-close]')?.click(); document.querySelector('.modal-backdrop')?.click(); return true;`); await sleep(150); }
     }
   }
-  console.log(`── UI 度量审计（${viewports.length} 视口 × ${pages.length} 页）──`);
+  console.log(`── UI 度量审计（${viewports.length} 视口 × ${pages.length} 页；其中 ${modalRuns} 次带弹窗度量）──`);
   if (!lines.length) console.log('  无任何发现：不溢出、无微字号、对比度全过 WCAG AA。');
   const seen = new Map();
   for (const l of lines) { const key = l.replace(/^\S+ +\S+ +/, '').replace(/^[\w.]+(?=:)/, ''); seen.set(key, (seen.get(key) || 0) + 1); }

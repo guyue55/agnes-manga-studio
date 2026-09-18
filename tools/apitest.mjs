@@ -685,8 +685,36 @@ group('批量队列');
   eq('全部成功', job.ok, 2);
   eq('无失败', job.fail, 0);
 
+  // R22：逐项状态。并发 2 时两条会同时 running，所以"按下标预填、原地改状态"是必须的——
+  // 原来"完成一条 push 一条"的写法在并发下顺序与镜头顺序不一致，界面按数组顺序画进度链就会错位。
+  eq('任务项按下标一一对应（并发下顺序不得错位）', (job.items || []).map((i) => i.index).join(','), '0,1');
+  ok('每项都有终态 ok（不是只有汇总数字）', (job.items || []).every((i) => i.state === 'ok' && i.ok === true));
+  ok('每项带 label 与 key 回传（界面据此映射回具体镜头，刷新后仍成立）',
+    (job.items || []).every((i) => typeof i.label === 'string' && i.label.length > 0),
+    JSON.stringify(job.items));
+  eq('未传 label 时给序号兜底（不让界面出现 undefined）', (job.items || [])[0].label, '第 1 项');
+  eq('未传 key 时为 null（而不是空字符串，便于前端判空）', (job.items || [])[0].key, null);
+
   const before = (await api('GET', `/api/images?project_id=${PROJECT_ID}`)).data.length;
   ok('批量生成的图片已入库', before >= 3, `${before} 张`);
+
+  // 带 key/label 的口径（前端真实调用方式）：状态必须落回对应项
+  const keyed = await api('POST', '/api/batch/images', {
+    items: [
+      { prompt: 'keyed one', project_id: PROJECT_ID, size: '1024x1024', label: '镜头 #7', key: 'sb_7' },
+      { prompt: 'keyed two', project_id: PROJECT_ID, size: '1024x1024', label: '镜头 #9', key: 'sb_9' },
+    ],
+    concurrency: 2,
+  });
+  let job2 = null;
+  for (let i = 0; i < 30; i++) {
+    await sleep(400);
+    job2 = (await api('GET', `/api/batch/${keyed.data.jobId}`)).data;
+    if (job2.status !== 'running') break;
+  }
+  eq('带 key 的批量任务结束', job2.status, 'done');
+  eq('key 原样回传（界面靠它把状态映射回表格行）', (job2.items || []).map((i) => i.key).join(','), 'sb_7,sb_9');
+  eq('label 原样回传（刷新后进度链仍显示镜头号）', (job2.items || []).map((i) => i.label).join(','), '镜头 #7,镜头 #9');
 
   const emptyBatch = await api('POST', '/api/batch/images', { items: [] });
   eq('空队列 400', emptyBatch.status, 400);

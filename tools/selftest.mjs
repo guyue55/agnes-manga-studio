@@ -273,6 +273,36 @@ group('批量队列');
   ok('可按 id 取回', jobs.get(j3.id) === j3);
   ok('取消接口', jobs.cancel(j3.id));
   ok('取消不存在的任务返回 false', !jobs.cancel('nope'));
+
+  // R22：逐项状态必须"按下标预填、原地改"。旧的"完成一条 push 一条"有两个硬伤：
+  // ① 并发下 push 顺序 ≠ 镜头顺序 → 界面按数组顺序画进度链会错位；② 只有完成态，看不出哪条在跑。
+  // 这里刻意让第 0 项最慢：push 写法会把它排到末尾，预填写法必须仍是 0,1,2。
+  const j4 = jobs.create('images', 3);
+  await jobs.run(j4, [{ label: '镜头 #1', key: 'a' }, { label: '镜头 #2', key: 'b' }, { label: '镜头 #3', key: 'c' }],
+    async (it, i) => { await new Promise((r) => setTimeout(r, i === 0 ? 60 : 5)); return { ok: true, id: `y${i}` }; },
+    { concurrency: 3 });
+  eq('并发下逐项顺序仍与下标一致（最慢的那条不得被排到末尾）', j4.items.map((x) => x.index).join(','), '0,1,2');
+  eq('label 原样回传（进度链显示的镜头号）', j4.items.map((x) => x.label).join(','), '镜头 #1,镜头 #2,镜头 #3');
+  eq('key 原样回传（界面据此把状态映射回表格行）', j4.items.map((x) => x.key).join(','), 'a,b,c');
+  ok('每项都有终态（不是只有汇总数字）', j4.items.every((x) => x.state === 'ok' && x.ok === true));
+  eq('预填发生在 run() 里：create 时 items 还是空的（不是先占坑再改口径）', jobs.create('images', 1).items.length, 0);
+  const j5 = jobs.create('images', 2);
+  await jobs.run(j5, [{}, {}], async () => ({ ok: true }), { concurrency: 1 });
+  eq('未传 label/key 时兜底（不让界面出现 undefined）', `${j5.items[0].label}|${j5.items[0].key}`, '第 1 项|null');
+
+  const j6 = jobs.create('images', 3);
+  await jobs.run(j6, [{}, {}, {}], async (it, i) => (i === 1 ? { ok: false, error: '上游炸了' } : { ok: true }), { concurrency: 1 });
+  eq('失败项标 fail 且带原因（"哪一镜失败、为什么"要能指出来）', `${j6.items[1].state}/${j6.items[1].error}`, 'fail/上游炸了');
+  eq('失败项 ok 标记为 false（不是靠 state 猜）', j6.items[1].ok, false);
+
+  const j7 = jobs.create('images', 4);
+  const p7 = jobs.run(j7, [{}, {}, {}, {}], async () => { await new Promise((r) => setTimeout(r, 60)); return { ok: true }; }, { concurrency: 1 });
+  await new Promise((r) => setTimeout(r, 15));
+  jobs.cancel(j7.id);
+  await p7;
+  eq('取消后未轮到的项收成 cancelled（否则界面永远挂着一排"待处理"，像卡死）',
+    j7.items.map((x) => x.state).join(','), 'ok,cancelled,cancelled,cancelled');
+  ok('取消后不留 pending', !j7.items.some((x) => x.state === 'pending'));
 }
 
 // ── 7. 路由分发 ──────────────────────────────────────────────

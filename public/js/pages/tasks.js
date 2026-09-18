@@ -155,7 +155,7 @@ export default async function tasks(container, params = {}) {
     const running = ['queued', 'in_progress'].includes(v.status);
     const isBusy = busy.has(v.id);
     return `
-      <div class="task-row" style="margin-bottom:12px" data-vid="${esc(v.id)}">
+      <div class="task-row content-auto" style="margin-bottom:12px" data-vid="${esc(v.id)}">
         <div class="side">
           ${statusBadge(v.status)}
           ${running ? `<span class="badge gray" style="font-size:11px">${icon('clock', 9)}${v.poll_attempts ? `第 ${esc(v.poll_attempts)}${v.poll_budget ? '/' + esc(v.poll_budget) : ''} 次查询 · 每 ${esc(v.poll_interval_s || 8)}s` : '轮询中'}</span>` : ''}
@@ -166,7 +166,7 @@ export default async function tasks(container, params = {}) {
         <div class="body">
           <div class="row wrap" style="font-size:11.5px;color:var(--text-3);gap:8px">
             <span>${esc(MODE_LABELS[v.generation_mode] || v.generation_mode)}</span><span>·</span>
-            <span>${esc(v.num_frames)}帧 ${esc(v.frame_rate)}fps</span><span>·</span>
+            <span class="cjk-latin">${esc(v.num_frames)}帧 ${esc(v.frame_rate)}fps</span><span>·</span>
             <span>${esc(v.model_name)}</span>
             <span>·</span><span>${esc(relTime(v.created_at))}</span>
           </div>
@@ -215,7 +215,7 @@ export default async function tasks(container, params = {}) {
       ? (Array.isArray(input.messages) ? String(input.messages[input.messages.length - 1]?.content || '').slice(0, 220) : JSON.stringify(input).slice(0, 220))
       : String(input.prompt || JSON.stringify(input)).slice(0, 220);
     return `
-      <div class="task-row" style="margin-bottom:12px">
+      <div class="task-row content-auto" style="margin-bottom:12px">
         <div class="side">
           <span class="badge ${t.status === 'completed' ? 'green' : t.status === 'failed' ? 'red' : 'gold'}">${t.status === 'completed' ? '已完成' : t.status === 'failed' ? '失败' : '进行中'}</span>
           <span class="badge gray" style="font-size:11px">${esc(TYPE_LABELS[t.task_type] || t.task_type)}</span>
