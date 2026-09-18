@@ -216,7 +216,7 @@ export default async function storyboards(container, params) {
     const final = artStylePhrase(text, style);
     return `<div class="row" style="gap:6px">
       <span class="cell-ellipsis" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3)" title="${style && final !== text ? `生成时实际发出（含画风注入）：\n${esc(final)}` : esc(text)}">${esc(text)}</span>
-      ${style && final !== text ? `<span style="flex:none;color:var(--gold-light);font-size:10px" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
+      ${style && final !== text ? `<span style="flex:none;color:var(--gold-light);font-size:11px" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
       <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }

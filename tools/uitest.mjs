@@ -247,6 +247,14 @@ group('B4 画风分层');
   ok('4.1 前后端画风映射表同构', keysOf(routesSrc) !== '' && keysOf(routesSrc) === keysOf(constsSrc));
   ok('4.1 LLM 链禁烘画风（拆镜+补提示词，均在 storyboards）', (sbSrc.match(/不要写整体画风/g) || []).length >= 2);
   ok('4.2 分镜提示词计算态预览', sbSrc.includes('artStylePhrase') && sbSrc.includes('+画风'));
+  { // 1.6 防增量棘轮：字号地坪 11px 永不回退；裸 font-size 总量只减不增
+    const pageFiles = ['dashboard','projects','scripts','storyboards','images','videos','assets','tasks','settings']
+      .map((n) => read(path.join(PUB, 'js', 'pages', n + '.js')));
+    const all = pageFiles.join('');
+    ok('1.6 字号地坪 ≥11px（JS 页）', !/font-size:(?:[1-9]|10(?:\.5)?)px/.test(all));
+    const rawCount = (all.match(/font-size:[0-9.]+px/g) || []).length;
+    ok(`1.6 裸字号棘轮 ≤44（现 ${rawCount}）`, rawCount <= 44);
+  }
   ok('E7 批量找回+取消', sbSrc.includes("localStorage.setItem(BKEY") && sbSrc.includes('api.cancelBatch')
     && read(path.join(PUB, 'js', 'pages', 'helpers.js')).includes('data-cancel-batch'));
 }

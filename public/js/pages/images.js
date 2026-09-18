@@ -90,7 +90,7 @@ export default async function images(container, params) {
     if (!mount) return;
     mount.innerHTML = PRESET_TERMS.map((g) => `
       <div class="row wrap" style="gap:5px;margin-top:5px">
-        <span style="font-size:10.5px;color:var(--text-4);width:28px;flex:none">${esc(g.cat)}</span>
+        <span style="font-size:11px;color:var(--text-4);width:28px;flex:none">${esc(g.cat)}</span>
         ${g.items.map((i) => `<button type="button" class="chip" data-en="${esc(i.en)}" title="追加：${esc(i.en)}">${esc(i.label)}</button>`).join('')}
       </div>`).join('');
     mount.querySelectorAll('[data-en]').forEach((b) => {

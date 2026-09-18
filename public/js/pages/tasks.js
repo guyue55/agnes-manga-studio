@@ -154,10 +154,10 @@ export default async function tasks(container, params = {}) {
       <div class="task-row" style="margin-bottom:12px" data-vid="${esc(v.id)}">
         <div class="side">
           ${statusBadge(v.status)}
-          ${running ? `<span class="badge gray" style="font-size:10px">${icon('clock', 9)}${v.poll_attempts ? `第 ${esc(v.poll_attempts)} 次查询 · 每 ${esc(v.poll_interval_s || 8)}s` : '轮询中'}</span>` : ''}
-          <span class="badge gray" style="font-size:10px">视频</span>
-          ${v.remote_status ? `<span class="badge blue" style="font-size:10px">远端：${esc(REMOTE_STATUS[v.remote_status] || v.remote_status)}</span>` : ''}
-          ${v.local_status ? `<span class="badge gray" style="font-size:10px">本地：${esc(LOCAL_STATUS[v.local_status] || v.local_status)}</span>` : ''}
+          ${running ? `<span class="badge gray" style="font-size:11px">${icon('clock', 9)}${v.poll_attempts ? `第 ${esc(v.poll_attempts)} 次查询 · 每 ${esc(v.poll_interval_s || 8)}s` : '轮询中'}</span>` : ''}
+          <span class="badge gray" style="font-size:11px">视频</span>
+          ${v.remote_status ? `<span class="badge blue" style="font-size:11px">远端：${esc(REMOTE_STATUS[v.remote_status] || v.remote_status)}</span>` : ''}
+          ${v.local_status ? `<span class="badge gray" style="font-size:11px">本地：${esc(LOCAL_STATUS[v.local_status] || v.local_status)}</span>` : ''}
         </div>
         <div class="body">
           <div class="row wrap" style="font-size:11.5px;color:var(--text-3);gap:8px">
@@ -170,8 +170,8 @@ export default async function tasks(container, params = {}) {
           ${v.progress > 0 && v.progress < 100 ? `
             <div style="max-width:240px">
               <div class="row" style="justify-content:space-between;margin-bottom:3px">
-                <span style="font-size:10px;color:var(--text-3)">生成进度</span>
-                <span style="font-size:10px;color:var(--gold-light)">${esc(v.progress)}%</span>
+                <span style="font-size:11px;color:var(--text-3)">生成进度</span>
+                <span style="font-size:11px;color:var(--gold-light)">${esc(v.progress)}%</span>
               </div>
               <div class="progress"><i style="width:${esc(v.progress)}%"></i></div>
             </div>` : ''}
@@ -214,7 +214,7 @@ export default async function tasks(container, params = {}) {
       <div class="task-row" style="margin-bottom:12px">
         <div class="side">
           <span class="badge ${t.status === 'completed' ? 'green' : t.status === 'failed' ? 'red' : 'gold'}">${t.status === 'completed' ? '已完成' : t.status === 'failed' ? '失败' : '进行中'}</span>
-          <span class="badge gray" style="font-size:10px">${esc(TYPE_LABELS[t.task_type] || t.task_type)}</span>
+          <span class="badge gray" style="font-size:11px">${esc(TYPE_LABELS[t.task_type] || t.task_type)}</span>
         </div>
         <div class="body">
           <div class="row wrap" style="font-size:11.5px;color:var(--text-3);gap:8px">

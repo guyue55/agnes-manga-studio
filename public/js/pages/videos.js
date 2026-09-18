@@ -348,7 +348,7 @@ export default async function videos(container, params) {
         ${steps.map((s) => `<div class="step-row ${s.st}">${stepIcon(s.st)}<span style="font-size:12.5px;color:var(--text-2)">${esc(s.label)}</span></div>`).join('')}
         ${ok && d.asset ? `
           <div style="margin-top:12px;padding:10px;border-radius:10px;background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.16)">
-            <div style="font-size:10.5px;color:var(--text-3)">video_id</div>
+            <div style="font-size:11px;color:var(--text-3)">video_id</div>
             <div style="font-size:11.5px;font-family:var(--mono);color:var(--ok);word-break:break-all">${esc(d.asset.agnes_video_id || '（未拿到，需补录）')}</div>
           </div>` : ''}
         ${error ? `<div class="note red" style="margin-top:12px">${esc(error)}</div>` : ''}
@@ -391,7 +391,7 @@ export default async function videos(container, params) {
       <div class="task-row" style="margin-bottom:10px">
         <div class="side">
           ${statusBadge(v.status)}
-          <span class="badge gray" style="font-size:10px">${esc(relTime(v.created_at))}</span>
+          <span class="badge gray" style="font-size:11px">${esc(relTime(v.created_at))}</span>
         </div>
         <div class="body">
           <div class="prompt-line">${esc(v.video_prompt)}</div>
