@@ -247,15 +247,30 @@ try {
     await waitFor(() => cdp.eval(`!!document.querySelector('[data-sec=\"task\"]')`), '设置分节');
     await cdp.eval(`document.querySelector('[data-sec=\"task\"]').click(); return true;`);
     ok('分节切换写入 hash', await cdp.eval(`location.hash.includes('sec=task')`));
-    // 两段式就地确认：首点 armed 改文案，3.4s 后自动回弹（不真删）
-    await cdp.eval(`document.querySelector('[data-sec=\"template\"]')?.click(); return true;`);
-    const delSel = await cdp.eval(`!!document.querySelector('[data-del]')`);
-    if (delSel) {
-      await cdp.eval(`document.querySelector('[data-del]').click(); return true;`);
-      ok('两段式：首点进入确认态', await cdp.eval(`!!document.querySelector('[data-del].armed')`));
-      await sleep(3500);
-      ok('两段式：3s 后自动回弹（未误删）', await cdp.eval(`!document.querySelector('[data-del].armed') && !!document.querySelector('[data-del]')`));
-    } else ok('两段式：无模板可点跳过', true);
+    // 两段式就地确认：首点 armed 改文案，3s 后自动回弹（不真删）。
+    // 旧写法是 if (有模板) 才测、否则 ok('跳过', true) —— 条件跳过式假绿（无模板时"绿"了什么都没验）；
+    // 改为先经 API 确定性建模板，让该分支必跑，并显式断言按钮存在。
+    const tpl = await fetch(`http://127.0.0.1:${port}/api/templates`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '两段式探针模板', template_type: 'story_concept', content: '探针内容' }),
+    }).then((x) => x.json());
+    ok('两段式探针模板已建', !!tpl.id, JSON.stringify(tpl).slice(0, 70));
+    // 设置页在模板创建前就已挂载，其列表是旧的——必须重载页面让新模板进列表
+    await cdp.send('Page.reload', {}); await sleep(900);
+    await cdp.eval(`location.hash = '#/settings'; return true;`);
+    await waitFor(() => cdp.eval(`!!document.querySelector('[data-sec="templates"]')`), '设置页重新就绪');
+    await cdp.eval(`document.querySelector('[data-sec="templates"]').click(); return true;`); // 分节 id 是 templates（复数）：原测试写 template 且用 ?. 静默跳过，两条断言从未跑过
+    await waitFor(() => cdp.eval(`!!document.querySelector('[data-del="${tpl.id}"]')`), '探针模板删除钮出现（不再条件跳过）');
+    const delSel = `[data-del="${tpl.id}"]`; // 必须按 id 定位：页面上还有内置模板，取第一个会删错对象
+    await cdp.eval(`document.querySelector('${delSel}').click(); return true;`);
+    ok('两段式：首点进入确认态', await cdp.eval(`!!document.querySelector('${delSel}.armed')`));
+    ok('两段式：首点未删除（按钮仍在）', await cdp.eval(`!!document.querySelector('${delSel}')`));
+    await sleep(3500);
+    ok('两段式：3s 后自动回弹（未误删）', await cdp.eval(`!document.querySelector('${delSel}.armed') && !!document.querySelector('${delSel}')`));
+    // 另一半：窗口内第二击必须真的执行（否则守卫会变成"永远删不掉"）
+    await cdp.eval(`const b=document.querySelector('${delSel}'); b.click(); b.click(); return true;`);
+    await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/api/templates`).then((x) => x.json())).every((t) => t.name !== '两段式探针模板'), '模板被真的删除', 8000);
+    ok('两段式：窗口内第二击真的执行删除', true);
     // 导出钮在位（分镜页，用刚建的项目）
     const plist = await (await fetch(`http://127.0.0.1:${port}/api/projects`)).json();
     const pid = (plist.find((x) => x.name === '浏览器验收剧') || {}).id;
@@ -752,7 +767,35 @@ try {
       }
     }
 
-    group('防连点契约（R6：双击不得重复创建）');
+    group('卡内按钮冒泡契约（R5：不得叠出第二层弹窗）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const img = await J('/api/images', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: pid, name: 'R5 冒泡探针图', usage_type: 'storyboard', generation_prompt: 'probe' }),
+      });
+      ok('R5 探针图片已建', !!img.id, JSON.stringify(img).slice(0, 70));
+      await cdp.eval(`location.hash = '#/assets'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-fav]') || !!document.querySelector('[data-zoom]')`), '素材卡片按钮出现');
+      await sleep(400);
+      const modalCount = () => cdp.eval(`return document.querySelectorAll('#modal-root .modal, #modal-root [class*=modal]').length;`);
+      // 卡内按钮：冒泡没挡住就会同时弹出预览层
+      await cdp.eval(`const b=document.querySelector('[data-fav]') || document.querySelector('[data-zoom]'); b.click(); return true;`);
+      await sleep(500);
+      const afterBtn = await modalCount();
+      ok('R5 卡内按钮点击未叠出预览弹窗', afterBtn === 0, `modals=${afterBtn}`);
+      // 灵敏度对照：点卡片本身必须能开弹窗（证明弹窗探测器有效，上面的 0 不是探测器失灵）
+      await cdp.eval(`const c=document.querySelector('[data-id]') || document.querySelector('[data-zoom]'); c.click(); return true;`);
+      await sleep(600);
+      const afterCard = await modalCount();
+      ok('R5 灵敏度对照：点卡片确实打开预览弹窗', afterCard >= 1, `modals=${afterCard}`);
+      await cdp.eval(`const x=document.querySelector('#modal-root [data-close]'); if(x) x.click(); return true;`);
+      await J(`/api/images/${img.id}`, { method: 'DELETE' }).catch(() => {});
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
+    group('防连点契约（R6：双击不得重复创建）');    group('防连点契约（R6：双击不得重复创建）');
     {
       const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
       const before = (await Jget('/api/projects')).length;
