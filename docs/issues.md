@@ -154,3 +154,39 @@
 - **`保存` 类补漏**：任务页/素材库「保存到本机」下载按钮 busy 化（见 UX-7）；`.switch` 升级原生 `button role="switch"`（3 处：模型自动刷新 / 视频自动下载 / 图生图保持构图），CSS 补 `appearance:none;padding:0;font:inherit` 保持几何（实测 42×24、滑钮 left 2px→20px 与 div 版一致），`aria-checked` 与 class 同步；键盘 Enter/Space 原生可用（`build/sw-check.mjs` 实测 focusable=true / toggle=true / ariaSync=true）。原第三节 S6 关闭。
 - **Toast 可点击关闭**：错误 toast 挂 6 秒期间挡右上角且不可干预 → `dismiss()`（点击/超时共用、`dataset.gone` 防重入、clearTimeout）+ `title="点击关闭"`；顺手清掉 `${icon ? '' : ''}` 无效表达式。
 - **终验**：selftest 113 / apitest 141 / uitest 395 / browser-test 29 / ux-audit 全断言通过（仅剩 1 条已证实的渐变背景探针误报）。
+
+---
+
+## 七、第三轮：Agnes Video 2.5 / 2.5 Flash 新协议适配（真实线上事故）
+
+### 现象
+用户把默认视频模型设为 `agnes-video-2.5-flash`，图片生成正常，**视频生成 100% 失败**。落库错误逐条命中：`width/height is a forbidden field`、`num_frames is a forbidden field`、`frame_rate/negative_prompt is not an allowed request field`。
+
+### 根因
+Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs/agnes-video-25`），与 v2.0 请求体完全不兼容：
+
+| 维度 | v2.0（旧） | 2.5 系（新） |
+|---|---|---|
+| 模式 | 靠有无 image 隐式区分 | 必填 `mode`：`text` / `keyframe` / `reference` |
+| 时长 | `num_frames` + `frame_rate` | `seconds`（字符串 `"4"`–`"12"`） |
+| 分辨率 | `width` × `height` 像素 | `size` 档位（Flash 固定 `720P`）+ `aspect_ratio` 画幅 |
+| 媒体 | 顶层 `image` / image 数组 | `first_frame`/`last_frame`（keyframe）、`images`/`audios`（reference） |
+| 负向提示词 | `negative_prompt` 字段 | 无该字段（并入 prompt） |
+| 结果地址 | `remixed_from_video_id` | 完成响应 `url`（或 `metadata.url`） |
+
+原 `createVideo`/`queryVideo` 只实现了 v2.0 一套 body，把五个 v2.0 字段无条件发给 2.5 → 全部被 400 拒。即便侥幸通过，`extractVideoUrl` 也只认 v2.0 的 `remixed_from_video_id`，拿不到 2.5 的 `url`/`metadata.url`。
+
+### 修复（`lib/agnes.js` 按模型代际分流）
+- `V25_MODEL` 正则识别 `agnes-video-2.5*`；命中走 `v25Body()`：
+  - `mode` 由入参推导：无图→`text`；`mode_flag=keyframes`→`keyframe`（取首/尾帧，中间帧丢弃）；单图 `image`→`keyframe`+`first_frame`；多图→`reference`+`images`（Flash 截 5 张）。
+  - `num_frames/frame_rate` → `v25Seconds()` 折算 `seconds` 并夹进 `"4"`–`"12"`；`width/height` → `v25Size()`（Flash 恒 `720P`）+ `v25Aspect()`（横/竖/方预设映射 16:9 / 9:16 / 1:1 / 21:9）。
+  - `negative_prompt` 并进 `prompt`（"…。避免出现：X"）。
+- `queryVideo(videoId, modelName)`：2.5 查询必须带 `model_name`；`poller.pollOnce` 传 `asset.model_name`。
+- `extractVideoUrl`：优先 `metadata.url`，再回落 `url`/`remixed_from_video_id`。
+- `downloadVideo`：对 401/403/404/5xx **重试一次**（实测 2.5 任务刚 completed 时结果文件在 CDN 上会瞬时 401）。
+- 前端 `videos.js`：选中 2.5 模型时，在分段器下方显示金色说明条，讲清折算规则；页头文案去掉"2.0"字样。
+
+### 验证
+- **单测/集成**：apitest 新增「视频 2.5 新协议」组（mock 捕获请求体 + 2.5 查询分支），断言 mode/seconds/size/aspect_ratio 正确、旧字段不发送、负向并入、四模式媒体映射、查询带 model_name、completed 后 `video_url` 落 `url`，并对照 v2.0 仍走旧 body。**apitest 141 → 165 全过**。
+- **真实 API 端到端**：经本地服务连发（命中免费用户 `video_queue_full`/`rate limit` 属正常限流，非 schema 错误），第 5 次成功创建 `task_…` → 轮询 `queued→in_progress(progress 10→90)→completed`，拿到真实 `video_url`；`保存到本机` 首次因 CDN 瞬时 401 失败、重试后落盘 3.8MB MP4（`file` 校验为 `ISO Media MP4`）。
+- 全量：selftest 113 / apitest 165 / uitest 395 / browser-test 29，0 失败。
