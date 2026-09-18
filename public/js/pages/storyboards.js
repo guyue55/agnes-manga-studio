@@ -4,7 +4,7 @@
  * 支持批量补提示词、批量出图、批量出视频（带队列进度）。
  */
 import {
-  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS,
+  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
@@ -354,7 +354,7 @@ ${text}`,
         prompt: s.video_prompt,
         image: imgUrl || undefined,
         negative_prompt: s.negative_prompt,
-        num_frames: 121,
+        num_frames: secondsToFrames(s.duration_seconds),
         frame_rate: 24,
         width: 1152,
         height: 768,
@@ -400,7 +400,7 @@ ${text}`,
         prompt: s.video_prompt,
         image: imgUrl || undefined,
         negative_prompt: s.negative_prompt,
-        num_frames: 121,
+        num_frames: secondsToFrames(s.duration_seconds),
         frame_rate: 24,
         width: 1152,
         height: 768,

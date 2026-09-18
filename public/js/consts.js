@@ -85,6 +85,14 @@ export const DURATION_PRESETS = [
   { label: '约 10 秒', frames: 241 },
   { label: '约 18 秒', frames: 441 },
 ];
+// R4：分镜 duration_seconds 折算为 Agnes num_frames。Agnes 要求帧数 = 8n+1、上限 441、默认 24fps。
+// 给定秒数取最接近的合法值并钳进 [81, 441]，让"时长"这一列真正影响产出而不是被 121 写死覆盖。
+export function secondsToFrames(sec, fps = 24) {
+  const s = Number(sec);
+  const raw = (Number.isFinite(s) && s > 0 ? s : 5) * fps;
+  const n = Math.max(10, Math.min(55, Math.round((raw - 1) / 8)));
+  return 8 * n + 1;
+}
 export const IMAGE_USAGES = [
   { value: 'storyboard', label: '分镜图' },
   { value: 'character', label: '角色图' },
