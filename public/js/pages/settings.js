@@ -4,7 +4,7 @@
  */
 import { icon, esc, TEMPLATE_TYPES, modelChoices, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, spinner, confirm, options, setBusy } from '../ui.js';
+import { modal, toast, spinner, confirm, options, setBusy, errBox } from '../ui.js';
 import { head } from './helpers.js';
 import { state, refreshState } from '../app.js';
 
@@ -39,12 +39,24 @@ export default async function settings(container) {
 
   async function load() {
     const [s, t] = await Promise.all([api.settings(), api.templates()]);
-    if (s.ok) settings = s.data || {};
-    if (t.ok) templates = t.data || [];
+    const bad = [s, t].find((r) => !r.ok); // 设置页读失败若静默，用户会对着空表单误操作
+    if (bad) {
+      const box = container.querySelector('#panel');
+      box.innerHTML = errBox(`设置加载失败：${bad.error || '网络错误'}`);
+      const rb = box.querySelector('[data-retry]');
+      if (rb) rb.onclick = load;
+      return;
+    }
+    settings = s.data || {};
+    templates = t.data || [];
     render();
   }
 
+  let saveInflight = false; // R6 残留：所有分节的保存钮共用互斥锁，防连点双写
   async function save(patch, msg = '已保存') {
+    if (saveInflight) return;
+    saveInflight = true;
+    try {
     const r = await api.saveSettings(patch);
     if (r.ok) {
       settings = r.data.settings || settings;
@@ -58,6 +70,7 @@ export default async function settings(container) {
       await refreshState();
       render();
     } else toast.err(r.error);
+    } finally { saveInflight = false; }
   }
 
   function render() {
@@ -409,15 +422,30 @@ export default async function settings(container) {
       footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>开始导入</button>`,
       onMount(root, close) {
         root.querySelector('[data-no]').onclick = close;
-        root.querySelector('[data-yes]').onclick = async () => {
+        const yes = root.querySelector('[data-yes]');
+        let inflight = false;
+        yes.onclick = async () => {
+          if (inflight) return; // R6 系：导入进行中禁二次提交
           const f = root.querySelector('#imp-file').files[0];
           if (!f) { toast.err('请选择文件'); return; }
+          const mode = root.querySelector('#imp-mode').value;
+          if (mode === 'replace') {
+            // SE-1：replace 会先清空现库，必须二段确认（与"清空全部数据"防护对齐）
+            const sure = await confirm({
+              title: '确认替换导入',
+              text: '「替换」会<b>先清空当前全部数据</b>（项目/分镜/图/视频/素材/设置），再导入备份文件内容。此操作不可撤销，确定继续吗？',
+              danger: true, okText: '清空并导入',
+            });
+            if (!sure) return;
+          }
+          inflight = true; setBusy(yes, true);
           try {
             const data = JSON.parse(await f.text());
-            const r = await api.importData(data, root.querySelector('#imp-mode').value);
+            const r = await api.importData(data, mode);
             if (r.ok) { toast.ok(`已导入 ${r.data.imported} 条数据${r.data.skipped ? `（${r.data.skipped} 条非法行已跳过）` : ''}`); close(); await load(); await refreshState(); }
             else toast.err(r.error);
           } catch (e) { toast.err(`文件解析失败：${e.message}`); }
+          finally { inflight = false; setBusy(yes, false); }
         };
       },
     });

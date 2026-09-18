@@ -4,7 +4,7 @@
  */
 import { icon, esc, fmtTime, relTime, PROJECT_TYPES, PLATFORMS, ASPECTS } from '../consts.js';
 import { api } from '../api.js';
-import { modal, confirm, toast, empty, spinner, options } from '../ui.js';
+import { modal, confirm, toast, empty, spinner, options, setBusy } from '../ui.js';
 import { head } from './helpers.js';
 import { navigate, softRefresh } from '../app.js';
 
@@ -82,9 +82,11 @@ export default async function projects(container, params) {
           if (act === 'open') navigate('storyboards', { project: id });
           else if (act === 'edit') openForm(list.find((x) => x.id === id));
           else if (act === 'dup') {
+            if (b.dataset.busy === '1') return; // R6 残留：复制防连点（成功即重渲染，失败恢复）
+            setBusy(b, true);
             const r2 = await api.duplicateProject(id);
             if (r2.ok) { toast.ok('已复制项目'); load(); softRefresh(); }
-            else toast.err(r2.error);
+            else { toast.err(r2.error); setBusy(b, false); }
           } else if (act === 'export') {
             window.open(`/api/projects/${id}/export`, '_blank');
           } else if (act === 'del') {
@@ -147,7 +149,10 @@ export default async function projects(container, params) {
       onMount(root, close) {
         root.querySelector('[data-no]').onclick = close;
         root.querySelector('#f-name').focus();
-        root.querySelector('[data-yes]').onclick = async () => {
+        const yes = root.querySelector('[data-yes]');
+        let inflight = false; // R6 残留：保存防连点
+        yes.onclick = async () => {
+          if (inflight) return;
           const payload = {
             name: root.querySelector('#f-name').value.trim(),
             description: root.querySelector('#f-desc').value.trim(),
@@ -160,9 +165,12 @@ export default async function projects(container, params) {
             status: root.querySelector('#f-status').value,
           };
           if (!payload.name) { toast.err('项目名称不能为空'); return; }
-          const r = isEdit ? await api.updateProject(p.id, payload) : await api.createProject(payload);
-          if (r.ok) { toast.ok(isEdit ? '已保存' : '项目已创建'); close(); load(); softRefresh(); }
-          else toast.err(r.error);
+          inflight = true; setBusy(yes, true, '保存中');
+          try {
+            const r = isEdit ? await api.updateProject(p.id, payload) : await api.createProject(payload);
+            if (r.ok) { toast.ok(isEdit ? '已保存' : '项目已创建'); close(); load(); softRefresh(); }
+            else toast.err(r.error);
+          } finally { inflight = false; setBusy(yes, false); }
         };
       },
     });

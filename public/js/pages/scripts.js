@@ -5,7 +5,7 @@
  */
 import { icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, options, confirm } from '../ui.js';
+import { modal, toast, empty, spinner, options, confirm, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, softRefresh } from '../app.js';
 
@@ -205,8 +205,11 @@ export default async function scripts(container, params) {
     wrap.querySelector('#r-copy').onclick = () => {
       copyText(result).then(() => toast.ok('已复制')).catch(() => toast.err('复制失败'));
     };
-    wrap.querySelector('#r-save').onclick = async () => {
+    const saveBtn = wrap.querySelector('#r-save');
+    saveBtn.onclick = async () => {
       if (!projectId) { toast.err('先在右上角选择项目'); return; }
+      if (saveBtn.dataset.busy === '1') return; // R6 残留：保存防连点
+      setBusy(saveBtn, true, '保存中');
       const r = await api.createScript({
         project_id: projectId,
         script_type: tab,
@@ -215,6 +218,7 @@ export default async function scripts(container, params) {
         model_name: container.querySelector('#model')?.value || '',
         generation_prompt: '',
       });
+      setBusy(saveBtn, false);
       if (r.ok) { toast.ok('已保存到项目'); loadSaved(); }
       else toast.err(r.error);
     };
