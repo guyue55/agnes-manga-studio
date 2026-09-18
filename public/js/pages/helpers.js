@@ -1,7 +1,7 @@
 /**
  * helpers.js — 页面通用片段：页头、项目选择器、批量进度条
  */
-import { icon, esc, relTime } from '../consts.js';
+import { icon, esc } from '../consts.js';
 
 export function head(o) {
   return `
@@ -27,10 +27,6 @@ export function projectPicker(projects, selected, opts = {}) {
 }
 
 /** 批量任务进度（SSE 驱动） */
-export function batchBar() {
-  return `<div id="batch-bar"></div>`;
-}
-
 export function renderBatchBar(el, job) {
   if (!el) return;
   if (!job) { el.innerHTML = ''; return; }
@@ -50,11 +46,7 @@ export function renderBatchBar(el, job) {
     </div>`;
 }
 
-/** 卡片里的项目统计（分镜/图片/视频数） */
-export async function projectStatLine(id) {
-  return `<span>${relTime(id)}</span>`;
-}
-
+/** 通用表单片段：下拉 / 输入框 / 文本域 */
 export function selectField(label, id, optionsHtml, extra = '') {
   return `<div class="field"><label>${esc(label)}</label><select class="select" id="${id}" ${extra}>${optionsHtml}</select></div>`;
 }
