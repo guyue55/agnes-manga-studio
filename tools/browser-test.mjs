@@ -378,6 +378,11 @@ try {
         await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
         await waitFor(() => cdp.eval(`[...document.querySelectorAll('#table tbody tr')].some((tr)=>tr.innerText.includes('#77')&&tr.innerText.includes('有视频'))`), '回分镜页见「有视频」回显');
         ok('E2E 终点：分镜行回显视频态', true);
+        await cdp.eval(`location.hash = '#/assets?tab=video'; return true;`);
+        const vsrc = await waitFor(() => cdp.eval(`(document.querySelector('video[src*="/assets/videos/"]') || {}).src || null`), '素材页视频本地播放源', 10000);
+        ok('成片以本地文件回显（非远端 URL）', !!vsrc, String(vsrc).slice(0, 90));
+        const serve = await fetch(vsrc);
+        ok('本地视频静态服务可读', serve.ok && (await serve.arrayBuffer()).byteLength > 0, String(serve.status));
         await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '', video_poll_interval: '8' }) });
       } finally { mock.close(); }
     }
@@ -566,6 +571,25 @@ try {
       await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), 'Ctrl+Enter 提交关闭', 6000);
       ok('Ctrl+Enter 走主按钮提交路径', true);
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
+    group('设置页写入回环（最后未穿的交互页）');
+    {
+      await cdp.eval(`location.hash = '#/settings?sec=task'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#t-interval')`), '任务参数区就绪');
+      await cdp.eval(`document.querySelector('#t-interval').value = '6'; document.querySelector('#save-task').click(); return true;`);
+      await waitFor(async () => { const g = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json(); return Number((g.data || g).video_poll_interval) === 6; }, '轮询间隔落库=6', 8000);
+      ok('数值字段 UI→PUT→落库回环', true);
+      await cdp.eval(`document.querySelector('#t-auto').click(); document.querySelector('#save-task').click(); return true;`);
+      await waitFor(async () => { const g = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json(); const v = (g.data || g).auto_download_video; return v === '0' || v === '1'; }, '开关翻转落库', 8000);
+      const g2 = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json();
+      const adv = (g2.data || g2).auto_download_video;
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      await cdp.eval(`location.hash = '#/settings?sec=task'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#t-auto')`), '重进任务区');
+      ok('重进页面控件与库值同步（读回显示）', await cdp.eval(`document.querySelector('#t-interval').value === '6' && document.querySelector('#t-auto').classList.contains('on') === (${adv === '1'})`), String(adv));
+      await cdp.eval(`document.querySelector('#t-interval').value = '8'; document.querySelector('#save-task').click(); return true;`); // 复原默认
+      await sleep(300);
     }
 
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
