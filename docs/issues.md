@@ -1,5 +1,7 @@
 # Agnes 漫剧工坊 · 问题清单与修复记录
 
+> 逐轮完整证据在此；跨轮总账与最终状态见 [audit-summary.md](./audit-summary.md)。
+
 > 全维度代码审计（server / lib / public / tools / data）+ 真实 Agnes API 联调中发现的问题。
 > 状态标记：✅ 已修复（含提交）｜📌 已知暂不修（附理由）｜🚫 设计如此，非缺陷。
 > 每轮审计后更新本文件。验证命令统一为 `node tools/run-all.mjs`（selftest + apitest + uitest + browser-test）。
