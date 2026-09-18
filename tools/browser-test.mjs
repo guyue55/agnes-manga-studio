@@ -486,11 +486,54 @@ try {
         ok('B4 画风分层实证：3/3 云端 prompt 均带水彩短语且只注入一次', cloudPrompts.length === 3 && cloudPrompts.every((x) => x.includes('watercolor illustration') && x.indexOf('watercolor') === x.lastIndexOf('watercolor')), JSON.stringify(cloudPrompts[0] || '').slice(0, 140));
         await waitFor(async () => (await J(`/api/storyboards?project_id=${pid}&episode=77`)).every((r) => r.status === 'image_ready' && r.linked_image_id), '3 镜出图关联回写', 25000);
         ok('创作链终点：3 镜全部 image_ready', true);
-        ok('回显：唯一缺提示词的镜补上 mock 文本，3 镜全亮「有图片」', await cdp.eval(`const trs=[...document.querySelectorAll('#table tbody tr')];return trs.length === 3 && trs.filter((t)=>t.innerText.includes('e2e11')).length === 1 && trs.every((t)=>t.innerText.includes('有图片'));`));
+        await waitFor(() => cdp.eval(`const trs=[...document.querySelectorAll('#table tbody tr')];return trs.length === 3 && trs.filter((t)=>t.innerText.includes('e2e11')).length === 1 && trs.every((t)=>t.innerText.includes('有图片'));`), '回显就位（补缺 1 镜 + 3 镜有图片）', 10000);
+        ok('回显：唯一缺提示词的镜补上 mock 文本，3 镜全亮「有图片」', true);
         await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '' }) });
         await J('/api/storyboards/batch-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: rows.map((r) => r.id) }) }).catch(() => {});
         await cdp.eval(`location.hash = '#/dashboard'; return true;`);
       } finally { mock.close(); }
+    }
+
+    group('脚本页生成-保存链 E2E');
+    {
+      const mock = http.createServer((req, res) => {
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ choices: [{ message: { content: 'E12概念产出：末世题材，少年漫主角觉醒。' } }] }));
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const kPort = mock.address().port;
+      try {
+        const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${kPort}/v1`, agnes_api_key: 'e12-key' }) });
+        const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+        await cdp.send('Page.reload', {}); await sleep(900); // 让前端 state.settings 吸收新 Key（真实用户是在设置页保存的，天然新鲜）
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=story_concept'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#fields input, #fields textarea').length >= 1`), '模板字段渲染');
+        await cdp.eval(`document.querySelectorAll('#fields input, #fields textarea').forEach((el)=>{el.value='末世少年';el.dispatchEvent(new Event('input',{bubbles:true}));}); document.querySelector('#gen').click(); return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('#r-out') && document.querySelector('#r-out').innerText.includes('E12概念产出')`), '生成结果卡回显', 15000)
+        await cdp.eval(`document.querySelector('#r-save').click(); return true;`);
+        await waitFor(async () => { const ss = await J(`/api/scripts?project_id=${pid}`); return ss.some((x) => String(x.content).includes('E12概念产出')); }, '脚本入库', 10000);
+        ok('脚本生成→保存全链贯通（模板变量→LLM→入库）', true);
+        await waitFor(() => cdp.eval(`document.querySelector('#saved').innerText.includes('故事构思')`), '已保存列表回显', 8000);
+        ok('已保存列表同步回显', true);
+        const ss = await J(`/api/scripts?project_id=${pid}`);
+        const mine = ss.find((x) => String(x.content).includes('E12概念产出'));
+        await fetch(`http://127.0.0.1:${port}/api/scripts/${mine.id}`, { method: 'DELETE' });
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '' }) });
+      } finally { mock.close(); }
+    }
+    group('F5 深链复原（boot 竞态）');
+    {
+      const J = (url) => fetch(`http://127.0.0.1:${port}${url}`).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#p-picker, select')`), '分镜页初始就绪');
+      await cdp.send('Page.reload', {});
+      await sleep(900);
+      const boot = await cdp.eval(`({hash: location.hash, hasTable: !!document.querySelector('#table') && document.querySelectorAll('#table tbody tr').length, empty: document.body.innerText.includes('请先选择项目')})`);
+      ok('F5 后深链参数保留且项目不错位', String(boot.hash).includes(`#/storyboards?project=${pid}`) && !boot.empty, JSON.stringify(boot));
     }
 
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
