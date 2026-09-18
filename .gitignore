@@ -26,3 +26,7 @@ Thumbs.db
 
 # Local scratch
 .synchk/
+
+# 竞品逆向样本等本地调研素材，不入库
+reference/
+.understand-anything/.trash-*/
