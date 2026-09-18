@@ -595,6 +595,38 @@ try {
       await sleep(300);
     }
 
+    group('防连点契约（R6：双击不得重复创建）');
+    {
+      const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
+      const before = (await Jget('/api/projects')).length;
+      await cdp.eval(`location.hash = '#/projects'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#new-project');`), '项目页就绪');
+      await cdp.eval(`document.querySelector('#new-project').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#f-name');`), '新建项目弹窗就绪');
+      await cdp.eval(`document.querySelector('#f-name').value = '连点对照剧'; return true;`);
+      // 同一任务内连发两次点击：处理器先同步置 inflight=true 再 await，第二次必被拦（或被 setBusy 禁用）
+      await cdp.eval(`const b = document.querySelector('[data-yes]'); b.click(); b.click(); return true;`);
+      await waitFor(() => cdp.eval(`return !document.querySelector('#f-name');`), '弹窗关闭', 10000).catch(() => false);
+      const after = await Jget('/api/projects');
+      const hits = after.filter((p) => p.name === '连点对照剧');
+      ok('双击创建只产生 1 个项目（R6 防连点）', hits.length === 1, `before=${before} after=${after.length} 同名=${hits.length}`);
+      for (const h of hits) await fetch(`http://127.0.0.1:${port}/api/projects/${h.id}?cascade=1`, { method: 'DELETE' });   // 先清首批，避免污染对照计数
+      // 灵敏度对照：两次点击**不重叠**（等第一次落库后再点）应确实产生 2 个 →
+      // 证明上面的"只 1 个"来自防连点，而非名字校验/接口去重等巧合
+      await cdp.eval(`document.querySelector('#new-project').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#f-name');`), '对照弹窗就绪');
+      await cdp.eval(`document.querySelector('#f-name').value = '连点对照剧'; return true;`);
+      await cdp.eval(`const b = document.querySelector('[data-yes]'); b.click(); await new Promise((r) => setTimeout(r, 400)); b.click(); return true;`);
+      await sleep(800);
+      const after2 = await Jget('/api/projects');
+      ok('灵敏度对照：非重叠两次点击确实产生 2 个（钉对防护缺失敏感）', after2.filter((p) => p.name === '连点对照剧').length === 2, `同名=${after2.filter((p) => p.name === '连点对照剧').length}`);
+      await cdp.eval(`document.querySelector('.modal-close')?.click(); return true;`);
+      for (const h of after2.filter((p) => p.name === '连点对照剧')) await fetch(`http://127.0.0.1:${port}/api/projects/${h.id}?cascade=1`, { method: 'DELETE' });
+      const cleaned = (await Jget('/api/projects')).length;
+      ok('连点探针已清理（项目数复原）', cleaned === before, `before=${before} cleaned=${cleaned}`);
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
     group('页面挂载矩阵（9 页真机冒烟）');
     {
       // 覆盖空洞：browser-test 历史上只走 7 条路由，#/images 与 #/videos 从未真机挂载
