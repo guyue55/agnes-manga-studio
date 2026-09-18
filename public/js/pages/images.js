@@ -220,7 +220,10 @@ export default async function images(container, params) {
     }
 
     if (!items.length) {
-      el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有生成的图片', '在左侧写提示词点「生成图片」', 'image')}</div>`;
+      el.innerHTML = `<div class="card" style="grid-column:1/-1">${empty('还没有生成的图片', '在左侧写提示词点「生成图片」', 'image', { label: '去写提示词', act: 'focus' })}</div>`;
+      const fb = el.querySelector('[data-act="focus"]');
+      // 两种模式各有一个提示词框，聚焦当前可见的那个
+      if (fb) fb.onclick = () => { const t = container.querySelector('#t2i-prompt') || container.querySelector('#i2i-prompt'); if (t) { t.scrollIntoView({ block: 'center' }); t.focus(); } };
       return;
     }
     el.innerHTML = items.map((img) => `

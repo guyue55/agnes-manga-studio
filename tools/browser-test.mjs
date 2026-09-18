@@ -1247,6 +1247,36 @@ try {
       }
     }
 
+    group('空态指路契约（空态必须给出下一步，而不是只报「没有」）');
+    {
+      // 用全新空项目制造确定性空态（不依赖"恰好别的组没留数据"）
+      const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+      const p = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '空态探针剧' }) });
+      ok('空态探针项目已建（自证非空跑）', !!p.id, JSON.stringify(p).slice(0, 50));
+      try {
+        await cdp.eval(`location.hash = '#/images?project=${p.id}'; return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('#gallery [data-act="focus"]')`), '图片页空态 CTA', 8000);
+        ok('图片页空态带一键 CTA', true);
+        await cdp.eval(`document.querySelector('#gallery [data-act="focus"]').click(); return true;`);
+        ok('点 CTA 后焦点落到提示词框（图片）', await cdp.eval(`document.activeElement && document.activeElement.id === 't2i-prompt'`), await cdp.eval(`document.activeElement && document.activeElement.id`));
+
+        await cdp.eval(`location.hash = '#/videos?project=${p.id}'; return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('#recent [data-act="focus"]')`), '视频页空态 CTA', 8000);
+        ok('视频页空态带一键 CTA', true);
+        await cdp.eval(`document.querySelector('#recent [data-act="focus"]').click(); return true;`);
+        ok('点 CTA 后焦点落到提示词框（视频）', await cdp.eval(`document.activeElement && document.activeElement.id === 'f-prompt'`), await cdp.eval(`document.activeElement && document.activeElement.id`));
+
+        // 分镜页：空项目无镜头 → CTA 跳到故事脚本页（跨页 hash 链接形态）
+        await cdp.eval(`location.hash = '#/storyboards?project=${p.id}&episode=1'; return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('.empty')`), '分镜页空态', 8000);
+        ok('分镜页空态 CTA 指向故事脚本页', await cdp.eval(`!!document.querySelector('.empty a[href^="#/scripts"]')`), await cdp.eval(`(document.querySelector('.empty a') || {}).getAttribute && document.querySelector('.empty a').getAttribute('href')`));
+        // 灵敏度对照：空态不能只有文案（拿一个"有 CTA"与"无 CTA"做对照）
+        ok('灵敏度对照：无 action 的空态确实不带按钮/链接', await cdp.eval(`const m = await import('/js/ui.js'); const d = document.createElement('div'); d.innerHTML = m.empty('x', 'y', 'folder'); return !d.querySelector('a,button');`));
+      } finally {
+        await fetch(`http://127.0.0.1:${port}/api/projects/${p.id}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('设置页 API Key 收回明文契约');
     {
       // 保存成功后不得把刚输入的明文 Key 留在输入框里。旧实现靠"整页 render()"顺手重置，

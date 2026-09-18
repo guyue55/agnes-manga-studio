@@ -391,7 +391,9 @@ export default async function videos(container, params) {
     if (!r.ok) { el.innerHTML = `<div class="note red">${esc(r.error)}</div>`; return; }
     recent = (r.data || []).slice(0, 8);
     if (!recent.length) {
-      el.innerHTML = `<div class="card">${empty('还没有视频任务', '选一个模式，填提示词提交', 'video')}</div>`;
+      el.innerHTML = `<div class="card">${empty('还没有视频任务', '选一个模式，填提示词提交', 'video', { label: '去写提示词', act: 'focus' })}</div>`;
+      const fb = el.querySelector('[data-act="focus"]');
+      if (fb) fb.onclick = () => { const t = container.querySelector('#f-prompt'); if (t) { t.scrollIntoView({ block: 'center' }); t.focus(); } };
       return;
     }
     el.innerHTML = recent.map((v) => `

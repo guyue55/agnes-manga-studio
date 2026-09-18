@@ -329,14 +329,17 @@ export default async function scripts(container, params) {
   async function loadSaved() {
     const el = container.querySelector('#saved');
     if (!projectId) {
-      el.innerHTML = `<div class="card">${empty('未选择项目', '选择项目后可查看已保存的脚本', 'folder')}</div>`;
+      el.innerHTML = `<div class="card">${empty('未选择项目', '选择项目后可查看已保存的脚本', 'folder', { label: '去项目管理', go: '#/projects' })}</div>`;
       return;
     }
     const r = await api.scripts(projectId);
     if (!r.ok) { el.innerHTML = `<div class="note red">${esc(r.error)}</div>`; return; }
     saved = (r.data || []).filter((s) => s.script_type === tab);
     if (!saved.length) {
-      el.innerHTML = `<div class="card">${empty('暂无保存记录', '生成后点「保存到项目」', 'script')}</div>`;
+      el.innerHTML = `<div class="card">${empty('暂无保存记录', '生成后点「保存到项目」', 'script', { label: '去生成', act: 'gen' })}</div>`;
+      const gb = el.querySelector('[data-act="gen"]');
+      // 生成区在左栏：滚动过去并把焦点交给主按钮，避免用户在本页继续找路
+      if (gb) gb.onclick = () => { const b = container.querySelector('#gen'); if (b) { b.scrollIntoView({ block: 'center' }); b.focus(); } };
       return;
     }
     el.innerHTML = saved.map((s) => `

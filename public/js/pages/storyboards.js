@@ -117,7 +117,7 @@ export default async function storyboards(container, params) {
   async function load() {
     const el = container.querySelector('#table');
     if (!projectId) {
-      el.innerHTML = `<div class="card">${empty('请先选择项目', '右上角下拉选一个项目，或去「项目管理」新建', 'folder')}</div>`;
+      el.innerHTML = `<div class="card">${empty('请先选择项目', '右上角下拉选一个项目，或去「项目管理」新建', 'folder', { label: '去项目管理', go: '#/projects' })}</div>`;
       return;
     }
     const [r, imgs] = await Promise.all([api.storyboards(projectId, episode), api.images(projectId)]);

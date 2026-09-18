@@ -215,7 +215,9 @@ group('B2 体验批钉');
   const sb = rd('storyboards.js'); const tk = rd('tasks.js'); const as = rd('assets.js');
   const vd = rd('videos.js'); const st = rd('settings.js'); const db = rd('dashboard.js');
   ok('errBox 存在且四页接线', ui.includes('export function errBox') && [as, tk, st, db].every((x) => x.includes('errBox')));
-  ok('空态动作出口（empty action 插槽）', ui.includes('action && action.go') && sb.includes("label: '去故事脚本页'") && db.includes("label: '去新建项目'"));
+  ok('空态动作出口（empty action 插槽：go 链接 / act 按钮两种形态）',
+    ui.includes('action && action.label') && ui.includes('action.go') && ui.includes('data-act=')
+    && sb.includes("label: '去故事脚本页'") && db.includes("label: '去新建项目'"));
   ok('T-1 画幅映射 sizeForAspect 全链路', consts.includes('export function sizeForAspect')
     && [sb, vd, rd('images.js')].every((x) => x.includes('sizeForAspect'))
     && !sb.includes("'1024x1024'") && !vd.includes('width: 1152'));
@@ -462,6 +464,38 @@ group('付费确认与请求健壮性（源级棘轮）');
     /export function imgWithFallback/.test(ui) && /img-fallback/.test(ui));
   // 灵敏度对照：守卫的检测式能命中旧写法
   ok('灵敏度对照：display:none 检测式能命中旧写法', /onerror="this\.style\.display/.test('<img onerror="this.style.display=\'none\'" />'));
+}
+
+group('空态指路（源级棘轮）');
+{
+  const files = listJs(path.join(PUB, 'js', 'pages'));
+  // 空态只说"没有东西"而不给下一步 = 用户得自己找路。带 action 的调用点数只增不减。
+  // 用括号配对切出每个 empty(...) 的实参文本，避免正则跨调用误判。
+  const argsOf = (src, at) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === '(') depth++;
+      else if (c === ')') { depth--; if (!depth) return src.slice(at + 1, i); }
+    }
+    return '';
+  };
+  let total = 0; let withAction = 0;
+  for (const f of files) {
+    const src = read(f);
+    for (let i = src.indexOf('empty('); i >= 0; i = src.indexOf('empty(', i + 1)) {
+      total++;
+      if (/label:/.test(argsOf(src, i + 5))) withAction++;
+    }
+  }
+  ok('空态调用点已被扫描（自证非空跑）', total >= 10, `total=${total}`);
+  // 不变量（非"≥ 某个数"的宽松阈值——那种阈值撤掉一处也照样通过，等于没钉）：
+  // 本项目所有空态都必须给出下一步，故"带 action 的调用点数 == 总调用点数"。
+  ok('所有空态都必须带一键 CTA（withAction === total）', withAction === total, `withAction=${withAction}/${total}`);
+  ok('ui.js 的 empty() 支持两种 action 形态（go 链接 / act 按钮）',
+    /action\.label/.test(read(path.join(PUB, 'js', 'ui.js'))) && /data-act=/.test(read(path.join(PUB, 'js', 'ui.js'))));
+  // 灵敏度对照：把 action 去掉必须被判为"未指路"
+  ok('灵敏度对照：无 action 的调用不会被算作已指路', !/label:/.test(argsOf("empty('a', 'b', 'folder')}", 5)));
 }
 
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);

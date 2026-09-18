@@ -301,9 +301,20 @@ export function dataOf(el, name) {
 }
 
 /** 空态块。action={label, go:'#/route'} 时渲染成一键直达的 hash 链接（2.7：空态从指路文案变出口） */
+/**
+ * 空态卡片。第 4 参 action 支持两种形态：
+ *   · {label, go:'#/xxx'}  → 渲染成 hash 链接（跨页跳转）
+ *   · {label, act:'xxx'}   → 渲染成按钮，由调用方绑定 `[data-act="xxx"]`（本页内动作，如打开新建弹窗）
+ * 空态只说"没有东西"而不给下一步，用户就得自己找路（竞品空态一律带主色按钮）。
+ */
 export function empty(title, desc, iconName = 'inbox', action = null) {
+  const a = action && action.label
+    ? (action.go
+      ? `<a class="btn btn-sm btn-primary" href="${esc(action.go)}">${esc(action.label)}</a>`
+      : `<button class="btn btn-sm btn-primary"${action.act ? ` data-act="${esc(action.act)}"` : ''}>${esc(action.label)}</button>`)
+    : '';
   return `<div class="empty">${icon(iconName, 38)}<div class="t">${esc(title)}</div><div class="d">${esc(desc || '')}</div>
-    ${action && action.go && action.label ? `<div style="margin-top:14px"><a class="btn btn-sm btn-primary" href="${esc(action.go)}">${esc(action.label)}</a></div>` : ''}</div>`;
+    ${a ? `<div style="margin-top:14px">${a}</div>` : ''}</div>`;
 }
 
 export function spinner(text) {

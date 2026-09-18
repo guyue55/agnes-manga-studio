@@ -28,7 +28,9 @@ export default async function projects(container, params) {
     if (!r.ok) { el.innerHTML = `<div class="note red">${esc(r.error)}</div>`; return; }
     const list = r.data || [];
     if (!list.length) {
-      el.innerHTML = `<div class="card">${empty('还没有项目', '点「新建项目」创建第一部漫剧，填好类型和平台后面生成会更贴题', 'folder')}</div>`;
+      el.innerHTML = `<div class="card">${empty('还没有项目', '点「新建项目」创建第一部漫剧，填好类型和平台后面生成会更贴题', 'folder', { label: '新建项目', act: 'new' })}</div>`;
+      const nb = el.querySelector('[data-act="new"]');
+      if (nb) nb.onclick = () => openForm(null);
       return;
     }
     // 顺带统计每个项目的素材数
