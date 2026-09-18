@@ -754,6 +754,48 @@ group('安全');
   // Key 不能从任何接口泄露
   const s = await api('GET', '/api/settings');
   ok('设置接口不含明文 Key', !JSON.stringify(s.data).includes(MOCK_KEY));
+
+  // X1：Host 头白名单——DNS rebinding 挡板（恶意域名 A 记录指向 127.0.0.1 即可"同源"读全部数据）
+  const rawGet = (path, headers) => new Promise((resolve) => {
+    const rq = http.request({ host: '127.0.0.1', port: srvPort, path, method: 'GET', headers }, (rs) => {
+      let b = ''; rs.on('data', (d) => (b += d)); rs.on('end', () => resolve({ status: rs.statusCode, body: b }));
+    });
+    rq.on('error', (e) => resolve({ status: 0, body: String(e.message) }));
+    rq.end();
+  });
+  const evilHost = await rawGet('/api/bootstrap', { Host: 'evil.example.com' });
+  eq('X1 恶意 Host 被拒 403', evilHost.status, 403);
+  const userinfoHost = await rawGet('/api/bootstrap', { Host: 'a@127.0.0.1' });
+  eq('X1 userinfo 形态 Host 被拒 403', userinfoHost.status, 403);
+  const fqdnHost = await rawGet('/api/bootstrap', { Host: 'localhost.' });
+  eq('X1 FQDN 尾点 localhost. 放行（归一化）', fqdnHost.status, 200);
+  const localHost = await rawGet('/api/bootstrap', { Host: `127.0.0.1:${srvPort}` });
+  eq('X1 本机 Host 放行', localHost.status, 200);
+  // X3：非法转义 / 空字节路径不许炸监听器
+  const badEsc = await rawGet('/%zz', { Host: `127.0.0.1:${srvPort}` });
+  eq('X3 非法转义 %zz 返回 400', badEsc.status, 400);
+  const nulPath = await rawGet('/%00', { Host: `127.0.0.1:${srvPort}` });
+  eq('X3 空字节路径返回 400', nulPath.status, 400);
+  const stillAlive = await api('GET', '/api/health');
+  eq('X3 恶意请求后监听器仍存活', stillAlive.status, 200);
+
+  // X4：同端口 + 同数据目录的第二实例必须拒绝启动——persist 是整库快照全量写，
+  // 两个实例互踩会静默丢数据（exe 双击两次即中招）。此前仅由非门禁 port-check 覆盖，故提升进门禁。
+  const second = await new Promise((resolve) => {
+    const c = spawn(NODE, [path.join(ROOT, 'server.js')], {
+      env: { ...process.env, PORT: String(srvPort), NO_OPEN: '1', AGNES_STUDIO_HOME: HOME },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let o = '';
+    c.stdout.on('data', (d) => (o += d));
+    c.stderr.on('data', (d) => (o += d));
+    const t = setTimeout(() => { c.kill(); resolve({ code: 'TIMEOUT', out: o }); }, 8000);
+    c.on('exit', (code) => { clearTimeout(t); resolve({ code, out: o }); });
+  });
+  eq('X4 同目录第二实例拒绝启动（exit 0）', second.code, 0);
+  ok('X4 且提示"已在运行"', String(second.out).includes('已在运行'), String(second.out).slice(0, 90));
+  const afterX4 = await api('GET', '/api/health');
+  eq('X4 后原实例仍健康（未被抢端口）', afterX4.status, 200);
 }
 
 // ── 14. 静态资源 ─────────────────────────────────────────────
