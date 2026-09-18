@@ -434,6 +434,65 @@ try {
       } finally { mock.close(); }
     }
 
+    group('创作链 E2E（拆镜→补提示词→出图→画风边界注入）');
+    {
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      const SHOTS = { shots: [
+        { shot_number: 1, shot_type: '特写', scene_description: '雨滴砸在天台栏杆', characters: ['林夕', '陈默'], action: '回头', dialogue: '你来了', narration: '', sound_effect: ['雨声', '雷鸣'], duration_seconds: 5, image_prompt: 'rain on rooftop close up', video_prompt: 'slow tilt up', negative_prompt: '' },
+        { shot_number: 2, scene_description: '全景城市夜色' },
+        { shot_number: 3, shot_type: '俯视', scene_description: '伞落在积水里', characters: '无人', image_prompt: 'umbrella in puddle top view' },
+      ] };
+      const cloudPrompts = [];
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o, ms) => setTimeout(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); }, ms || 0);
+        if (u.pathname === '/pixel.png') { res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': PNG.length }); return res.end(PNG); }
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const sys = String((b.messages || [{}])[0].content || '');
+            return send(sys.includes('分镜导演') ? { choices: [{ message: { content: JSON.stringify(SHOTS) } }] } : { choices: [{ message: { content: 'e2e11 cinematic english prompt' } }] });
+          }
+          if (u.pathname === '/v1/images/generations') { cloudPrompts.push(String(b.prompt || '')); return send({ data: [{ url: `http://127.0.0.1:${cPort}/pixel.png` }] }, 200); }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const cPort = mock.address().port;
+      try {
+        const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${cPort}/v1`, agnes_api_key: 'chain-mock-key' }) });
+        const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+        await J('/api/projects/' + pid, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ art_style: '水彩' }) });
+        await cdp.eval(`localStorage.removeItem('agnes.batch.last'); location.hash = '#/storyboards?project=${pid}&episode=77'; return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('#script-in')`), '拆镜输入框出现');
+        await cdp.eval(`document.querySelector('#script-in').value = '暴雨夜。林夕站在天台，陈默从身后走来，说：你来了。'; document.querySelector('#gen-sb').click(); return true;`);
+        await waitFor(async () => (await J(`/api/storyboards?project_id=${pid}&episode=77`)).length === 3, 'LLM 拆镜 3 镜入库', 15000);
+        const rows = await J(`/api/storyboards?project_id=${pid}&episode=77`);
+        const r1 = rows.find((x) => x.shot_number === 1), r2 = rows.find((x) => x.shot_number === 2);
+        ok('拆镜数组字段拍平（characters/sound_effect 顿号连接）', r1.characters === '林夕、陈默' && r1.sound_effect === '雨声、雷鸣', JSON.stringify({ c: r1.characters, s: r1.sound_effect }));
+        ok('缺字段兜底（默认中景 + 默认负面提示词）', r2.shot_type === '中景' && String(r2.negative_prompt).includes('low quality'), JSON.stringify({ t: r2.shot_type, n: r2.negative_prompt }));
+        await cdp.eval(`document.querySelector('#gen-img-prompts').click(); return true;`);
+        await waitFor(async () => { const rs = (await J(`/api/storyboards?project_id=${pid}&episode=77`)); return rs.length === 3 && rs.every((r) => String(r.image_prompt).trim().length > 0); }, '三镜提示词齐', 20000);
+        const after = await J(`/api/storyboards?project_id=${pid}&episode=77`);
+        const a1 = after.find((x) => x.shot_number === 1), a2 = after.find((x) => x.shot_number === 2);
+        ok('批量补提示词精准补缺（已有提示词的镜不被覆写）', a2.image_prompt === 'e2e11 cinematic english prompt' && a1.image_prompt === 'rain on rooftop close up', JSON.stringify({ p1: a1.image_prompt, p2: a2.image_prompt }));
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=77'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#table tbody tr').length >= 3`), '回页行齐');
+        await sleep(600); // load() 刷新行状态
+        await cdp.eval(`document.querySelector('#batch-img').click(); return true;`);
+        await waitFor(async () => cloudPrompts.length === 3, '云端收到 3 张出图请求', 25000);
+        ok('B4 画风分层实证：3/3 云端 prompt 均带水彩短语且只注入一次', cloudPrompts.length === 3 && cloudPrompts.every((x) => x.includes('watercolor illustration') && x.indexOf('watercolor') === x.lastIndexOf('watercolor')), JSON.stringify(cloudPrompts[0] || '').slice(0, 140));
+        await waitFor(async () => (await J(`/api/storyboards?project_id=${pid}&episode=77`)).every((r) => r.status === 'image_ready' && r.linked_image_id), '3 镜出图关联回写', 25000);
+        ok('创作链终点：3 镜全部 image_ready', true);
+        ok('回显：唯一缺提示词的镜补上 mock 文本，3 镜全亮「有图片」', await cdp.eval(`const trs=[...document.querySelectorAll('#table tbody tr')];return trs.length === 3 && trs.filter((t)=>t.innerText.includes('e2e11')).length === 1 && trs.every((t)=>t.innerText.includes('有图片'));`));
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '' }) });
+        await J('/api/storyboards/batch-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: rows.map((r) => r.id) }) }).catch(() => {});
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      } finally { mock.close(); }
+    }
+
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
