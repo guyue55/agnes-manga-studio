@@ -403,6 +403,35 @@ group('前端 JSON 解析');
   ok('repairJson 不误伤正常转义', JSON.parse(repairJson('{"a":"x\\"y","b":"[1,2]"}')).a === 'x"y');
 }
 
+// ── 灾备路径：坏文件降级链（零覆盖案补钉）──────────────────
+group('坏文件降级链');
+await store.persist(); // 排干主库写队（跨 home 切换前必须，防旧写落错家）
+{
+  const HOME2 = path.join(os.tmpdir(), `agnes-corrupt-${process.pid}`);
+  fs.rmSync(HOME2, { recursive: true, force: true }); fs.mkdirSync(HOME2, { recursive: true });
+  fs.writeFileSync(path.join(HOME2, 'db.json'), '{oops 用户手改坏的语法');
+  fs.writeFileSync(path.join(HOME2, 'db.json.bak'), JSON.stringify({ projects: [{ id: 'p_bak', name: '备份层', created_at: 'x', updated_at: 'x' }], storyboards: [] }));
+  store.init(HOME2);
+  const v1 = store.list('projects');
+  ok('db 坏→回退 .bak（不静默清零）', v1.length === 1 && v1[0].id === 'p_bak', JSON.stringify(v1));
+  ok('自愈：main 回写合法内容', JSON.parse(fs.readFileSync(path.join(HOME2, 'db.json'))).projects[0].id === 'p_bak');
+  ok('自愈：.bak 不再指向坏数据（本轮修的自毁洞）', JSON.parse(fs.readFileSync(path.join(HOME2, 'db.json.bak'))).projects[0].id === 'p_bak');
+  ok('坏原文已归档留证', fs.readdirSync(HOME2).some((f) => f.startsWith('db.json.corrupt-')));
+  // 双坏：降级空库但不炸，且证据保留
+  fs.writeFileSync(path.join(HOME2, 'db.json'), '[[[double');
+  fs.writeFileSync(path.join(HOME2, 'db.json.bak'), '[[[also');
+  store.init(HOME2);
+  ok('双坏→空库不炸', Array.isArray(store.list('projects')) && store.list('projects').length === 0);
+  fs.writeFileSync(path.join(HOME2, 'settings.json'), '{bad settings');
+  store.init(HOME2);
+  ok('settings 坏→空对象降级不抛', typeof store.getSettings() === 'object');
+  await store.persist();
+  fs.rmSync(HOME2, { recursive: true, force: true });
+  store.init(HOME);
+  // 注：前序「导入导出」组的 replace 语义合法清空过库——归位断言按盘上实况校验，不预设内容
+  ok('主库归位（内存与盘一致）', store.stats().total_projects === JSON.parse(fs.readFileSync(path.join(HOME, 'db.json'))).projects.length);
+}
+
 // ── 收尾 ─────────────────────────────────────────────────────
 fs.rmSync(HOME, { recursive: true, force: true });
 
