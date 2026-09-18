@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -112,7 +113,24 @@ const mock = http.createServer((req, res) => {
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const freePort = () => 21000 + Math.floor(Math.random() * 8000);
+// T9：随机端口可能撞 mock/srv 互相或撞外部占用 → 服务端起不来被误报成断言失败。
+// 实测两端口都空闲才返回，且强制 srv 与 mock 相距 ≥2。
+const portBusy = (p) => new Promise((res) => {
+  const s = net.connect(p, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); res(true); });
+  s.once('error', () => res(false));
+  s.setTimeout(400, () => { s.destroy(); res(true); });
+});
+async function freePortPair() {
+  for (let i = 0; i < 40; i++) {
+    const m = 21000 + Math.floor(Math.random() * 8000);
+    if (await portBusy(m)) continue;
+    const s = 21000 + Math.floor(Math.random() * 8000);
+    if (Math.abs(s - m) < 2 || await portBusy(s) || await portBusy(s + 1)) continue;
+    return [m, s];
+  }
+  throw new Error('找不到空闲测试端口对');
+}
 
 async function listenAsync(server, port) {
   return new Promise((resolve, reject) => {
@@ -148,10 +166,9 @@ async function api(method, url, body, headers = {}) {
 }
 
 // ── 启动 ─────────────────────────────────────────────────────
-const mockPort = await listenAsync(mock, freePort());
+const [mockPort, srvPort] = await freePortPair();
+await listenAsync(mock, mockPort);
 MOCK_BASE = `http://127.0.0.1:${mockPort}`;
-
-const srvPort = freePort() + 1;
 srv = spawn(NODE, [path.join(ROOT, 'server.js')], {
   env: { ...process.env, PORT: String(srvPort), NO_OPEN: '1', AGNES_STUDIO_HOME: HOME },
   stdio: 'ignore',

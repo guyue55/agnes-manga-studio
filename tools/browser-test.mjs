@@ -6,14 +6,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const NODE = process.execPath;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const port = 30000 + (process.pid % 10000);
-const cdpPort = port + 1;
+// T9：端口不再由 pid 拍死（撞车不会重扫 → 冷启动期偶发「等待超时」假红）；实测空闲才用
+const portBusy = (p) => new Promise((res) => {
+  const s = net.connect(p, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); res(true); });
+  s.once('error', () => res(false));
+  s.setTimeout(400, () => { s.destroy(); res(true); });
+});
+async function pickPortPair(base, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    const p = base + ((process.pid + i * 977) % 9000);
+    if (!(await portBusy(p)) && !(await portBusy(p + 1))) return [p, p + 1];
+  }
+  throw new Error('找不到连续两个空闲端口');
+}
+const [port, cdpPort] = await pickPortPair(30000);
 const stamp = `${process.pid}-${Date.now().toString(36)}`;
 const home = path.join(ROOT, 'build', `ui-home-${stamp}`);
 const profile = path.join(ROOT, 'build', `ui-profile-${stamp}`);
@@ -139,7 +153,7 @@ try {
       '--window-size=1440,900', `http://127.0.0.1:${port}/#/dashboard`,
     ], { stdio: 'ignore' });
 
-    const target = await waitFor(getTarget, '浏览器页面');
+    const target = await waitFor(getTarget, '浏览器页面', 30000); // T9：满负荷下 Chrome 冷启动可超 12s
     cdp = new CDP(target.webSocketDebuggerUrl);
     await cdp.connect();
 
@@ -219,6 +233,10 @@ try {
     if (process.platform === 'win32') {
       spawn('taskkill', ['/PID', String(server.pid), '/T', '/F'], { stdio: 'ignore' });
     } else server.kill('SIGTERM');
+  }
+  await sleep(300); // 让进程松开文件句柄再清目录
+  for (const dir of [home, profile]) { // T9：以前 build/ui-* 永不删除，越积越多
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* Windows 僵尸锁目录，尽力而为 */ }
   }
 }
 
