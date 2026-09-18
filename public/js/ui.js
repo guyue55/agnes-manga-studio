@@ -13,14 +13,22 @@ export function toast(message, kind = 'info', ms = 3800) {
   const el = document.createElement('div');
   el.className = `toast ${kind === 'error' ? 'err' : kind === 'success' ? 'ok' : kind === 'warn' ? 'warn' : ''}`;
   const ic = TOAST_ICON[kind === 'error' ? 'err' : kind === 'success' ? 'ok' : kind === 'warn' ? 'warn' : 'info'];
-  el.innerHTML = `${icon(ic, 16)}${icon ? '' : ''}<div style="flex:1;min-width:0">${esc(message)}</div>`;
+  el.innerHTML = `${icon(ic, 16)}<div style="flex:1;min-width:0">${esc(message)}</div>`;
   // 图标需要一点上边距对齐首行文字
   el.firstElementChild && (el.firstElementChild.style.marginTop = '1px');
   wrap.appendChild(el);
-  setTimeout(() => {
+  const dismiss = () => {
+    if (el.dataset.gone) return;
+    el.dataset.gone = '1';
+    clearTimeout(tmr);
     el.classList.add('out');
     setTimeout(() => el.remove(), 220);
-  }, ms);
+  };
+  const tmr = setTimeout(dismiss, ms);
+  // 允许手动点掉长文案/错误 toast，不必干等
+  el.style.cursor = 'pointer';
+  el.title = '点击关闭';
+  el.onclick = dismiss;
 }
 toast.ok = (m, ms) => toast(m, 'success', ms);
 toast.err = (m, ms) => toast(m, 'error', ms || 6000);
@@ -30,6 +38,8 @@ toast.info = (m, ms) => toast(m, 'info', ms);
 // ── 弹窗 ────────────────────────────────────────────────────
 /**
  * 打开一个通用弹窗。
+ * 键盘完整性：ESC 关闭最上层、Tab 在弹窗内循环、自动聚焦到首个安全控件、
+ * 弹窗打开时锁背景滚动（body.modal-open）。
  * @param {object} o {title, body(HTML或Node), footer(HTML), wide, onMount(root, close)}
  */
 export function modal(o) {
@@ -40,7 +50,7 @@ export function modal(o) {
     <div class="modal ${o.wide ? 'wide' : ''}">
       <div class="modal-head">
         <h3>${esc(o.title || '')}</h3>
-        <button class="icon-btn" data-close style="background:transparent;color:var(--text-3)">${icon('x', 16)}</button>
+        <button class="icon-btn" data-close style="background:transparent;color:var(--text-3)" title="关闭（Esc）">${icon('x', 16)}</button>
       </div>
       <div class="modal-body">${typeof o.body === 'string' ? o.body : ''}</div>
       ${o.footer ? `<div class="modal-foot">${o.footer}</div>` : ''}
@@ -52,31 +62,82 @@ export function modal(o) {
   const bodyEl = mask.querySelector('.modal-body');
   if (o.body && typeof o.body !== 'string') bodyEl.appendChild(o.body);
   root.appendChild(mask);
+  document.body.classList.add('modal-open');
+
+  const focusables = () => [...mask.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && el.offsetParent !== null);
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      // 只关最上层，避免一次 ESC 关掉叠着的多个弹窗
+      if (root.lastElementChild === mask) { e.preventDefault(); close(); }
+    } else if (e.key === 'Tab') {
+      const els = focusables();
+      if (!els.length) return;
+      const first = els[0]; const last = els[els.length - 1];
+      const cur = document.activeElement;
+      if (e.shiftKey && (cur === first || !mask.contains(cur))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
+      else if (!mask.contains(cur)) { e.preventDefault(); first.focus(); }
+    }
+  };
+  document.addEventListener('keydown', onKey);
+  // 弹窗 DOM 被任意方式移除（确认后 close、遮罩点击等）都收尾：解绑键盘、无弹窗时解锁滚动
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(mask)) {
+      obs.disconnect();
+      document.removeEventListener('keydown', onKey);
+      if (!root.querySelector('.modal-mask')) document.body.classList.remove('modal-open');
+    }
+  });
+  obs.observe(root, { childList: true });
+
+  // 自动聚焦：表单优先第一个输入框；否则第一个非危险按钮；再否则关闭钮
+  if (o.autoFocus !== false && !o.noAutoFocus) {
+    const input = mask.querySelector('.modal-body input:not([type=checkbox]):not([type=radio]), .modal-body select, .modal-body textarea');
+    const safeBtn = [...mask.querySelectorAll('.modal-foot .btn')].find((b) => !b.classList.contains('btn-danger'));
+    (input || safeBtn || mask.querySelector('[data-close]'))?.focus();
+  }
+
   if (o.onMount) o.onMount(mask, close);
   return { close, root: mask };
 }
 
-/** 确认框，返回 Promise<boolean> */
+/**
+ * 确认框。
+ * 不带 checkbox 时返回 Promise<boolean>；
+ * 带 checkbox（{label, checked}）时返回 Promise<{confirmed, checked}> ——
+ * 勾选状态必须在点「确定」的瞬间从 DOM 里读，弹窗一关元素就没了。
+ */
 export function confirm(o) {
   const text = typeof o === 'string' ? o : o.text;
   const opts = typeof o === 'string' ? {} : o;
+  const cb = opts.checkbox || null;
+  const cancelVal = cb ? { confirmed: false, checked: false } : false;
+  const yesVal = (checked) => (cb ? { confirmed: true, checked } : true);
   return new Promise((resolve) => {
     let done = false;
+    const finish = (val, close) => { if (done) return; done = true; if (close) close(); resolve(val); };
     const m = modal({
       title: opts.title || '确认操作',
-      body: `<div style="font-size:13.5px;line-height:1.7;color:var(--text-2)">${text}</div>`,
+      body: `<div style="font-size:13.5px;line-height:1.7;color:var(--text-2)">${text}</div>
+        ${cb ? `<div style="margin-top:12px"><label class="row" style="gap:8px;font-size:12.5px;color:var(--text-2)">
+          <input type="checkbox" data-cb ${cb.checked ? 'checked' : ''} /> ${esc(cb.label)}
+        </label></div>` : ''}`,
       footer: `
         <button class="btn" data-no>${esc(opts.cancelText || '取消')}</button>
         <button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-yes>${esc(opts.okText || '确定')}</button>`,
       onMount(root, close) {
-        root.querySelector('[data-yes]').onclick = () => { done = true; close(); resolve(true); };
-        root.querySelector('[data-no]').onclick = () => { close(); resolve(false); };
-        root.querySelector('[data-yes]').focus();
+        root.querySelector('[data-yes]').onclick = () => {
+          finish(yesVal(!!root.querySelector('[data-cb]')?.checked), close);
+        };
+        root.querySelector('[data-no]').onclick = () => finish(cancelVal, close);
+        // 危险操作绝不默认聚焦确认钮（防回车误删）；普通确认聚焦「确定」方便连做
+        root.querySelector(opts.danger ? '[data-no]' : '[data-yes]').focus();
       },
     });
-    // 点遮罩关闭时也要 resolve(false)
+    // 点遮罩关闭时也要 resolve 取消值
     const obs = new MutationObserver(() => {
-      if (!document.body.contains(m.root) && !done) { obs.disconnect(); resolve(false); }
+      if (!document.body.contains(m.root)) { obs.disconnect(); finish(cancelVal); }
     });
     obs.observe(document.getElementById('modal-root'), { childList: true });
   });

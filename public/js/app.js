@@ -62,6 +62,10 @@ async function render() {
 
   const view = document.getElementById('view');
   view.innerHTML = '';
+  // 路由切换时关掉所有残留弹窗：弹窗闭包指向旧页面 DOM，留着就是吞点击/吞键盘的僵尸层
+  const modalRoot = document.getElementById('modal-root');
+  if (modalRoot) modalRoot.innerHTML = '';
+  document.body.classList.remove('modal-open');
   const page = document.createElement('div');
   page.className = 'page';
   view.appendChild(page);
