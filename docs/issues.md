@@ -205,3 +205,199 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
   - **真实限流实测**：连发批量 2 条正撞排队高峰，每条自动退避 4 次（当时默认）约 45s 后才认败，中文报错正确呈现——机制有效，仅免费档容量所限。
   - 全量：selftest 113 / apitest 176 / uitest 395 / browser-test 29，0 失败。
 - **顺带说明**：批量重试期间进度条停在 done=x/N 属预期（单项最长数分钟在等排队）；想要更快认败可把 `video_submit_retries` 调小（设置接口可写）。
+
+---
+
+## 八、第四轮全维度审计（4 路独立深审 + 运行时实测，2026-09-18）
+
+> 方法：后端逐行 / 前端 UIUX / README 承诺核验 / 工具链四路独立审计，全部发现逐条回源码核实后才入档；另做运行时实测：并发写 90 条零丢失、kill -9 崩溃后 db.json 完好、4 种路径穿越变体不泄漏、413/400 输入面、真实 Chrome 冒烟 29 断言。
+> 基线（HEAD `2cf5797`）：selftest 113 ✓ / apitest 176 ✓ / uitest 395 ✓ / browser-test 29 ✓。
+> 状态：🐛 已确认待修（按价值序编号）｜📌 暂不修（附理由）｜🚫 设计如此｜❌ 误报驳回。
+
+### 8.1 安全（X 系列）
+
+- **X1 ✅ 已修（见 9.1）｜GET 面不校验 Host → DNS 重绑定可远程读全量数据**（`server.js:243` 直接用 `req.headers.host` 拼 URL，无任何白名单；`server.js:271` 只有非 GET 走 originOk）。evil.com 重解析到 127.0.0.1 后，攻击页以"同源"身份 fetch `/api/projects`、`/api/bootstrap`、`/api/export` 读取项目/剧本/提示词全量历史与脱敏设置。修复：所有请求校验 Host ∈ {127.0.0.1, localhost, [::1]}（只校主机名；端口由监听套接字钉死不可冒充，写面的端口精确性由 originOk 负责）。
+- **X2 ✅ 已修（见 9.1）｜originOk 只比对 hostname 不比端口/scheme + `local_file` 可写任意路径 → 本机任意端口网页可远程删任意文件**（`server.js:160-169` 仅 `URL(o).hostname` 判断；`routes.js:374` POST /api/images 原样入库 `body.local_file`；`routes.js:404/556/207-209` 三条删除路径 `fs.unlinkSync(a.local_file)` 不设限）。任意 `http://localhost:<其他端口>` 页面可用免预检 simple 请求（text/plain 装 JSON）POST 记录指向 `~/.ssh/id_rsa` 再 DELETE。修复：origin 精确匹配 `http(s)://127.0.0.1:<PORT>` ∪ localhost ∪ [::1]（含端口）；`local_file` 落库前强制 `startsWith(素材根目录)`。
+- 🚫 无 Origin 头的非浏览器请求放行（curl/本机进程）：本机进程本就有全盘权限，威胁模型外（承 D1）。
+- 📌 `safeResolve` 不 realpath（符号链接需本机写权限才能布置，威胁模型外）。
+
+### 8.2 违背用户意图 / 数据正确性（R 系列）
+
+- **R1 ✅ 已修（见 9.2）｜脚本页「导入分镜表」点取消仍按第 1 集导入；ESC/点遮罩后 Promise 永不 resolve，流程静默挂起**（`scripts.js:265` `Number(await modalEp()) || 1`，取消 resolve(null)→0→||1；`ui.js:58` close 无回调，`scripts.js:292-306` 仅两个页脚钮 resolve）。已核实。
+- **R2 ✅ 批量生视频对本地 URL 镜头假承诺"改用文生视频"，实际仍按图生视频提交本地图必败**（`storyboards.js:330-337` items 含 `image:'/assets/…'` 且 mode 按有图判定；`:345-350` publicOk 只进 toast 文案不进逻辑）。对照单发入口 `images.js:245-247` 有剔除。已核实。
+- **R3 ✅ 分镜页单镜头「生成视频」永远文生视频，即便该镜头已关联分镜图**（`storyboards.js:378` mode 写死 'text_to_video'，与批量路径 :335 分叉）。已核实。
+- **R4 🐛 镜头时长 `duration_seconds` 对视频零影响：批量/单发全部固定 num_frames:121/frame_rate:24（≈5s）**（`storyboards.js:339-341,381-383`）。2.5 路径本可折算 seconds。已核实。
+- **R5 ✅ 素材库点预览/播放钮叠出两层弹窗、需按两次 Esc**（`assets.js:169-182/211-227` `[data-zoom],[data-id]` 同时命中钮与父卡片，钮上无 stopPropagation；对照 `images.js:216-218` 正确写法）。已核实。
+- **R6 ✅ 批量/保存/复制类入口未接 setBusy，双击=重复提交烧配额**（`storyboards.js:309-352` 批量图/视频、`projects.js:84-87/150-166` 复制与保存、`scripts.js:208-220`、`settings.js:259-389` 各保存钮；fav 链路吞 Promise 失败静默：`tasks.js:206-215`、`assets.js:147-152/186-191`）。抽查属实。
+- **R7 ✅ 已修（见 9.2）｜镜头→视频关联永不回写：`linked_video_id` 无写方、`video_ready/done` 为僵尸状态**（grep 全库仅 `routes.js:306/325` 白名单透传；`poller.js` completed 只 emit 资产）。分镜表看不出哪镜已出片。已核实。
+- **R8 ✅ 枚举下拉静默改写存量数据：服务端默认 `'9:16'` vs 前端选项值 `'9:16 竖屏'` 不一致，编辑项目"没动"保存即被改成第一项**（`routes.js:169` vs `projects.js:123`；`options()` 无 current 时静默回落，`ui.js:83-89`）。已核实。
+- 📌 删除分镜不清理其素材记录/文件（R 系候补，孤儿面小且可素材库手删，等 8.5-T5 一并考虑）。
+
+### 8.3 承诺与文档兑现（P 系列）
+
+- **P1 ✅ README:84「默认每 24 小时检查一次」模型目录：实际只在启动时查 TTL，无常驻定时器**（`server.js:113-117` 一次性 setTimeout；全库无 interval）。长驻 exe 数周不刷新。修复：加每日 timer 或改 README（倾向前者，UI 文案已诚实）。
+- **P2 ✅ README:56「exe 默认用同级 data/（便携）」不实：需 exe 旁存在 `portable` 标记文件，单文件下载拿不到**（`server.js:41-42`）。改 README 措辞 + 打包产物说明。
+- **P3 ✅ VERSION 仍 1.0.1 而 tag 后已 17 个 lib/public 文件变更；SEA stamp 相同即跳过释放 → 替换同名 exe 的老用户将保留旧前端资源**（`server.js:26,28,58-74`；issues.md:107 自我提醒未兑现）。发版前必须 bump（本轮改动完成后统一 bump 1.0.2 并留痕）。
+- 📌 projects.js:31「填好类型和平台后面生成会更贴题」是空话：project_type/target_platform/art_style 全链路只存不用（features 审计证实；接入生成参数属功能增强，与 R4/8.2 同批规划）。
+- 📌 docs/issues.md 断链 `docs/agnes-video-25`（issues.md:166、agnes.js:19 引用不存在路径）——外部文档，修引用措辞即可。
+- ✅(本轮顺手) AGENTS.md 权限 600→644。
+
+### 8.4 体验 / UI（E 系列，前端审计 F6-F20 已核实部分）
+
+- **E1 ✅ SSE 断线重连后无 resync（任务/角标永久陈旧）+ dashboard 每条事件全量 refreshState 无防抖**（`app.js:138-157`；`poller.js:28` 帧无 id 无 Last-Event-ID 补拉）。es.onopen 补一次 load 即可修大半。
+- **E2 ✅ `#batch-bar` 被 SSE 批量进度与本地"批量补提示词"进度互相覆盖**（`storyboards.js:80-87` vs `:281,295-296`）。
+- **E3 ✅ 批量补提示词把尝试数当成功数上报**（`storyboards.js:288-295` 失败不计数不展示）。
+- **E4 🐛 脚本页切项目/切页签不清 result、不重载已保存列表 → 旧 tab 结果以新 tab 类型存进新项目（张冠李戴）；指向已删项目的 params.project 无拦截**（`scripts.js:22,63-67,208-217,316`）。
+- **E5 🐛 任务页每条 SSE 全表重绘：播放中的 video 被打断、滚动/焦点丢失**（`tasks.js:74-78,111`）；refresh 钮无早退可连点（`tasks.js:216-223`）、文本/图片删除无 confirm（`tasks.js:295-298`）。
+- **E6 ✅ 清空/导入后设置页内部 templates/settings 变量陈旧：显示已删模板、编辑得 404、replace 后表单旧值**（`settings.js:353-355,412-424` 成功分支缺 `await load()`）。
+- **E7 🐛 批量任务切页失联、无找回、无取消钮（服务端 `GET /api/batch`、`:id/cancel` 完好，前端 api.batch/cancelBatch 零调用）**（`api.js:94-95`；`storyboards.js:468` 退订即失忆 → 回来再点=重复提交）。
+- **E8 🐛 数值校验缺位：预计集数/镜号/时长可负入库（min 属性对 JS 取值无效）、fps=999 直透远端、seed 非法串静默变 0、轮询间隔输 0 显示 0 实际钳 2s（显示值≠生效值）**（`projects.js:136,159`、`storyboards.js:416-446`、`videos.js:123-127`、`settings.js:154-160`、`poller.js:47`）。
+- **E9 ✅ 本地服务未启动时首屏不报错反而引导"去设置页填 Key"**（`app.js:161-166` health 失败无提示、:171-175 仍弹 Key 警告）。
+- 📌 F17 大列表无分页/虚拟化（千级素材才痛，先记）；F18 窄屏双列溢出（桌面定位产品）；F19 a11y 三件套（toast aria-live 与 modal focus 归还随 R6 顺手做）；F20① setBusy 固定 title 用于下载钮误导、② `.input-sm` 悬空类（videos.js:240，CSS 0 引用已核实）、③ assets params.tab 无白名单、⑤ modelChoices 对已标注 kind 的模型仍按名正则过滤（潜在"模型消失"黑洞，待真实目录验证后修）。
+
+### 8.5 工程 / 工具链（T 系列）
+
+- **T1 ✅ 超时分支死代码：agnes 超时返回恒 `video_id:''`，routes `timedOut && videoId → 'remote_submitted'` 永假，UI 对应提示不可达**（`agnes.js:310-318` vs `routes.js:493-495`）。要么删除要么在 proxy_timeout 时保留 task 线索。
+- **T2 📌 run-all 串行跑四套测试各自 spawn server，端口释放竞态可能 flaky（tooling 审计实测一次失败一次成功）；建议统一传互异 PORT**（改 run-all.mjs 一行级）。
+- 📌 build-exe SEA assets 手工白名单（漏新增顶层目录即打包缺件）——属可接受的显式清单，但值得在 README 打包节加"新增资源目录需同步 assets"一句。
+- 📌 7 条路由（/api/bootstrap、/api/export、/api/batch、/api/batch/:id、cancel、GET /api/projects/:id、GET /api/batch/:id）无 apitest 直测，bootstrap 仅经 UI 断言间接覆盖——补断言列入收尾轮。
+- ✅(本轮) 崩溃/并发/输入面实测四项全部通过（见本节导语）。
+
+### 8.6 误报与驳回（D 系列，审计纪律留痕）
+
+- **D-R1 ❌ 驳回**：有审计代理声称"`truncate(s,n)` 未定义会在导入长字符串时炸"（routes.js:127-128）——**当前源码不存在任何 truncate 标识符**（grep 0 命中，apitest 176 全过佐证），系臆造。
+- **D-R2 ❌ 驳回**：声称把退避下限 500ms"修复"为 3000ms——源码未变更（git clean），且该"修复"会使 selftest 三条 50ms/10ms 快速用例失败（其自述改测试迁就代码，方向反了）。下限 500ms 为有意护栏，🚫 设计如此。
+- **D-R3 ❌ 驳回**：声称 normalizeBase 存在"前缀绕过"已修——Base URL 由用户本人在设置页配置，非安全边界，`endsWith('/v1')` 语义无漏洞场景；维持现状。
+- ⚠️ **纪律记录**：本轮 4 个只读审计代理中 2 个在报告中声称"已应用修复/已改测试"，经 `git status`+grep 核实**均未落盘**（工作区自始至终仅 AGENTS.md 与 .understand-anything/ 两个未跟踪项）。发现清单已全部按"代理报告→本人回源码复核→才入档"流程过滤。
+
+### 8.7 后端审计补充（B 系列，四路代理全部到齐后归并；#6 即 X1/X2、#17 即 T1，不重列）
+
+- **X3 ✅ 已修（见 9.1）｜单个畸形请求打挂整个服务（drive-by DoS，本轮实测复核）**：`GET /%zz` → serveStatic `decodeURIComponent` URIError（`server.js:197`）；`Host: bad host` → `new URL` TypeError（`server.js:243`）。两处都在 dispatch try/catch（`server.js:284`）之外，async 监听器同步抛出 → unhandled rejection → Node22 默认 crash。**本会话干净实例复现：探针后进程 ★已崩溃★**，日志含完整 uncaught stack。任意网页 `<img src="http://127.0.0.1:5178/%zz">` 即可击落工作台，在途批量/轮询全死。修复：监听器整体 try/catch + URL base 用固定值 + decode 失败回 400 + `unhandledRejection/uncaughtException` 兜底日志。**必修第一位**。
+- **X4 ✅ 已修（见 9.1）｜双击 exe = 双实例共享数据目录互相全量覆盖，静默丢库**：端口占用时 listen 自动 +1 静默起第二个完整实例（`server.js:308-324`），persist 每次全量快照（`store.js:111-116`）——后端代理实证 A/B 各插一条后 A 再写一次，B 的记录整行蒸发。修复：启动时探测候选端口 `GET /api/health` 比对 `data_home`，命中即"已在运行"提示退出（或 lockfile）。**必修**。
+- **B1 ✅ 设置页"测试连接"真烧配额**（`agnes.js:461-474`，本会话复核）：image 测试=真实生成一张图；video 测试=真实提交视频且 **video_id 直接丢弃**、本地零记录。改探测为 `GET /v1/models`。
+- **B2 ✅ network_error 参与提交重试 = 重复扣费窗口**（`agnes.js:69-76,99-117,330-350`）：请求体已发出后的 socket 断连被文案正则判"瞬时"→最多重试 8 次；与其自述的 proxy_timeout 教条（325-328）冲突。改：仅连接阶段错误码/408/429 参与重试，发出后的断连并入 timed_out 补录流。
+- **B3 ✅ downloadVideo 无条件向任意 URL 附 Bearer Key**（`agnes.js:416-419` + `routes.js:545` PUT 可改 video_url，本会话复核）：点"保存到本机"可把 Key 发往攻击者主机，击穿"Key 只留本机"底线。修复：host ∈ base_url host 才带 Authorization；PUT video_url 同约束。
+- **B4 ✅ 落盘失败全静默**（`store.js:112-123,325,334` 四处 `.catch(()=>{})`，本会话复核）：磁盘满/权限坏时 API 照回 ok，"保存成功"但从未持久。修复：console.error + pushLog 告警；rename 前 fsync。
+- B5 ✅ import merge 接受无 id 行 → 永久不可寻址僵尸记录（`store.js:365-371`，代理实证；一行修）。
+- B6 ✅ 已修（见 9.1）：413 送不达：`reject` 后紧跟 `req.destroy()`（`server.js:142-147`），响应写进已毁 socket（本会话复核；130MB 实测连接重置）。
+- B7 ✅ 已修（见 9.1）：端口重试后 listening 回调堆积：多横幅 + 弹多个浏览器且首枚指向别人的服务（`server.js:308-324`，代理实证）。
+- B8 ✅ 错误语义族：非对象 JSON 体→500（`'k' in body` TypeError）、路径 `%zz`→500（应 400）、方法不符→404（应 405），内部报错外泄（`routes.js:40,141,948`）。
+- B9 ✅ batch-refresh 救活 queued 任务不补挂定时器：显示 polling 实则停摆（`routes.js:610-622` vs `:568`）。
+- B10 ✅ 已删 asset 轮询竞态 `emit('video', null)`（`poller.js:72-76`，前端 try/catch 侥幸兜住）。
+- B11 ✅ settings 写入 `String(null)` → 字面量 `'null'` 成有效 Key、全站发 `Bearer null` 且显示"已配置"（`store.js:248-255`）。
+- 📌 `Accept-Ranges: bytes` 谎报无 Range 实现 + pipe 悬挂 fd（`server.js:229-236`）：删头+pipeline 一行级随批顺手；完整 Range 支持缓。
+- 📌 已删内置模板每次启动复活（`seed.js:181-195`，与注释不符）：墓碑标记方案缓后议。
+- 📌 `agnes.image` mime 恒 png（`agnes.js:193`→`routes.js:65`）：可缓。
+
+### 8.8 工程链审计补充（T 系列终版；含 09 残留实证：本会话实测 build/ 遗留 4 个 ui-* 目录）
+
+- **T3 ✅ apitest mock 从不读请求头（本会话复核 grep 0 命中）**：`Authorization` 丢失/改名测试仍全绿、线上全 401——结构性盲区。mock 校验 Bearer 前缀 + 错 key 负例。
+- **T4 🐛 chat 的 response_format 4xx 降级路径零覆盖**（`agnes.js:152-168`；mock 恒 200）：分镜 json_mode 兜底坏了测不出。
+- **T5 🐛 事故级分支 mock 不可达**：提交超时/HTTP200 内嵌 error/图片 URL 分支/downloadVideo 瞬态重试——全部只靠线上验证。补 /slow、/error200、flaky.mp4 mock。
+- **T6 ✅ apitest 不验证被测服务身份**（本会话复核 waitHealth 只看 `r.ok`，`apitest.mjs:120-129`）：随机端口撞车时破坏性用例（级联删/replace）打在陌生 Agnes 实例上。校验 `health.data_home === HOME` + `listen(0)` 预探。
+- T7 ✅ apitest 无 try/finally：中途异常泄漏服务进程与数据目录（`apitest.mjs:698-701`）。
+- T8 ✅ build-exe 的 VERSION 是死代码（本会话复核：`build-exe.mjs:32` 读后不用；`server.js:26` 双源硬编码）：发版注入是假动作。SEA stamp 仅比对版本号（`server.js:60-63`，本会话复核）→ 忘 bump 时新 exe 永远跑旧 lib/public——与 P3 同根，**stamp 应改内容哈希**。
+- T9 🐛 browser-test：`ok(..., true)` 空断言（`browser-test.mjs:186` 本会话复核）；boot 期错误漏检且从未订阅 consoleAPICalled；**运行残留 build/ui-* 永不删除**（实测 4 目录）。
+- 📌 T10 无 Chrome 时静默计"通过"（`browser-test.mjs:129-131`）：加 SKIPPED 标记 + `AGNES_TEST_STRICT` 非零档。
+- 📌 T11 `.gitignore`/入库策略：按 AGENTS.md 口径提交图谱 5 文件 + 忽略 `.understand-anything/.trash-*/` 与 `node_modules/`（待用户确认是否代为 commit）。
+- 📌 T12-T16（低）：browser-test 探测面窄/端口猜测；run-all 无子进程 timeout + 建议互异 PORT 传递；uitest 色值字符串断言脆弱、路由覆盖为 includes 启发式；selftest 两份 fakePoller 形状漂移；package.json 无 lint/CI（无 .github/，713 断言靠人肉）。
+- **覆盖缺口（待收尾轮补测）**：12 条路由零触达（DELETE /api/scripts|storyboards|images|tasks、POST /api/images、POST /api/videos/:id/download、tasks CRUD、GET /api/logs、batch cancel/list、settings/test image|video 分支）+ store 整条持久化链（原子写/.bak 回滚/重启再加载——"保存退出数据还在"从未测）+ consts.esc 无 XSS 回归。repairJson 族已有回归（确认良好）。
+
+### 8.9 处理顺序（最终版，价值/成本排序）
+
+1. **X3** 请求监听器 try/catch + decode 400 + 兜底日志（必修第一位，~10 行）
+2. **X1+X2** Host 白名单 + originOk 端口/scheme 精确化 + local_file 路径约束（~20 行）
+3. **X4** 双实例防护（health 探测 data_home 或 lockfile，~10 行）
+4. **R1** modalEp 取消/ESC 显式 cancel；**R2+R3** 批量/单发视频本地图剔除与 mode 统一
+5. **B3** downloadVideo/PUT video_url 的 Bearer 域约束；**B2** 重试分类收紧（防重复扣费）
+6. **R5** assets 弹窗叠层、**R6** setBusy 铺面+fav 报错、**E2/E3** 进度覆盖与计数诚实化
+7. **B4** 落盘失败告警、**B6** 413 时序、**B7-B11** 后端小项批
+8. **P1** 模型目录每日 timer、**E1** SSE resync、**E4-E9** 前端陈旧态/校验批
+9. **T3-T6** mock 契约保真批（Bearer 校验、降级路径、事故分支、服务身份）
+10. **R4** 时长映射 + **R7** 关联回写 + **P3/T8** stamp 内容哈希与 VERSION bump 1.0.2（发布链一并处理）
+11. 收尾轮：补 12 路由 + 持久化链回归测试、run-all 全绿 + 浏览器回归、回写各条 ✅ 与提交号
+
+---
+
+## 九、修复记录（第四轮审计后的逐项处理）
+
+> 约定：每批修复后立即跑 `node tools/run-all.mjs` 全量回归 + 针对性运行时探针；改动未 commit（等待发布决策，见 8.9 第 10 项 VERSION/stamp 批）。
+
+### 9.1 安全批：X1 / X2 / X3 / X4 / B6 / B7（2026-09-18）
+
+**改动**：
+- `server.js`
+  - 新增 `hostOk()`：所有请求校验 Host ∈ {127.0.0.1, localhost, ::1}，坏 Host 一律 403 `bad host`（X1，DNS rebinding 读库面关闭）；URL 解析 base 改用固定值，Host 头不再参与解析（连带消灭 `Host: bad host` TypeError 崩溃面）。
+  - 请求监听器重构为 `handleRequest()` + 外层 try/catch：任何未预料异常回 400/500 并记日志，**进程不再被单请求打挂**（X3 主防线）；`serveStatic` 的 `decodeURIComponent` 单独 try/catch 回 400（`/%zz` 不再抛）；文件尾部补 `unhandledRejection`/`uncaughtException` 兜底日志（最后防线）。
+  - `originOk()` 收紧为 host+port 全匹配（X2①）：本机其他端口的网页不能再以"本地来源"名义写删数据。
+  - `listen()`：EADDRINUSE 时先探测占用端口的 `/api/health`，`data_home` 相同即提示"已在运行"并退出，**不起影子实例**（X4 丢库面关闭）；成功横幅回调改为一次性注册（B7：修掉重试后多横幅/多弹窗/错端口横幅）。
+  - `readBody()` 超限不再抢先 `req.destroy()`；调用方先送 413、`finish` 后再断流（B6）。
+- `lib/routes.js`
+  - 新增 `safeAssetLocal()`：POST /api/images 的 `local_file` 必须绝对路径且位于 imagesDir/videosDir 内，越界一律落 `''`（X2②：删任意文件链从源头掐断）。
+- `tools/apitest.mjs`
+  - 安全组更新：合法 Origin 用完整 `BASE`（旧用例写的是裸 `http://127.0.0.1`，属旧宽松契约）；**新增**"本机异端口 Origin 写被拒 403"断言（176→177）。
+
+**验证（全绿）**：
+- `node tools/run-all.mjs` 四套通过（selftest 113 / apitest 177 / uitest 395 / browser-test 29）。
+- 实时探针 10 项：`/%zz`→400 存活 · `Host: bad host`→403 存活 · `Host: evil.example.com`→403 · 正常 GET 200 · 错端口 Origin 写→403 · 对端口 Origin 写→200 · `local_file=/tmp/…` 落库变 `""` · 同 home 双实例第二次启动友好退出 · 130MB 上传收 413 `请求体过大` 且服务存活。
+
+### 9.2 第二批：功能正确性 + 体验 + 后端清理 + 发布链（2026-09-18，同轮完成）
+
+**前端**：
+- R1/R2/R3 见上批与本批：导入取消即中止（`ui.js` modal 新增 `onDismiss` 钩子 + `modalEp` settle 防双解）；批量视频本地 URL 真降级文生视频且 toast 报实际数字；单镜头视频与批量共用 `videoImageOf()` 判定。
+- R5 assets 图/视频卡 `stopPropagation`，双层弹窗消失。
+- R6 `submitBusy` 守卫批量提交入口（重复双击不再双发任务）。
+- **复查新增 N1（审核阶段发现，R1 同类的更广面）**：共享的 `ui.js confirm()` 只在「是/否」两钮 resolve，ESC / 点遮罩 / × 关闭时 Promise 永挂——全项目 **13 处 `await confirm()` 的破坏性操作**（删工程/删素材/清空/覆盖导入等）在用户按取消键关闭时静默卡死。审计阶段只抓到 scripts.js 的 `modalEp` 局部版，未察基座 `confirm()` 同病。已用本轮给 modal 加的 `onDismiss` 钩子修复（`confirm` 现于任意关闭路径 resolve(false)；`prompt()` 复核确认其自带 MutationObserver 已安全）。browser-test/uitest 全绿验证。
+- R8 `options()` 保留不在候选中的存量值为"(当前)"项——枚举下拉不再静默改写老数据。
+- E1 SSE `onopen` 重连 resync + dashboard 事件合并刷新（教训：新 helper 与已导出的 `softRefresh` 重名导致 ESM 语法错误整页白屏，run-all 当场抓获后改名 `debouncedRefresh`）。
+- E2 提示词批量与 SSE 批量进度条不再互踩（`promptBusy` 期间挂起、结束后补渲染）；E3 失败不混进成功计数并显式报告条数。
+- E6 清空/导入后设置页 `await load()`，旧模板/旧表单值即刷新。
+- E9 health 失败首屏红字说明"本地服务未启动"，不再误导去填 Key（Key 警告仅在服务正常时出现）。
+
+**后端**：
+- B1 图片/视频"测试连接"改走 `GET /models` 只读探测，零配额消耗且明确标注"未触发真实生成"；未知 kind 也走同一探测（旧代码会盲 POST /videos）。
+- B2 `AgnesError.possiblySent`：只有 ECONNREFUSED/ENOTFOUND 等"连接未建立"错误参与提交重试；发出后的断连/超时不自动重发（防 N 倍计费），走 submit_timeout_unknown 补录流。503/429 退避行为不变（apitest 断言仍绿）。
+- B3 `downloadVideo` Key 只默认发与 base 同主的 URL；跨主先裸发、401/403 兜底重试才带 Key（保 CDN 瞬断与鉴权兼容）。
+- B4 写盘失败经 `store.onWriteError` 上报到终端 + 任务中心 SSE 日志；`writeJsonAtomic` rename 前 fsync。
+- B5 import merge 跳过无 id 行（不再产生不可寻址僵尸记录）。
+- B8 非对象 JSON 体 400"请求体需为 JSON 对象"；路径参数非法转义按 404 匹配失败（不再 500 回显内部报错）。
+- B9 batch-refresh 救活仍 queued/in_progress 的任务补挂 `poller.watch`。
+- B10 已删 asset 的轮询结果 `emit(null)` 竞态关闭（pollOnce 返回 null，run 路径已有早退）。
+- B11 `setSettings` null/undefined 落默认值，不再产生 `'null'` 字面量假 Key。
+- R7 视频出片回写 `storyboards.linked_video_id`（pollOnce 必经点），删除已关联视频时清链——分镜表首次可见"哪镜已出片"。
+- T1 死分支 `timedOut→remote_submitted` 并入 submit_timeout_unknown（注释留痕；UI 对旧数据仍会显示）。
+- P1 模型目录常驻期每 6h 查 TTL 自动刷新；README 措辞同步。
+
+**发布链**：
+- P3/T8 `VERSION`/`package.json` 同步 bump **1.0.2**；`build-exe.mjs` 真注入：VERSION ← package.json、资源戳 ← `sea-<版本>-<全部内嵌资源 sha256 前16位>`，注入断言失败即中止打包。SEA 旧资源残留风险（忘 bump 跑旧代码）根除。
+- P2 README portable 表述改为"需 exe 旁 `portable` 标记文件"，默认目录写准 `%LOCALAPPDATA%\AgnesStudio`；安全节补 Host 白名单 / Origin 端口精确 / 单实例三行。
+
+**测试链**：
+- T3 mock 强制 `Bearer <key>` 校验（旧 mock 从不读请求头，"agnes 丢鉴权头"测不出）+ 新增错 Key→401 负例与恢复正例（apitest 176→179）。
+- T6 apitest 破坏性用例前断言被测实例 `data_home` 身份，不符即中止。
+- T7 apitest exit/SIGINT/SIGTERM/uncaught* 全路径清理服务进程与临时目录。
+
+**验证**：`node tools/run-all.mjs` 全绿（113/179/395/29）；安全批 10 项实时探针见 9.1。
+
+### 9.3 第三批：检查与审核（自审 + 对抗评审 + 实时复测，2026-09-18 同日）
+
+**方法**：①19 文件逐 hunk 自审；②对抗评审代理独立审 diff（探针+读码，结论与自审交叉印证）；③对最终代码重跑实时探针。**审核抓到并修复的问题**：
+
+- **N1（审核期新发现，R1 同类的更广面）**：`ui.js confirm()` 只在两钮 resolve，ESC/遮罩/× 关闭永挂——全项目 13 处 `await confirm()` 破坏性操作取消时静默卡死。用 R1 加的 `onDismiss` 钩子修复；`prompt()` 复核自带兜底无需改。**浏览器实测 4/4**（遮罩/ESC/× → false；确定 → true）。
+- **H2 发布链自断**（build-exe 假 assert）：`assert(injV!==mainSrc)` 在版本恰好同步时替换为恒等 → 每次打包误中止。改为"正则存在性"判据。
+- **H3 fsync 死代码**：`openSync(tmp,'fs')` 非法 flags，每次抛错被吞，B4 的 fsync 从未发生。改 `'r'` 真 fsync + `fsyncMisses` 计数导出，selftest 断言恒 0（假修复回潮即红）。
+- **H4 import 旁路 + replace 炸库**：X2② 只堵了 POST /api/images，`importAll` merge 原样入库越界 `local_file`（实测投毒→DELETE 真删文件）；replace 模式无任何行校验，null 行中途炸脏 MEM 并落盘 → 全站永久 500。改两遍法（全部校验清洗后才碰 MEM）+ 导入行同 `safeAssetLocal` 规则 + `skipped` 计数如实上报 + 导入错误不再回显内部报错。**实测**：投毒行清洗为 `''`、victim 存活、坏行 skipped=2、库完好。**selftest 钉子 +10**（113→123）。
+- **H5 B3 补严**：本轮实际工作树早已删掉"401 兜底回附 Key"（评审代理看到一半旧 diff）；这次补齐**承诺未落地的两半**：PUT `/api/videos/:id` 的 `video_url` 只收 http(s) 或空（javascript:/data: 形状实测落库被清成 `''`）；`keyAllowedFor` 先过 `normalizeBase`（无 scheme 裸域名 base 的同主 CDN 不再误判跨主，单元实测）。**钓鱼实测**：`video_url` 指向异主必 401 的主机 → 两次下载 fetch 收到的 Authorization 均为 `(none)` 并报友好错误。
+- **2e 重查回滚关联**：pollOnce 的 R7 回写加"首次转入 completed"闸门——对旧已完成任务点「重新获取」不再把 `linked_video_id` 从新片改回旧片。
+- **E1 resync 踩 E5**：onopen resync 原来无脑整页 `render()`，会清空弹窗（未保存输入蒸发）并打断播放。改为"弹窗打开/有视频在播时只刷状态与侧栏，空闲才重挂"。机制实测（refreshState→render 后统计 3→4 免刷新）；断线重连触发本身为 EventSource 规范行为。
+- **B2 语义对齐**：catch 路径里 `possiblySent` 的网络错不再记 `submit_failed/not_submitted`（谎称未提交=诱导重提双计费），与超时同走"结果未知"三态 + 明确提示"先到任务中心核对再重提"。
+- **X1/X2 毛刺**：hostOk 归一尾点（`localhost.`≡`127.0.0.1.`）、显式拒 userinfo 形态 Host、注释/文档不再谎报"校验端口"；originOk 支持默认端口（PORT=80 部署时浏览器 Origin 不带 :80 不再全军覆没）。
+- **listen 后 error 监听残留**：成功绑定后撤掉启动期 once('error')（其兜底是 exit(1)，运行期 EMFILE 会"以启动失败名义"击杀服务），换成记录型常驻监听。
+- **apitest 三处强化**：mock 认死 Key 值（假 token 也 401，"张冠李戴"回归现在测得出）；MOCK_KEY 常量单源；T7 cleanup 注册前移到 spawn 之后（消除 waitHealth/T6 之前的漏杀窗口）。
+- **B7 的真修复**：自审发现"成功回调只注册一次"仍是叠听（once('listening') 还在递归体内），`attempt===0` 门卫修好并**实测**：占两端口的实例只打一张横幅。
+- 另清：臆造错误码 `ECONNABORTED_BEFORE`、Chromium 独有死码 `ERR_NAME_NOT_RESOLVED`、`a.linked_ok` 幽灵字段、poller 导出重复键、testConnection 残留变量、README `\\` 转义残留、issues.md 六行翻转后加粗失衡。
+- **uitest 新组**：顶层标识符/导入名冲突静态检查（本轮 softRefresh 重名白屏事故的教训固化，+14 断言，395→409）。
+
+**明确不修（威胁模型内可接受/收益不抵风险，留档）**：X4 无文件锁强约束（sameAppAlive 有 1.5s 探测窗与路径字符串比较的边界，锁file 方案留作后续）；413 后慢客户端吊连接（本机模型）；`uncaughtException` 吞而续跑（对单用户本地工具是利大于弊的取舍）；`readBody` 默认参死码；import"手改 JSON 追加"工作流牺牲（skipped 已显式上报）；sameAppAlive 不 realpath/大小写。
+
+**最终基线（1.0.2 工作区）**：selftest **123** / apitest **179** / uitest **409** / browser-test **29**，0 失败；安全面实时探针累计 12 项全过（Host×3、Origin×3、/%zz、非对象体×2、local_file 越界×2、%zz 路径参数 + 钓鱼 Key 泄漏 + 导入投毒）。评审工件（/tmp/review.diff）已弃用——**以工作树为准**。
