@@ -1277,6 +1277,22 @@ try {
       }
     }
 
+    group('失败追踪码展示契约（R10：用户看得到码，且不会挂空壳）');
+    {
+      const withCode = await cdp.eval(`const m = await import('/js/ui.js'); const d = document.createElement('div'); d.innerHTML = m.errBox('加载失败', undefined, 'eabc123xyz'); return d.innerHTML;`);
+      ok('errBox 渲染出追踪码', String(withCode).includes('eabc123xyz'));
+      ok('errBox 说明码的用途（可在运行日志中按码搜索）', String(withCode).includes('运行日志'));
+      // 灵敏度对照：没有码时不得渲染"报错码"这一行（否则每次加载失败都挂一个空壳）
+      const noCode = await cdp.eval(`const m = await import('/js/ui.js'); const d = document.createElement('div'); d.innerHTML = m.errBox('加载失败'); return d.innerHTML;`);
+      ok('灵敏度对照：无码时不渲染码行', !String(noCode).includes('报错码'));
+      // 骨架屏必须真的产出占位块（不是空 div），否则等于换个名字的空白
+      const sk = await cdp.eval(`const m = await import('/js/ui.js'); const d = document.createElement('div'); d.innerHTML = m.skeleton('asset', 3); return { blocks: d.querySelectorAll('.sk-box').length, lines: d.querySelectorAll('.sk-line').length, busy: d.querySelector('.sk-wrap').getAttribute('aria-busy') };`);
+      ok('骨架屏产出占位块且带 aria-busy', sk.blocks === 3 && sk.lines >= 3 && sk.busy === 'true', JSON.stringify(sk));
+      // 灵敏度对照：kind 写错时必须退化成默认骨架而不是抛错/空串
+      const bad = await cdp.eval(`const m = await import('/js/ui.js'); const d = document.createElement('div'); d.innerHTML = m.skeleton('nope', 1); return d.innerHTML.length;`);
+      ok('灵敏度对照：未知 kind 退化为默认骨架（不抛错、不返回空串）', Number(bad) > 20, String(bad));
+    }
+
     group('设置页 API Key 收回明文契约');
     {
       // 保存成功后不得把刚输入的明文 Key 留在输入框里。旧实现靠"整页 render()"顺手重置，

@@ -46,7 +46,8 @@ let lastImageCreate = null; // B4.1：验证画风只在使用点注入、且注
 let chatFormats = [];
 // T5b 事故路径控制面：query 返回的下载地址可切换；deny 端点带 Key 命中次数必须恒 0
 let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0;
-let imagesDelayMs = 0; // 批量取消契约：把出图放慢，稳定制造「运行中」窗口（测试专用） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
+let imagesDelayMs = 0; // 批量取消契约：把出图放慢，稳定制造「运行中」窗口（测试专用）
+let badJsonUpstream = false; // R10：让上游回 200 + 非 JSON（真实世界里的"网关返回 HTML 错误页"） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
 // 按提示词标记统计 /v1/videos 实际到达次数：验证「限流后重试」与「4xx 不重试」
@@ -71,6 +72,8 @@ const mock = http.createServer((req, res) => {
     if (cmd) { queryTarget = cmd; return send(200, { ok: true }); }
     const si = u.searchParams.get('slowimg');
     if (si !== null) { imagesDelayMs = Number(si) || 0; return send(200, { ok: true, imagesDelayMs }); }
+    const bj = u.searchParams.get('badjson');
+    if (bj !== null) { badJsonUpstream = bj === '1'; return send(200, { ok: true, badJsonUpstream }); }
     return send(200, { queryTarget, flakyHits, denyHitsWithKey, imagesDelayMs });
   }
   if (auth !== `Bearer ${MOCK_KEY}`) {
@@ -85,6 +88,8 @@ const mock = http.createServer((req, res) => {
       return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, metadata: { url: queryUrl() } });
     }
     queryCount++;
+    // R12/R13 探针：永远"进行中"，用来把轮询预算真的跑满
+    if (queryTarget === 'stuck') return send(200, { id: VIDEO_ID, status: 'in_progress', progress: 30 });
     if (queryCount <= 1) return send(200, { id: VIDEO_ID, status: 'queued', progress: 20 });
     return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, remixed_from_video_id: queryUrl() });
   }
@@ -120,6 +125,8 @@ const mock = http.createServer((req, res) => {
     }
     if (u.pathname === '/v1/images/generations') {
       try { lastImageCreate = JSON.parse(body); } catch { lastImageCreate = { bad_json: body }; }
+      // R10 探针：200 + HTML → 后端解析失败 → 502（这是唯一能确定性触发 5xx 的真实路径）
+      if (badJsonUpstream) { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<html>502 Bad Gateway</html>'); }
       if (imagesDelayMs) {
         const payload = lastImageCreate && lastImageCreate.model === 'mock-img-url-ok' ? { data: [{ url: `${MOCK_BASE}/pixel.png` }] } : { data: [{ b64_json: PNG_1PX }] };
         return setTimeout(() => send(200, payload), imagesDelayMs);
@@ -1046,6 +1053,54 @@ group('级联删除');
   localFiles.forEach((f) => ok(`删除后文件已清 ${f.slice(-20)}`, !fs.existsSync(f)));
   const left = await api('GET', `/api/storyboards?project_id=${PROJECT_ID}`);
   eq('分镜已清空', left.data.length, 0);
+}
+
+group('失败追踪码（R10：5xx 带码 + 码进运行日志 + 4xx 不发码）');
+{
+  await api('PUT', '/api/settings', { agnes_api_base_url: MOCK_BASE, agnes_api_key: MOCK_KEY });
+  await fetch(`${MOCK_BASE}/__mock?badjson=1`).catch(() => {});
+  const bad = await api('POST', '/api/agnes/image', { prompt: 'trace probe', size: '1024x1024' });
+  ok('上游返回非 JSON → 502（确定性 5xx 路径）', bad.status === 502, `status=${bad.status} body=${JSON.stringify(bad.data).slice(0, 120)}`);
+  ok('5xx 响应带失败追踪码', /^e[0-9a-z]{10}$/.test(String(bad.data && bad.data.trace)), JSON.stringify(bad.data && bad.data.trace));
+  const lg = await api('GET', '/api/logs');
+  ok('同一个码已写进运行日志（用户截图 → 开发者定位的桥）',
+    (lg.data || []).some((l) => String(l.msg).includes(bad.data.trace)), JSON.stringify((lg.data || [])[0] || {}).slice(0, 120));
+  await fetch(`${MOCK_BASE}/__mock?badjson=0`).catch(() => {});
+  // 4xx 是输入/调用问题：不发码（否则界面变吵且无助于排查）
+  const nf = await api('GET', '/api/projects/nope/export.csv');
+  eq('4xx 不带追踪码', nf.data && nf.data.trace, undefined);
+  // 注意：本组**不得**清 Key——后续组（轮询预算/批量取消）都依赖 mock 凭据在位
+}
+
+group('轮询预算（R12/R13：次数落库 + 递增间隔 + 分级 deadline）');
+{
+  // 旧语义：counts 是内存 Map，watch() 无条件归零 → 一个查满预算的僵尸任务只要被
+  // resume()（每次服务重启）或批量刷新摸到一次，就能可靠地重新获得满额预算，无限轮询。
+  await api('PUT', '/api/settings', { video_poll_interval: '2', video_max_polls: '2' });
+  queryTarget = 'stuck';
+  const vs = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'stuck probe', project_id: PROJECT_ID });
+  const sid = vs.data.asset.id;
+  let sv = null;
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    sv = (await api('GET', `/api/videos?project_id=${PROJECT_ID}`)).data.find((x) => x.id === sid);
+    if (sv && sv.local_status === 'poll_timeout') break;
+  }
+  ok('预算耗尽后转 poll_timeout', !!sv && sv.local_status === 'poll_timeout', JSON.stringify(sv && { s: sv.local_status, a: sv.poll_attempts }));
+  ok('累计查询次数落库（重启不归零，此前只在内存里）', !!sv && Number(sv.poll_attempts) >= 2, `poll_attempts=${sv && sv.poll_attempts}`);
+  ok('超时文案明说"不代表失败"并给出恢复手段', !!sv && /不代表失败/.test(sv.error_message || '') && /重新获取/.test(sv.error_message || ''), sv && sv.error_message);
+  ok('预算起点时间戳落库（墙钟预算跨重启保持）', !!sv && !!sv.poll_started_at, sv && sv.poll_started_at);
+
+  // 用户主动「重新获取」必须能救回触顶任务（否则预算触顶 = 永久不可追踪）
+  const rf = await api('POST', `/api/videos/${sid}/refresh`);
+  await sleep(400);
+  const rv = (await api('GET', `/api/videos?project_id=${PROJECT_ID}`)).data.find((x) => x.id === sid);
+  ok('用户主动重新获取可重置预算', rf.status === 200 && rf.data && rf.data.ok === true && !!rv && Number(rv.poll_attempts) === 0 && rv.local_status !== 'poll_timeout',
+    JSON.stringify(rv && { a: rv.poll_attempts, s: rv.local_status }));
+
+  await api('DELETE', `/api/videos/${sid}`);
+  queryTarget = 'base';
+  await api('PUT', '/api/settings', { video_poll_interval: '8', video_max_polls: '60' });
 }
 
 group('级联删除 · 查询参数形式');

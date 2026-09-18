@@ -4,15 +4,15 @@
  */
 import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect, PRESET_TERMS, downloadUrl } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, navigate } from '../app.js';
+import { state, navigate, syncViewParams } from '../app.js';
 
 export default async function images(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
   const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   let storyboardId = params.storyboard || '';
-  let mode = 't2i';
+  let mode = params.mode === 'i2i' ? 'i2i' : 't2i';   // 2.9/R11：可分享、可刷新还原
   let items = [];
   let generating = false;
 
@@ -33,11 +33,11 @@ export default async function images(container, params) {
             <select class="select" id="model"></select>
           </div>
           <div class="segmented" id="mode" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
-            <button data-mode="t2i" class="on">文生图</button>
-            <button data-mode="i2i">图生图</button>
+            <button data-mode="t2i" class="${mode === 't2i' ? 'on' : ''}">文生图</button>
+            <button data-mode="i2i" class="${mode === 'i2i' ? 'on' : ''}">图生图</button>
           </div>
 
-          <div id="t2i-box">
+          <div id="t2i-box"${mode === 't2i' ? '' : ' style="display:none"'}>
             <div class="field"><label for="sb-sel">关联分镜（可选）</label><select class="select" id="sb-sel"></select></div>
             <div class="field">
               <label for="t2i-prompt">图片提示词</label>
@@ -50,7 +50,7 @@ export default async function images(container, params) {
             </div>
           </div>
 
-          <div id="i2i-box" style="display:none">
+          <div id="i2i-box"${mode === 'i2i' ? '' : ' style="display:none"'}>
             <div class="field">
               <label for="i2i-url">原图（公网可访问 URL）</label>
               <input class="input mono" id="i2i-url" placeholder="https://…" />
@@ -80,7 +80,7 @@ export default async function images(container, params) {
           <div class="card-title" style="margin:0">${icon('grid', 15)}已生成图片</div>
           <span class="badge gray" id="count">0</span>
         </div>
-        <div id="gallery" class="asset-grid">${spinner()}</div>
+        <div id="gallery" class="asset-grid">${skeleton('asset', 8)}</div>
       </div>
     </div>`;
 
@@ -111,6 +111,7 @@ export default async function images(container, params) {
     b.onclick = () => {
       mode = b.getAttribute('data-mode');
       container.querySelectorAll('#mode [data-mode]').forEach((x) => x.classList.toggle('on', x === b));
+      syncViewParams({ mode });   // R11：模式是派生视图状态，刷新/分享必须还原
       container.querySelector('#t2i-box').style.display = mode === 't2i' ? '' : 'none';
       container.querySelector('#i2i-box').style.display = mode === 'i2i' ? '' : 'none';
     };

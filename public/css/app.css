@@ -628,6 +628,26 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
   text-align: center;
   padding: 6px;
 }
+/* 骨架屏（R9）：先把形状占住，避免"小转圈 + 整片空白"在加载完成时的布局跳变。
+   prefers-reduced-motion 由全局媒体查询统一压掉动画，无需在此重复声明。 */
+.sk-wrap { display: grid; gap: 12px; }
+.sk { background: var(--bg-2); border-radius: 14px; padding: 10px; }
+.sk-box, .sk-thumb, .sk-line {
+  background: linear-gradient(90deg, var(--card) 25%, var(--card-hover) 37%, var(--card) 63%);
+  background-size: 400% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+  border-radius: 8px;
+}
+.sk-box { width: 100%; height: 96px; }
+.sk-box.h40 { height: 40px; }
+.sk-thumb { width: 56px; height: 56px; flex: 0 0 auto; }
+.sk-line { height: 10px; margin-top: 8px; }
+.sk-line.w30 { width: 30%; } .sk-line.w40 { width: 40%; } .sk-line.w45 { width: 45%; }
+.sk-line.w50 { width: 50%; } .sk-line.w60 { width: 60%; } .sk-line.w70 { width: 70%; } .sk-line.w80 { width: 80%; }
+.sk-row { display: flex; gap: 12px; align-items: center; }
+.sk-lines { flex: 1; min-width: 0; }
+.sk-lines .sk-line:first-child { margin-top: 0; }
+@keyframes sk-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 .asset-card .ovl {
   position: absolute;
   inset: 0;

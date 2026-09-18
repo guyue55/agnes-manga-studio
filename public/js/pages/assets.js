@@ -4,7 +4,7 @@
  */
 import { icon, esc, copyText, relTime, IMAGE_USAGES, statusBadge } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, setBusy, errBox, twoClick, imgWithFallback } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, confirm, setBusy, errBox, twoClick, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate, onEvent, syncViewParams } from '../app.js';
 
@@ -12,7 +12,8 @@ export default async function assets(container, params) {
   let tab = ['image', 'video', 'script'].includes(params.tab) ? params.tab : 'image';
   let projectId = localStorage.getItem('agnes.assets.project') || ''; // 2.12：筛选跨会话记忆
   if (projectId && !state.projects.some((p) => p.id === projectId)) { projectId = ''; localStorage.removeItem('agnes.assets.project'); } // 死指针不如没有指针
-  let favOnly = localStorage.getItem('agnes.assets.favOnly') === '1';
+  // R11：URL 优先于本地记忆（分享链接要能还原对方的筛选），本地记忆只是缺省值
+  let favOnly = params.fav ? params.fav === '1' : localStorage.getItem('agnes.assets.favOnly') === '1';
   let images = [];
   let videos = [];
   let scripts = [];
@@ -31,13 +32,14 @@ export default async function assets(container, params) {
       <button data-tab="video">视频素材</button>
       <button data-tab="text">文本素材</button>
     </div>
-    <div id="grid" class="asset-grid">${spinner()}</div>`;
+    <div id="grid" class="asset-grid">${skeleton('asset', 8)}</div>`;
 
   container.querySelector('#p-picker').onchange = (e) => { projectId = e.target.value === '__all__' ? '' : e.target.value; localStorage.setItem('agnes.assets.project', projectId); load(); };
   container.querySelector('#reload').onclick = load;
   container.querySelector('#fav-only').onclick = (e) => {
     favOnly = !favOnly;
     localStorage.setItem('agnes.assets.favOnly', favOnly ? '1' : '0');
+    syncViewParams({ tab, fav: favOnly ? '1' : '' });
     e.currentTarget.classList.toggle('btn-primary', favOnly);
     render();
   };
@@ -46,7 +48,7 @@ export default async function assets(container, params) {
     b.onclick = () => {
       tab = b.getAttribute('data-tab');
       container.querySelectorAll('#tabs [data-tab]').forEach((x) => x.classList.toggle('on', x === b));
-      syncViewParams({ tab });
+      syncViewParams({ tab, fav: favOnly ? '1' : '' });
       render();
     };
   });
@@ -56,7 +58,7 @@ export default async function assets(container, params) {
     const bad = [i, v, s].find((r) => !r.ok); // D-1：失败≠空——红字+重试，不再谎报"还没有素材"
     if (bad) {
       const el = container.querySelector('#grid');
-      el.innerHTML = errBox(`素材加载失败：${bad.error || '网络错误'}`);
+      el.innerHTML = errBox(`素材加载失败：${bad.error || '网络错误'}`, undefined, bad.trace);
       el.querySelector('[data-retry]').onclick = load;
       return;
     }

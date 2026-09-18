@@ -42,7 +42,7 @@ export default async function settings(container, params = {}) {
     const bad = [s, t].find((r) => !r.ok); // 设置页读失败若静默，用户会对着空表单误操作
     if (bad) {
       const box = container.querySelector('#panel');
-      box.innerHTML = errBox(`设置加载失败：${bad.error || '网络错误'}`);
+      box.innerHTML = errBox(`设置加载失败：${bad.error || '网络错误'}`, undefined, bad.trace);
       const rb = box.querySelector('[data-retry]');
       if (rb) rb.onclick = load;
       return;

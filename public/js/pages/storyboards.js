@@ -7,7 +7,7 @@ import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams } from '../app.js';
 
@@ -58,7 +58,7 @@ export default async function storyboards(container, params) {
       </div>
     </div>
 
-    <div id="table">${spinner('加载分镜…')}</div>`;
+    <div id="table">${skeleton('row', 6)}</div>`;
 
   const picker = container.querySelector('#p-picker');
   const epSel = container.querySelector('#ep');

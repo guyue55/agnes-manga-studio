@@ -17,6 +17,14 @@ const TIMEOUT = {
   submit: 600000,  // 视频提交/下载（后端含 429/503 指数退避重试）
 };
 
+/**
+ * 把后端给的失败追踪码拼进错误文案（R10）。拼在**文案里**而不是只挂在返回对象上：
+ * 页面里几十处 `toast.err(r.error)` 无需逐处改造就能带上码，用户看到的每一句报错都可追溯。
+ */
+function withTrace(msg, trace) {
+  return trace ? `${msg}（报错码 ${trace}）` : msg;
+}
+
 async function req(method, url, body, opts = {}) {
   const timeoutMs = opts.timeoutMs || TIMEOUT.normal;
   const o = { method, headers: {} };
@@ -41,10 +49,10 @@ async function req(method, url, body, opts = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
   if (!res.ok) {
     const et = data?.errorType;
-    return { ok: false, errorType: et, status: res.status, error: formatError(et, data?.error || `请求失败（HTTP ${res.status}）`) };
+    return { ok: false, errorType: et, status: res.status, trace: data?.trace, error: withTrace(formatError(et, data?.error || `请求失败（HTTP ${res.status}）`), data?.trace) };
   }
   if (data && data.ok === false) {
-    return { ok: false, errorType: data.errorType, error: formatError(data.errorType, data.error || '操作失败'), data };
+    return { ok: false, errorType: data.errorType, trace: data?.trace, error: withTrace(formatError(data.errorType, data.error || '操作失败'), data?.trace), data };
   }
   return { ok: true, data };
 }

@@ -4,7 +4,7 @@
  */
 import { icon, esc, relTime, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { empty, spinner, toast, errBox, clickableCard, imgWithFallback } from '../ui.js';
+import { empty, spinner, skeleton, toast, errBox, clickableCard, imgWithFallback } from '../ui.js';
 import { head } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -21,7 +21,7 @@ export default async function dashboard(container) {
       <h2>开始你的下一部漫剧</h2>
       <p>所有数据保存在本机，API Key 也只存在本机设置文件里。断网不影响编辑，只有调用 Agnes 生成那一步需要联网。</p>
     </div>
-    <div id="stats" class="stat-grid" style="margin-bottom:22px">${spinner('加载统计…')}</div>
+    <div id="stats" class="stat-grid" style="margin-bottom:22px">${skeleton('card', 4)}</div>
 
     <div class="section-label">快速开始</div>
     <div class="quick" style="margin-bottom:26px">
@@ -34,10 +34,10 @@ export default async function dashboard(container) {
     </div>
 
     <div class="section-label">最近项目</div>
-    <div id="recent-projects" class="grid g3" style="margin-bottom:26px">${spinner()}</div>
+    <div id="recent-projects" class="grid g3" style="margin-bottom:26px">${skeleton('card', 3)}</div>
 
     <div class="section-label">最近生成</div>
-    <div id="recent-assets" class="asset-grid">${spinner()}</div>`;
+    <div id="recent-assets" class="asset-grid">${skeleton('asset', 4)}</div>`;
 
   container.querySelector('#q-new-project').onclick = () => navigate('projects', { new: '1' });
   container.querySelector('#q-refresh').onclick = () => load();
@@ -67,7 +67,7 @@ export default async function dashboard(container) {
 
     if (!st.ok) { // D-1：统计加载失败显示红字+重试，不再转圈到底
       const el = container.querySelector('#stats');
-      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`统计加载失败：${st.error || '网络错误'}`)}</div>`;
+      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`统计加载失败：${st.error || '网络错误'}`, undefined, st.trace)}</div>`;
       el.querySelector('[data-retry]').onclick = load;
     } else {
       const s = st.data;
@@ -83,7 +83,7 @@ export default async function dashboard(container) {
 
     if (!pr.ok) {
       const el = container.querySelector('#recent-projects');
-      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`项目加载失败：${pr.error || '网络错误'}`)}</div>`;
+      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`项目加载失败：${pr.error || '网络错误'}`, undefined, pr.trace)}</div>`;
       el.querySelector('[data-retry]').onclick = load;
     } else {
       const list = (pr.data || []).slice(0, 6);
@@ -115,7 +115,7 @@ export default async function dashboard(container) {
 
     const el2 = container.querySelector('#recent-assets');
     if (!im.ok || !vd.ok) { // 失败≠空：不再把故障谎报成"还没有生成内容"
-      el2.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`近期内容加载失败：${(im.error || vd.error || '网络错误')}`)}</div>`;
+      el2.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`近期内容加载失败：${(im.error || vd.error || '网络错误')}`, undefined, im.trace || vd.trace)}</div>`;
       el2.querySelector('[data-retry]').onclick = load;
       return;
     }

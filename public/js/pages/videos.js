@@ -8,7 +8,7 @@ import {
   IMAGE_ROLES, statusBadge, relTime, modelChoices, sizeForAspect,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate, onEvent } from '../app.js';
 
@@ -59,7 +59,7 @@ export default async function videos(container, params) {
           <div class="spacer"></div>
           <button class="btn btn-xs" id="go-tasks">查看全部 ${icon('arrowRight', 11)}</button>
         </div>
-        <div id="recent">${spinner()}</div>
+        <div id="recent">${skeleton('row', 3)}</div>
       </div>
     </div>`;
 

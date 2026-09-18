@@ -498,6 +498,87 @@ group('空态指路（源级棘轮）');
   ok('灵敏度对照：无 action 的调用不会被算作已指路', !/label:/.test(argsOf("empty('a', 'b', 'folder')}", 5)));
 }
 
+group('批 2：加载态与视图状态还原（源级棘轮）');
+{
+  const ui = read(path.join(PUB, 'js', 'ui.js'));
+  const css = read(path.join(PUB, 'css', 'app.css'));
+  const apiSrc = read(path.join(PUB, 'js', 'api.js'));
+  const pages = listJs(path.join(PUB, 'js', 'pages')).map((f) => ({ f: path.basename(f), s: read(f) }));
+  const rd = (n) => read(path.join(PUB, 'js', 'pages', n));
+
+  // R9 骨架屏
+  ok('ui.js 导出 skeleton 且支持 4 种形态', /export function skeleton/.test(ui) && ['asset', 'card', 'row', 'form'].every((k) => ui.includes(`'${k}'`)));
+  ok('骨架屏对 AT 有加载语义（role=status + aria-busy）', /role="status"/.test(ui) && /aria-busy="true"/.test(ui));
+  ok('app.css 定义骨架样式与微光动画', /\.sk-box/.test(css) && /@keyframes sk-shimmer/.test(css));
+  // 首屏列表/网格不得再用整片 spinner：spinner 只留给"操作进行中"这类局部反馈
+  const firstLoadSpinner = pages.filter((p) => /\$\{spinner\('加载/.test(p.s)).map((p) => p.f);
+  ok('首屏加载态不得再用 spinner（须走形状匹配的 skeleton）', firstLoadSpinner.length === 0, firstLoadSpinner.join(','));
+  const skCount = pages.reduce((n, p) => n + (p.s.match(/\$\{skeleton\(/g) || []).length, 0);
+  ok('首屏骨架屏调用点 ≥ 8（只增不减）', skCount >= 8, `skeleton=${skCount}`);
+  ok('灵敏度对照：旧写法会被首屏 spinner 守卫命中', /\$\{spinner\('加载/.test("<div id=\"list\">${spinner('加载项目…')}</div>"));
+
+  // R11 派生视图状态进 URL（刷新/分享可还原）
+  ok('assets 收藏筛选进 URL（且 URL 优先于本地记忆）', /syncViewParams\(\{ tab, fav/.test(rd('assets.js')) && /params\.fav/.test(rd('assets.js')));
+  ok('tasks 搜索词进 URL（且回填输入框）', /q: search/.test(rd('tasks.js')) && /value="\$\{esc\(search\)\}"/.test(rd('tasks.js')));
+  ok('images 生成模式进 URL（且首屏按 URL 还原）', /syncViewParams\(\{ mode \}\)/.test(rd('images.js')) && /params\.mode === 'i2i'/.test(rd('images.js')));
+
+  // R10 失败追踪码
+  ok('api.js 把追踪码拼进错误文案', /function withTrace/.test(apiSrc) && /报错码/.test(apiSrc));
+  ok('errBox 接受 trace 并指向「运行日志」', /trace = ''/.test(ui) && /运行日志/.test(ui));
+  const errBoxSites = pages.filter((p) => /errBox\(/.test(p.s));
+  // 括号配对切实参：`errBox(f(\`${a || b}\`), undefined, x.trace)` 这类嵌套用正则会误判
+  const argsAt = (src, at) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === '(') depth++;
+      else if (c === ')') { depth--; if (!depth) return src.slice(at + 1, i); }
+    }
+    return '';
+  };
+  let errBoxAll = 0; let errBoxWithTrace = 0;
+  for (const p of errBoxSites) {
+    for (let i = p.s.indexOf('errBox('); i >= 0; i = p.s.indexOf('errBox(', i + 1)) {
+      errBoxAll++;
+      if (/\btrace\b/.test(argsAt(p.s, i + 6))) errBoxWithTrace++;
+    }
+  }
+  // 不变量：每个 errBox 调用点都必须透传 trace（漏一个，那个页面就永远看不到报错码）
+  ok('errBox 调用点全部透传 trace（含自证非空跑）', errBoxAll > 0 && errBoxWithTrace === errBoxAll, `${errBoxWithTrace}/${errBoxAll}`);
+  ok('灵敏度对照：不透传 trace 的调用会被检出', !/\btrace\b/.test(argsAt('errBox(`x`)', 6)));
+}
+
+group('共享符号使用必须先导入（防白屏）');
+{
+  // 事故背景（本轮真实踩到）：scripts.js 用了 ${skeleton(...)} 却没加进 import 列表
+  // → ReferenceError → 整页挂载失败（白屏），而原有守卫只检查"导入的符号是否存在"，
+  // 不检查"用到的符号是否导入"，于是静态检查全绿、只有真机矩阵才抓到。
+  // 这里反向补上：调用共享导出函数却没导入 = 必然白屏。
+  const shared = [];
+  for (const f of ['ui.js', 'consts.js']) {
+    const src = read(path.join(PUB, 'js', f));
+    for (const m of src.matchAll(/export\s+(?:async\s+)?(?:function|const|let)\s+([A-Za-z_$][\w$]*)/g)) shared.push({ name: m[1], from: `../${f}` });
+  }
+  const bad = [];
+  for (const file of listJs(path.join(PUB, 'js', 'pages'))) {
+    const src = read(file);
+    // 该文件从 ui.js / consts.js 导入的名字
+    const imported = new Set();
+    for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\.\/(?:ui|consts)\.js'/g)) {
+      m[1].split(',').forEach((x) => { const n = x.split(/\s+as\s+/).pop().trim(); if (n) imported.add(n); });
+    }
+    for (const { name, from } of shared) {
+      if (imported.has(name)) continue;
+      // 只判"函数调用"形态，且排除属性访问（foo.skeleton()）与 import 语句自身
+      const re = new RegExp(`(?<![.\\w$])${name}\\s*\\(`);
+      if (re.test(src)) bad.push(`${path.basename(file)} 用了 ${name}() 但未从 ${from} 导入`);
+    }
+  }
+  ok('页面调用共享函数前必须导入（否则整页白屏）', bad.length === 0, bad.join(' | '));
+  ok('共享导出清单已解析（自证非空跑）', shared.length >= 30, `shared=${shared.length}`);
+  ok('灵敏度对照：未导入的调用会被检出', /(?<![.\w$])skeleton\s*\(/.test('el.innerHTML = `${skeleton(1)}`'));
+}
+
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
   console.log('  失败项：');

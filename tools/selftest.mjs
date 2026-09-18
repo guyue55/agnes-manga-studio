@@ -435,6 +435,69 @@ await store.persist(); // 排干主库写队（跨 home 切换前必须，防旧
 // ── 收尾 ─────────────────────────────────────────────────────
 fs.rmSync(HOME, { recursive: true, force: true });
 
+// ── 轮询预算语义（R12/R13，纯函数 + 拒绝重启，不联网） ──
+group('轮询预算（R12/R13）');
+{
+  const poller = require('./lib/poller.js');
+  poller.init(store);
+  store.setSettings({ video_poll_interval: '8', video_max_polls: '60' });
+
+  // ① 递增间隔：基础值起，随次数放大，封顶 4 倍（远端长排队时密查纯浪费配额）
+  const i0 = poller.intervalMs(0), i2 = poller.intervalMs(2), i9 = poller.intervalMs(9), i30 = poller.intervalMs(30);
+  eq('间隔起点=基础值', i0, 8000);
+  eq('间隔随次数放大（第 2 次 → 2 倍）', i2, 16000);
+  eq('间隔封顶 4 倍', i9, 32000);
+  eq('封顶后不再增长', i30, 32000);
+  ok('间隔单调不减（含负数与非法输入兜底）', poller.intervalMs(-3) === i0 && poller.intervalMs(NaN) === i0, `neg=${poller.intervalMs(-3)} nan=${poller.intervalMs(NaN)}`);
+
+  // ② 分级 deadline：判据只用请求里真实存在的规格字段，不猜模型名
+  const light = { num_frames: 121, frame_rate: 24 };   // 约 5 秒（默认档）
+  const light3 = { num_frames: 81, frame_rate: 24 };   // 约 3 秒
+  const heavy10 = { num_frames: 241, frame_rate: 24 }; // 约 10 秒
+  const heavy18 = { num_frames: 441, frame_rate: 24 }; // 约 18 秒
+  ok('3 秒档不算重任务', poller.isHeavyTask(light3) === false);
+  ok('5 秒档（默认）不算重任务', poller.isHeavyTask(light) === false);
+  ok('10 秒档判为重任务', poller.isHeavyTask(heavy10) === true);
+  ok('18 秒档判为重任务', poller.isHeavyTask(heavy18) === true);
+  ok('缺字段/空值不误判为重任务', poller.isHeavyTask({}) === false && poller.isHeavyTask(null) === false);
+  eq('轻任务预算=设置值', poller.maxPollsFor(light), 60);
+  eq('重任务预算=3 倍', poller.maxPollsFor(heavy10), 180);
+
+  // ③ 预算耗尽判定：次数触顶 / 墙钟触顶 两条路
+  ok('次数触顶被判定为耗尽', !!poller.budgetExhausted(light, 60));
+  ok('未触顶不判耗尽', poller.budgetExhausted(light, 59) === null);
+  const stale = { ...light, poll_started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString() };
+  ok('墙钟触顶被判定为耗尽（20 分钟 > 轻任务 10 分钟）', !!poller.budgetExhausted(stale, 1), String(poller.budgetExhausted(stale, 1)));
+  const fresh = { ...light, poll_started_at: new Date().toISOString() };
+  ok('刚起步不因墙钟被误判', poller.budgetExhausted(fresh, 1) === null);
+
+  // ④ 僵尸任务不得自动复活（R12 的核心）：预算已耗尽时 watch 必须拒绝挂表
+  const zombie = store.insert('video_assets', {
+    project_id: null, name: '僵尸任务探针', agnes_video_id: 'vid_zombie', model_name: 'm',
+    status: 'queued', remote_status: 'queued', local_status: 'polling',
+    poll_attempts: 999, poll_started_at: new Date().toISOString(),
+  });
+  const before = poller.activeCount();
+  poller.watch(zombie.id, true);
+  eq('预算耗尽的僵尸任务被拒绝重启（不挂定时器）', poller.activeCount(), before);
+  ok('拒绝重启留下可排查的日志', poller.log.some((l) => String(l.msg).includes('已达轮询预算')), JSON.stringify(poller.log[0] || {}));
+  // 只拒绝重启而不改状态 = 界面永远显示"轮询中"但实际没人轮询（静默停摆）→ 必须推成终态
+  eq('拒绝重启时同步推成终态（不留假"轮询中"）', store.get('video_assets', zombie.id).local_status, 'poll_timeout');
+  ok('终态文案给出恢复手段', /重新获取/.test(store.get('video_assets', zombie.id).error_message || ''), store.get('video_assets', zombie.id).error_message);
+  eq('resume() 也不得给僵尸任务续命（重启即白送预算）', poller.resume() >= 0 && poller.activeCount(), before);
+
+  // ⑤ 灵敏度对照：用户主动重置后必须能挂上（否则触顶任务永久不可追踪）。
+  // 真实路径是「重新获取」先 pollOnce 把远端状态刷回 in_progress，再 watch(reset:true)——
+  // 故这里先模拟 pollOnce 的落库效果，否则会被 isActive 守卫挡在前面，测不到重置分支。
+  store.update('video_assets', zombie.id, { status: 'in_progress', local_status: 'polling' });
+  poller.watch(zombie.id, true, { reset: true });
+  eq('用户主动重置后挂表成功', poller.activeCount(), before + 1);
+  eq('重置把累计次数与起点一起归零', store.get('video_assets', zombie.id).poll_attempts, 0);
+  poller.stop(zombie.id);
+  eq('stop 只停定时器、不清预算（预算事实源在记录上）', poller.activeCount(), before);
+  store.remove('video_assets', zombie.id);
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

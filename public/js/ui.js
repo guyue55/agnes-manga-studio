@@ -322,6 +322,23 @@ export function spinner(text) {
 }
 
 /**
+ * 骨架屏（R9）。为什么不是 spinner：spinner 只说明"在加载"，不说明"要加载出什么"——
+ * 整片空白区里一个小转圈，加载完成后布局会整体跳变（CLS）；骨架屏先把**形状**占住，
+ * 用户能预判内容位置，视觉上也稳定。竞品（03/04/05）的列表/网格加载态一律用骨架屏。
+ * kind：'asset'（素材网格方块）/ 'card'（卡片：封面+两行）/ 'row'（列表行）/ 'form'（表单字段）
+ */
+export function skeleton(kind = 'card', n = 3) {
+  const one = {
+    asset: '<div class="sk sk-asset"><div class="sk-box"></div><div class="sk-line w60"></div><div class="sk-line w40"></div></div>',
+    card: '<div class="sk sk-card"><div class="sk-box"></div><div class="sk-line w80"></div><div class="sk-line w50"></div></div>',
+    row: '<div class="sk sk-row"><div class="sk-thumb"></div><div class="sk-lines"><div class="sk-line w70"></div><div class="sk-line w45"></div></div></div>',
+    form: '<div class="sk sk-form"><div class="sk-line w30"></div><div class="sk-box h40"></div><div class="sk-line w30"></div><div class="sk-box h40"></div></div>',
+  }[kind] || '<div class="sk sk-card"><div class="sk-line w80"></div></div>';
+  const wrap = kind === 'asset' ? 'asset-grid' : '';
+  return `<div class="${wrap} sk-wrap" role="status" aria-label="加载中" aria-busy="true">${one.repeat(Math.max(1, n))}</div>`;
+}
+
+/**
  * 图片 + 加载失败兜底。
  * 为什么不能 `onerror="this.style.display='none'"`：隐藏会让布局塌陷（卡片高度突变、栅格错位），
  * 用户看到"这里什么都没有"分不清是"没生成"还是"加载失败"。兜底块继承原 class 保持尺寸并写明失败。
@@ -337,9 +354,14 @@ export function imgWithFallback(url, o = {}) {
 
 /** D-1/A-1：加载失败专用块——红字原因 + 重试钮（调用方负责绑定 [data-retry]）。
  *  杜绝"永久 spinner"和"API 故障谎报空态"两类伪装。 */
-export function errBox(text = '加载失败', hint = '本地服务可能未启动或正在重启') {
+export function errBox(text = '加载失败', hint = '本地服务可能未启动或正在重启', trace = '') {
+  // R10：带上失败追踪码并说明它有什么用——否则用户看到一个随机串只会更困惑。
+  // 码同时已写进服务端「运行日志」，这是"用户截图 → 开发者定位"之间唯一的桥。
+  const code = trace
+    ? `<div style="margin-top:8px;font-size:12px;color:var(--text-3)">报错码 <b class="mono">${esc(trace)}</b> · 可在「设置 → 运行日志」中按此码搜索</div>`
+    : '';
   return `<div class="card" style="text-align:center;padding:36px 20px">
-    <div class="note red" style="display:inline-block;text-align:left;max-width:560px">${esc(text)}<br>${esc(hint)}</div>
+    <div class="note red" style="display:inline-block;text-align:left;max-width:560px">${esc(text)}<br>${esc(hint)}${code}</div>
     <div style="margin-top:14px"><button class="btn btn-sm" data-retry>重试加载</button></div>
   </div>`;
 }

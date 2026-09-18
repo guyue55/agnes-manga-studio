@@ -4,7 +4,7 @@
  */
 import { icon, esc, fmtTime, relTime, PROJECT_TYPES, PLATFORMS, ASPECTS } from '../consts.js';
 import { api } from '../api.js';
-import { modal, confirm, toast, empty, spinner, options, setBusy } from '../ui.js';
+import { modal, confirm, toast, empty, spinner, skeleton, options, setBusy } from '../ui.js';
 import { head } from './helpers.js';
 import { navigate, softRefresh } from '../app.js';
 
@@ -17,7 +17,7 @@ export default async function projects(container, params) {
         <button class="btn btn-primary" id="new-project">${icon('plus', 16)}新建项目</button>
         <button class="btn" id="refresh">${icon('refresh', 16)}刷新</button>`,
     })}
-    <div id="list">${spinner('加载项目…')}</div>`;
+    <div id="list">${skeleton('card', 6)}</div>`;
 
   container.querySelector('#new-project').onclick = () => openForm(null);
   container.querySelector('#refresh').onclick = () => load();

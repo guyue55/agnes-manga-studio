@@ -5,7 +5,7 @@
  */
 import { icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, options, confirm, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, options, confirm, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, softRefresh, syncViewParams } from '../app.js';
 
@@ -45,7 +45,7 @@ export default async function scripts(container, params) {
         </div>
         <div class="card">
           <div class="card-title">${icon('wand', 15)}生成输入</div>
-          <div id="fields">${spinner()}</div>
+          <div id="fields">${skeleton('form', 1)}</div>
           <div class="divider"></div>
           <div class="row wrap">
             <select class="select select-sm" id="model" style="width:190px"></select>
@@ -59,7 +59,7 @@ export default async function scripts(container, params) {
 
       <div>
         <div class="card-title" style="padding-left:4px">${icon('history', 15)}已保存脚本</div>
-        <div id="saved">${spinner()}</div>
+        <div id="saved">${skeleton('row', 2)}</div>
       </div>
     </div>`;
 

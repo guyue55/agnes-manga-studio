@@ -8,7 +8,7 @@ import {
   relTime, fmtTime, copyText, fmtBytes,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy, errBox, imgWithFallback } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, confirm, prompt as promptDlg, options, setBusy, errBox, imgWithFallback } from '../ui.js';
 import { head } from './helpers.js';
 import { onEvent, syncViewParams } from '../app.js';
 
@@ -24,7 +24,7 @@ const REF_STATUS = new Set(['poll_timeout', 'video_url_missing', 'remote_submitt
 export default async function tasks(container, params = {}) {
   let tab = ['all', 'video', 'image', 'text'].includes(params.tab) ? params.tab : 'all'; // 2.9：可分享/可刷新
   let statusFilter = params.status || 'all';
-  let search = '';
+  let search = (params.q || '').trim().toLowerCase();   // R11：搜索词也是视图状态，刷新不该丢
   let videos = [];
   let others = [];
   const busy = new Set();
@@ -50,10 +50,10 @@ export default async function tasks(container, params = {}) {
       </select>
       <div style="position:relative;flex:1;min-width:180px">
         <span style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-3)">${icon('search', 13)}</span>
-        <input class="input" id="search" aria-label="搜索提示词" placeholder="搜索提示词…" style="padding-left:32px;height:34px;border-radius:10px" />
+        <input class="input" id="search" aria-label="搜索提示词" placeholder="搜索提示词…" value="${esc(search)}" style="padding-left:32px;height:34px;border-radius:10px" />
       </div>
     </div>
-    <div id="list">${spinner('加载任务…')}</div>`;
+    <div id="list">${skeleton('row', 4)}</div>`;
 
   container.querySelector('#reload').onclick = load;
   container.querySelector('#batch-fix').onclick = batchFix;
@@ -82,7 +82,11 @@ export default async function tasks(container, params = {}) {
   let timer;
   container.querySelector('#search').oninput = (e) => {
     clearTimeout(timer);
-    timer = setTimeout(() => { search = e.target.value.trim().toLowerCase(); render(); }, 220);
+    timer = setTimeout(() => {
+      search = e.target.value.trim().toLowerCase();
+      syncViewParams({ tab, status: statusFilter, q: search });
+      render();
+    }, 220);
   };
 
   // E5：SSE 刷新不再" surprise 重绘"——有视频在播就挂起，播完 800ms 轮询补渲染（60s 兜底）
@@ -109,7 +113,7 @@ export default async function tasks(container, params = {}) {
     const bad = [v, t].find((r) => !r.ok); // A-1：任务页加载失败不再转圈/空列表两装
     if (bad) {
       const el = container.querySelector('#list');
-      el.innerHTML = errBox(`任务列表加载失败：${bad.error || '网络错误'}`);
+      el.innerHTML = errBox(`任务列表加载失败：${bad.error || '网络错误'}`, undefined, bad.trace);
       el.querySelector('[data-retry]').onclick = load;
       return;
     }
@@ -154,7 +158,7 @@ export default async function tasks(container, params = {}) {
       <div class="task-row" style="margin-bottom:12px" data-vid="${esc(v.id)}">
         <div class="side">
           ${statusBadge(v.status)}
-          ${running ? `<span class="badge gray" style="font-size:11px">${icon('clock', 9)}${v.poll_attempts ? `第 ${esc(v.poll_attempts)} 次查询 · 每 ${esc(v.poll_interval_s || 8)}s` : '轮询中'}</span>` : ''}
+          ${running ? `<span class="badge gray" style="font-size:11px">${icon('clock', 9)}${v.poll_attempts ? `第 ${esc(v.poll_attempts)}${v.poll_budget ? '/' + esc(v.poll_budget) : ''} 次查询 · 每 ${esc(v.poll_interval_s || 8)}s` : '轮询中'}</span>` : ''}
           <span class="badge gray" style="font-size:11px">视频</span>
           ${v.remote_status ? `<span class="badge blue" style="font-size:11px">远端：${esc(REMOTE_STATUS[v.remote_status] || v.remote_status)}</span>` : ''}
           ${v.local_status ? `<span class="badge gray" style="font-size:11px">本地：${esc(LOCAL_STATUS[v.local_status] || v.local_status)}</span>` : ''}

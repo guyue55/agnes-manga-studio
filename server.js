@@ -130,6 +130,16 @@ if (store.getRawKey() && store.modelsNeedRefresh()) {
 // ─────────────────────────────────────────────────────────────
 // HTTP 工具
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * 失败追踪码（R10）。用途：用户截图报错时，凭这个短码能在「运行日志」里定位到同一次失败，
+ * 不用再问"你几点几分点的哪个按钮"。
+ * 形状：e + 时间基 36 后 6 位 + 4 位随机 —— 人工可读、可口头转述，同秒多次失败也不会撞码。
+ */
+function traceCode() {
+  return `e${Date.now().toString(36).slice(-6)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
 function sendJson(res, status, obj) {
   const body = Buffer.from(JSON.stringify(obj), 'utf8');
   res.writeHead(status, {
@@ -350,7 +360,17 @@ async function handleRequest(req, res) {
       return sendJson(res, 200, out === undefined ? { ok: true } : out);
     } catch (e) {
       const status = e.statusCode || 500;
-      return sendJson(res, status, { ok: false, error: e.message || String(e) });
+      // 只给 5xx 发追踪码：4xx 是输入/调用问题，发码只会让界面变吵且无助于排查。
+      const trace = status >= 500 ? traceCode() : null;
+      if (trace) {
+        try { poller.pushLog({ level: 'error', msg: `[${trace}] ${req.method} ${pathname} → ${e.message || e}` }); } catch { /* 日志链路坏了也不能挡住错误响应本身 */ }
+      }
+      // errorType 一并透传（此前被丢掉）：前端 ERROR_HINTS 才能把后端分类翻成人话
+      return sendJson(res, status, Object.assign(
+        { ok: false, error: e.message || String(e) },
+        e.errorType ? { errorType: e.errorType } : null,
+        trace ? { trace } : null,
+      ));
     }
   }
 
