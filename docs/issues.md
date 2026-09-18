@@ -293,7 +293,7 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 
 - **T3 ✅ apitest mock 从不读请求头（本会话复核 grep 0 命中）**：`Authorization` 丢失/改名测试仍全绿、线上全 401——结构性盲区。mock 校验 Bearer 前缀 + 错 key 负例。
 - **T4 ✅ chat 的 response_format 4xx 降级路径零覆盖**（`agnes.js:152-168`；mock 恒 200）：分镜 json_mode 兜底坏了测不出。已修：mock 认模型名分流（reject-json→400、deny-key→401），断言首发带 format、降级不带、401 绝不降级三事。
-- **T5 ◐ 事故级分支 mock 不可达**：提交超时/HTTP200 内嵌 error/图片 URL 分支/downloadVideo 瞬态重试——全部只靠线上验证。已覆盖前两者：/slow mock（11.5s）验证超时记 submit_timeout_unknown 三态；200 内嵌 error 验证落库 submit_failed+error_message 可复盘。余：图片 URL 分支与 downloadVideo 瞬态重试仍无 mock（收益递减，半 open 留档）。
+- **T5 ✅ 事故级分支 mock 不可达**：提交超时/HTTP200 内嵌 error/图片 URL 分支/downloadVideo 瞬态重试——全部只靠线上验证。四条全收口：/slow 验超时记 submit_timeout_unknown 三态；200 内嵌 error 验落库可复盘；图片 URL 分支验「抓到转本地 /assets/images/」与「抓不到退远端不谎报」两态；flaky.mp4 验 503→5s 重试成功落盘（flakyHits===2）；deny.mp4（localhost 异主机）验跨主机 401 绝不带 Key（denyHitsWithKey 恒 0 + 守卫日志在案）。实现期自抓：mock 鉴权门曾误拦公网 CDN 语义的 pixel.png——产品侧 fetchRemoteImage 本就不带 Key，语义已对齐。
 - **T6 ✅ apitest 不验证被测服务身份**（本会话复核 waitHealth 只看 `r.ok`，`apitest.mjs:120-129`）：随机端口撞车时破坏性用例（级联删/replace）打在陌生 Agnes 实例上。校验 `health.data_home === HOME` + `listen(0)` 预探。
 - T7 ✅ apitest 无 try/finally：中途异常泄漏服务进程与数据目录（`apitest.mjs:698-701`）。
 - T8 ✅ build-exe 的 VERSION 是死代码（本会话复核：`build-exe.mjs:32` 读后不用；`server.js:26` 双源硬编码）：发版注入是假动作。SEA stamp 仅比对版本号（`server.js:60-63`，本会话复核）→ 忘 bump 时新 exe 永远跑旧 lib/public——与 P3 同根，**stamp 应改内容哈希**。
@@ -424,3 +424,4 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 - 审计结论：**0 溢出、对比度全过 AA**（暖灰 token 实测 text-4 #8B867A on #08090D = 5.49:1，比冷灰假设更稳）。唯一实质发现：JS 页 11 处 10/10.5px 文字——全部抬至 11px 地坪。
 - 1.6 防增量棘轮进 uitest：`font-size:<11px` 在 JS 页禁止回归；裸 font-size 总量 ≤44 只减不增。
 - 基线：128 / 200 / **452** / 38 全绿。
+- T5 补完轮：事故级四分支全进 mock（206/0），含跨主机 Key 泄露守卫的行为级实证。

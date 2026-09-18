@@ -43,7 +43,9 @@ const VIDEO_ID = 'vid_mock_001';
 // 捕获最近一次 /v1/videos 创建请求体，供 2.5 协议断言
 let lastVideoCreate = null;
 let lastImageCreate = null; // B4.1：验证画风只在使用点注入、且注入的是映射短语
-let chatFormats = []; // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
+let chatFormats = [];
+// T5b 事故路径控制面：query 返回的下载地址可切换；deny 端点带 Key 命中次数必须恒 0
+let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0; // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
 // 按提示词标记统计 /v1/videos 实际到达次数：验证「限流后重试」与「4xx 不重试」
@@ -57,6 +59,17 @@ const mock = http.createServer((req, res) => {
   };
   // T3：真实 Agnes 全端点要 Bearer。mock 此前从不读请求头——agnes.js 丢头/错头测试也全绿。
   const auth = String(req.headers.authorization || '');
+  if (req.method === 'GET' && u.pathname === '/pixel.png') {
+    // 公网 CDN 语义：结果图不鉴权（fetchRemoteImage 本就不带 Key）
+    const buf = Buffer.from(PNG_1PX, 'base64');
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': buf.length });
+    return res.end(buf);
+  }
+  if (u.pathname === '/__mock') {
+    const cmd = u.searchParams.get('set');
+    if (cmd) { queryTarget = cmd; return send(200, { ok: true }); }
+    return send(200, { queryTarget, flakyHits, denyHitsWithKey });
+  }
   if (auth !== `Bearer ${MOCK_KEY}`) {
     // 审核加强：值精确匹配注入 Key——只校格式的话任何假 token 都放行，错 Key 链路回归测不出
     return send(401, { error: { message: /^Bearer \S+$/.test(auth) ? 'invalid api key (mock)' : 'missing bearer (mock guard)' } });
@@ -66,11 +79,26 @@ const mock = http.createServer((req, res) => {
     if (/2\.5/.test(String(u.searchParams.get('model_name') || ''))) {
       // 2.5 系查询契约：带 model_name，完成后的地址在 metadata.url
       last25QueryUrl = req.url;
-      return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, metadata: { url: `${MOCK_BASE}/video.mp4` } });
+      return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, metadata: { url: queryUrl() } });
     }
     queryCount++;
     if (queryCount <= 1) return send(200, { id: VIDEO_ID, status: 'queued', progress: 20 });
-    return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, remixed_from_video_id: `${MOCK_BASE}/video.mp4` });
+    return send(200, { id: VIDEO_ID, status: 'completed', progress: 100, remixed_from_video_id: queryUrl() });
+  }
+  function queryUrl() {
+    return queryTarget === 'flaky' ? `${MOCK_BASE}/flaky.mp4`
+      : queryTarget === 'deny' ? `http://localhost:${mockPort}/deny.mp4` : `${MOCK_BASE}/video.mp4`;
+  }
+  if (req.method === 'GET' && u.pathname === '/deny.mp4') {
+    denyHitsWithKey++; // 走到这里说明请求带了正确 Key——跨主机守则被破
+    const buf = Buffer.from('LEAKED'); res.writeHead(200, { 'Content-Type': 'video/mp4' }); return res.end(buf);
+  }
+  if (req.method === 'GET' && u.pathname === '/flaky.mp4') {
+    flakyHits++;
+    if (flakyHits === 1) { res.writeHead(503); return res.end('flaky'); }
+    const buf = Buffer.from('MOCKMP4DATA');
+    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': buf.length });
+    return res.end(buf);
   }
   if (req.method === 'GET' && u.pathname === '/video.mp4') {
     const buf = Buffer.from('MOCKMP4DATA');
@@ -89,6 +117,8 @@ const mock = http.createServer((req, res) => {
     }
     if (u.pathname === '/v1/images/generations') {
       try { lastImageCreate = JSON.parse(body); } catch { lastImageCreate = { bad_json: body }; }
+      if (lastImageCreate.model === 'mock-img-url-ok') return send(200, { data: [{ url: `${MOCK_BASE}/pixel.png` }] });
+      if (lastImageCreate.model === 'mock-img-url-dead') return send(200, { data: [{ url: 'http://127.0.0.1:1/nope.png' }] });
       return send(200, { data: [{ b64_json: PNG_1PX }] });
     }
     if (req.method === 'GET' && u.pathname === '/v1/models') {
@@ -769,6 +799,39 @@ group('T4/T5 事故级路径');
   const vlist2 = await api('GET', `/api/videos?project_id=${PROJECT_ID}`);
   const rec2 = (vlist2.data || []).find((x) => String(x.video_prompt).includes('slow probe'));
   ok('超时记为提交超时未知（非 submit_failed）', !!rec2 && rec2.local_status === 'submit_timeout_unknown', JSON.stringify(rec2 && { s: rec2.status, l: rec2.local_status }));
+  // ── T5b：图片 URL 分支（远端→抓本地；抓不到→退远端不谎报本地）──
+  const imgOk = await api('POST', '/api/agnes/image', { prompt: 'url branch probe', model: 'mock-img-url-ok', size: '1024x1024' });
+  ok('图片 URL 分支抓成本地文件', imgOk.status === 200 && imgOk.data && imgOk.data.ok === true
+    && String(imgOk.data.asset && imgOk.data.asset.url).startsWith('/assets/images/')
+    && String(imgOk.data.asset && imgOk.data.asset.remote_url).endsWith('/pixel.png'), JSON.stringify(imgOk.data && imgOk.data.asset && { u: imgOk.data.asset.url, r: imgOk.data.asset.remote_url }));
+  const imgDead = await api('POST', '/api/agnes/image', { prompt: 'dead url probe', model: 'mock-img-url-dead', size: '1024x1024' });
+  const dAsset = imgDead.data && imgDead.data.asset;
+  ok('抓不到时退回远端不谎报本地', imgDead.status === 200 && dAsset && String(dAsset.url).startsWith('http://127.0.0.1:1'), JSON.stringify(dAsset && dAsset.url));
+
+  // ── T5b：downloadVideo 瞬时 503 → 5s 重试成功；跨主机 401 → 绝不带 Key ──
+  await api('PUT', '/api/settings', { video_poll_interval: '2' });
+  queryTarget = 'flaky'; flakyHits = 0;
+  const vf = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'flaky probe video', project_id: PROJECT_ID });
+  let af = null;
+  for (let i = 0; i < 30; i++) {
+    await sleep(700);
+    const vl = await api('GET', `/api/videos?project_id=${PROJECT_ID}`);
+    af = (vl.data || []).find((x) => x.id === vf.data.asset.id);
+    if (af && (af.local_file || (af.status === 'completed' && i > 12))) break;
+  }
+  ok('503 瞬时失败经重试落盘', !!af && af.status === 'completed' && !!af.local_file && flakyHits === 2, JSON.stringify(af && { s: af.status, f: !!af.local_file }) + ' hits=' + flakyHits);
+  denyHitsWithKey = 0; queryTarget = 'deny';
+  const vd = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'deny probe video', project_id: PROJECT_ID });
+  let ad = null;
+  for (let i = 0; i < 30; i++) {
+    await sleep(700);
+    const vl = await api('GET', `/api/videos?project_id=${PROJECT_ID}`);
+    ad = (vl.data || []).find((x) => x.id === vd.data.asset.id);
+    if (ad && (ad.status === 'completed' && !ad.local_file)) { const lg = await api('GET', '/api/logs'); if (lg.data.some((l) => String(l.msg).includes('未携带凭证'))) break; }
+  }
+  ok('跨主机 401 不泄露 Key（守卫日志在案）', !!ad && ad.status === 'completed' && !ad.local_file && denyHitsWithKey === 0, JSON.stringify(ad && { s: ad.status, f: !!ad.local_file }) + ' leaks=' + denyHitsWithKey);
+  queryTarget = 'base';
+  await api('PUT', '/api/settings', { video_poll_interval: '8' });
   const cleanupIds = [rec, rec2].filter(Boolean).map((r) => api('DELETE', `/api/videos/${r.id}`));
   await Promise.all(cleanupIds);
   await api('PUT', '/api/settings', { request_timeout_ms: 150000 });
