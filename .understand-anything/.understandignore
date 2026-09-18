@@ -30,3 +30,13 @@
 # *.test.*
 # *.spec.*
 # *.snap
+
+# --- 本工具自身的生成物（是被分析对象的产物，不是源码；体积也最大）---
+# 保留 .understand-anything/config.json 与 .understandignore（它们是配置事实，且是图谱里
+# 已知的两个孤立节点，见 AGENTS.md 注意事项 3）。
+.understand-anything/knowledge-graph.json
+.understand-anything/fingerprints.json
+.understand-anything/meta.json
+.understand-anything/intermediate/
+.understand-anything/.trash-*
+.understand-anything/tmp/

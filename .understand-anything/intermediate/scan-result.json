@@ -1,417 +1,490 @@
 {
- "name": "agnes-studio",
- "description": "Agnes 漫剧工坊本地版：一个零云端数据库依赖的 AI 漫剧制作工作台，基于 Node.js 原生 http 服务构建，将故事构思、分集脚本、分镜、图片与视频生成、任务轮询和素材管理串成一条本机创作链路。API Key、项目数据与生成记录全部保存在本地，支持导入导出备份并打包为单文件 Windows exe。",
- "languages": [
-  "css",
-  "html",
-  "javascript",
-  "json",
-  "markdown"
- ],
- "frameworks": [],
- "files": [
-  {
-   "path": ".understand-anything/.understandignore",
-   "language": "unknown",
-   "sizeLines": 32,
-   "fileCategory": "code"
-  },
-  {
-   "path": ".understand-anything/config.json",
-   "language": "json",
-   "sizeLines": 3,
-   "fileCategory": "config"
-  },
-  {
-   "path": "docs/issues.md",
-   "language": "markdown",
-   "sizeLines": 207,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "docs/knowledge-graph/graph.data.js",
-   "language": "javascript",
-   "sizeLines": 2,
-   "fileCategory": "code"
-  },
-  {
-   "path": "docs/knowledge-graph/knowledge-graph.json",
-   "language": "json",
-   "sizeLines": 1434,
-   "fileCategory": "config"
-  },
-  {
-   "path": "docs/knowledge-graph/README.md",
-   "language": "markdown",
-   "sizeLines": 110,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "docs/knowledge-graph/viewer.html",
-   "language": "html",
-   "sizeLines": 392,
-   "fileCategory": "markup"
-  },
-  {
-   "path": "lib/agnes.js",
-   "language": "javascript",
-   "sizeLines": 483,
-   "fileCategory": "code"
-  },
-  {
-   "path": "lib/jobs.js",
-   "language": "javascript",
-   "sizeLines": 91,
-   "fileCategory": "code"
-  },
-  {
-   "path": "lib/poller.js",
-   "language": "javascript",
-   "sizeLines": 171,
-   "fileCategory": "code"
-  },
-  {
-   "path": "lib/routes.js",
-   "language": "javascript",
-   "sizeLines": 959,
-   "fileCategory": "code"
-  },
-  {
-   "path": "lib/seed.js",
-   "language": "javascript",
-   "sizeLines": 197,
-   "fileCategory": "code"
-  },
-  {
-   "path": "lib/store.js",
-   "language": "javascript",
-   "sizeLines": 435,
-   "fileCategory": "code"
-  },
-  {
-   "path": "package.json",
-   "language": "json",
-   "sizeLines": 19,
-   "fileCategory": "config"
-  },
-  {
-   "path": "public/css/app.css",
-   "language": "css",
-   "sizeLines": 902,
-   "fileCategory": "markup"
-  },
-  {
-   "path": "public/index.html",
-   "language": "html",
-   "sizeLines": 21,
-   "fileCategory": "markup"
-  },
-  {
-   "path": "public/js/api.js",
-   "language": "javascript",
-   "sizeLines": 99,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/app.js",
-   "language": "javascript",
-   "sizeLines": 178,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/consts.js",
-   "language": "javascript",
-   "sizeLines": 381,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/assets.js",
-   "language": "javascript",
-   "sizeLines": 244,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/dashboard.js",
-   "language": "javascript",
-   "sizeLines": 146,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/helpers.js",
-   "language": "javascript",
-   "sizeLines": 66,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/images.js",
-   "language": "javascript",
-   "sizeLines": 284,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/projects.js",
-   "language": "javascript",
-   "sizeLines": 177,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/scripts.js",
-   "language": "javascript",
-   "sizeLines": 360,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/settings.js",
-   "language": "javascript",
-   "sizeLines": 427,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/storyboards.js",
-   "language": "javascript",
-   "sizeLines": 469,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/tasks.js",
-   "language": "javascript",
-   "sizeLines": 318,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/pages/videos.js",
-   "language": "javascript",
-   "sizeLines": 404,
-   "fileCategory": "code"
-  },
-  {
-   "path": "public/js/ui.js",
-   "language": "javascript",
-   "sizeLines": 243,
-   "fileCategory": "code"
-  },
-  {
-   "path": "README.md",
-   "language": "markdown",
-   "sizeLines": 123,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "server.js",
-   "language": "javascript",
-   "sizeLines": 358,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/apitest.mjs",
-   "language": "javascript",
-   "sizeLines": 710,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/browser-test.mjs",
-   "language": "javascript",
-   "sizeLines": 227,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/build-exe.mjs",
-   "language": "javascript",
-   "sizeLines": 138,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/build-graph-data.mjs",
-   "language": "javascript",
-   "sizeLines": 40,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/run-all.mjs",
-   "language": "javascript",
-   "sizeLines": 16,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/selftest.mjs",
-   "language": "javascript",
-   "sizeLines": 376,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/uitest.mjs",
-   "language": "javascript",
-   "sizeLines": 250,
-   "fileCategory": "code"
-  },
-  {
-   "path": "tools/ui-audit.mjs",
-   "language": "javascript",
-   "sizeLines": 205,
-   "fileCategory": "code"
-  },
-  {
-   "path": "AGENTS.md",
-   "language": "markdown",
-   "sizeLines": 180,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "docs/research/ui-manjugongfang-hosted.md",
-   "language": "markdown",
-   "sizeLines": 681,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "docs/research/ui-optimization-plan.md",
-   "language": "markdown",
-   "sizeLines": 120,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "docs/research/ui-other-competitors.md",
-   "language": "markdown",
-   "sizeLines": 200,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "docs/research/ui-our-baseline.md",
-   "language": "markdown",
-   "sizeLines": 260,
-   "fileCategory": "docs"
-  },
-  {
-   "path": "tools/port-check.mjs",
-   "language": "javascript",
-   "sizeLines": 40,
-   "fileCategory": "code"
-  },
-  {
-   "path": "docs/audit-summary.md",
-   "language": "markdown",
-   "sizeLines": 89,
-   "fileCategory": "docs"
+  "name": "agnes-studio（Agnes 漫剧工坊 · 本地版）",
+  "description": "本地优先的 AI 漫剧制作工作台：Node.js 原生模块零依赖后端 + 无构建的 vanilla JS ESM 前端，把「剧本 → 分镜 → 出图 → 出视频」的创作链路与 Agnes 云 API 的异步任务轮询、SSE 推送、本地素材持久化串成一条流水线。",
+  "languages": [
+    "css",
+    "html",
+    "javascript",
+    "json",
+    "markdown"
+  ],
+  "frameworks": [],
+  "files": [
+    {
+      "path": ".understand-anything/.understandignore",
+      "language": "unknown",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".understand-anything/config.json",
+      "language": "json",
+      "sizeLines": 3,
+      "fileCategory": "config"
+    },
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "sizeLines": 174,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/audit-summary.md",
+      "language": "markdown",
+      "sizeLines": 103,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/issues.md",
+      "language": "markdown",
+      "sizeLines": 1144,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/knowledge-graph/graph.data.js",
+      "language": "javascript",
+      "sizeLines": 2,
+      "fileCategory": "code"
+    },
+    {
+      "path": "docs/knowledge-graph/knowledge-graph.json",
+      "language": "json",
+      "sizeLines": 1434,
+      "fileCategory": "config"
+    },
+    {
+      "path": "docs/knowledge-graph/README.md",
+      "language": "markdown",
+      "sizeLines": 110,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/knowledge-graph/viewer.html",
+      "language": "html",
+      "sizeLines": 392,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "docs/research/08-src-00-synthesis.md",
+      "language": "markdown",
+      "sizeLines": 171,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/08-src-01-filmstyle.md",
+      "language": "markdown",
+      "sizeLines": 440,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/08-src-02-shortdrama.md",
+      "language": "markdown",
+      "sizeLines": 473,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/08-src-03-enochcity.md",
+      "language": "markdown",
+      "sizeLines": 450,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/08-src-04-novel2script.md",
+      "language": "markdown",
+      "sizeLines": 450,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/08-src-05-seedance25.md",
+      "language": "markdown",
+      "sizeLines": 520,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/ui-manjugongfang-hosted.md",
+      "language": "markdown",
+      "sizeLines": 680,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/ui-optimization-plan.md",
+      "language": "markdown",
+      "sizeLines": 71,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/ui-other-competitors.md",
+      "language": "markdown",
+      "sizeLines": 257,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/research/ui-our-baseline.md",
+      "language": "markdown",
+      "sizeLines": 346,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "lib/agnes.js",
+      "language": "javascript",
+      "sizeLines": 539,
+      "fileCategory": "code"
+    },
+    {
+      "path": "lib/jobs.js",
+      "language": "javascript",
+      "sizeLines": 112,
+      "fileCategory": "code"
+    },
+    {
+      "path": "lib/poller.js",
+      "language": "javascript",
+      "sizeLines": 280,
+      "fileCategory": "code"
+    },
+    {
+      "path": "lib/routes.js",
+      "language": "javascript",
+      "sizeLines": 1450,
+      "fileCategory": "code"
+    },
+    {
+      "path": "lib/seed.js",
+      "language": "javascript",
+      "sizeLines": 197,
+      "fileCategory": "code"
+    },
+    {
+      "path": "lib/store.js",
+      "language": "javascript",
+      "sizeLines": 527,
+      "fileCategory": "code"
+    },
+    {
+      "path": "package.json",
+      "language": "json",
+      "sizeLines": 19,
+      "fileCategory": "config"
+    },
+    {
+      "path": "public/css/app.css",
+      "language": "css",
+      "sizeLines": 1165,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "public/index.html",
+      "language": "html",
+      "sizeLines": 22,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "public/js/api.js",
+      "language": "javascript",
+      "sizeLines": 135,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/app.js",
+      "language": "javascript",
+      "sizeLines": 265,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/consts.js",
+      "language": "javascript",
+      "sizeLines": 712,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/assets.js",
+      "language": "javascript",
+      "sizeLines": 264,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/characters.js",
+      "language": "javascript",
+      "sizeLines": 253,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/dashboard.js",
+      "language": "javascript",
+      "sizeLines": 159,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/helpers.js",
+      "language": "javascript",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/images.js",
+      "language": "javascript",
+      "sizeLines": 331,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/projects.js",
+      "language": "javascript",
+      "sizeLines": 220,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/scripts.js",
+      "language": "javascript",
+      "sizeLines": 631,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/settings.js",
+      "language": "javascript",
+      "sizeLines": 516,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/storyboards.js",
+      "language": "javascript",
+      "sizeLines": 832,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/tasks.js",
+      "language": "javascript",
+      "sizeLines": 373,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/pages/videos.js",
+      "language": "javascript",
+      "sizeLines": 440,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/textstats.js",
+      "language": "javascript",
+      "sizeLines": 109,
+      "fileCategory": "code"
+    },
+    {
+      "path": "public/js/ui.js",
+      "language": "javascript",
+      "sizeLines": 476,
+      "fileCategory": "code"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 133,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "server.js",
+      "language": "javascript",
+      "sizeLines": 471,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/apitest.mjs",
+      "language": "javascript",
+      "sizeLines": 1540,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/browser-test.mjs",
+      "language": "javascript",
+      "sizeLines": 2058,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/build-exe.mjs",
+      "language": "javascript",
+      "sizeLines": 154,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/build-graph-data.mjs",
+      "language": "javascript",
+      "sizeLines": 40,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/port-check.mjs",
+      "language": "javascript",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/run-all.mjs",
+      "language": "javascript",
+      "sizeLines": 16,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/selftest.mjs",
+      "language": "javascript",
+      "sizeLines": 610,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/ui-audit.mjs",
+      "language": "javascript",
+      "sizeLines": 297,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/uitest.mjs",
+      "language": "javascript",
+      "sizeLines": 1066,
+      "fileCategory": "code"
+    }
+  ],
+  "totalFiles": 55,
+  "filteredByIgnore": 8,
+  "estimatedComplexity": "moderate",
+  "importMap": {
+    ".understand-anything/.understandignore": [],
+    ".understand-anything/config.json": [],
+    "AGENTS.md": [],
+    "docs/audit-summary.md": [],
+    "docs/issues.md": [],
+    "docs/knowledge-graph/graph.data.js": [],
+    "docs/knowledge-graph/knowledge-graph.json": [],
+    "docs/knowledge-graph/README.md": [],
+    "docs/knowledge-graph/viewer.html": [],
+    "docs/research/08-src-00-synthesis.md": [],
+    "docs/research/08-src-01-filmstyle.md": [],
+    "docs/research/08-src-02-shortdrama.md": [],
+    "docs/research/08-src-03-enochcity.md": [],
+    "docs/research/08-src-04-novel2script.md": [],
+    "docs/research/08-src-05-seedance25.md": [],
+    "docs/research/ui-manjugongfang-hosted.md": [],
+    "docs/research/ui-optimization-plan.md": [],
+    "docs/research/ui-other-competitors.md": [],
+    "docs/research/ui-our-baseline.md": [],
+    "lib/agnes.js": [
+      "lib/store.js"
+    ],
+    "lib/jobs.js": [],
+    "lib/poller.js": [
+      "lib/agnes.js"
+    ],
+    "lib/routes.js": [],
+    "lib/seed.js": [],
+    "lib/store.js": [],
+    "package.json": [],
+    "public/css/app.css": [],
+    "public/index.html": [],
+    "public/js/api.js": [
+      "public/js/consts.js"
+    ],
+    "public/js/app.js": [
+      "public/js/api.js",
+      "public/js/consts.js",
+      "public/js/pages/assets.js",
+      "public/js/pages/characters.js",
+      "public/js/pages/dashboard.js",
+      "public/js/pages/images.js",
+      "public/js/pages/projects.js",
+      "public/js/pages/scripts.js",
+      "public/js/pages/settings.js",
+      "public/js/pages/storyboards.js",
+      "public/js/pages/tasks.js",
+      "public/js/pages/videos.js",
+      "public/js/ui.js"
+    ],
+    "public/js/consts.js": [],
+    "public/js/pages/assets.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/characters.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/dashboard.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/helpers.js": [
+      "public/js/consts.js"
+    ],
+    "public/js/pages/images.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/projects.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/scripts.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/textstats.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/settings.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/storyboards.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/textstats.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/tasks.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/pages/videos.js": [
+      "public/js/api.js",
+      "public/js/app.js",
+      "public/js/consts.js",
+      "public/js/pages/helpers.js",
+      "public/js/ui.js"
+    ],
+    "public/js/textstats.js": [],
+    "public/js/ui.js": [
+      "public/js/consts.js"
+    ],
+    "README.md": [],
+    "server.js": [],
+    "tools/apitest.mjs": [],
+    "tools/browser-test.mjs": [],
+    "tools/build-exe.mjs": [],
+    "tools/build-graph-data.mjs": [],
+    "tools/port-check.mjs": [],
+    "tools/run-all.mjs": [],
+    "tools/selftest.mjs": [],
+    "tools/ui-audit.mjs": [],
+    "tools/uitest.mjs": []
   }
- ],
- "totalFiles": 47,
- "filteredByIgnore": 0,
- "estimatedComplexity": "moderate",
- "importMap": {
-  ".understand-anything/.understandignore": [],
-  ".understand-anything/config.json": [],
-  "docs/issues.md": [],
-  "docs/knowledge-graph/graph.data.js": [],
-  "docs/knowledge-graph/knowledge-graph.json": [],
-  "docs/knowledge-graph/README.md": [],
-  "docs/knowledge-graph/viewer.html": [],
-  "lib/agnes.js": [
-   "lib/store.js"
-  ],
-  "lib/jobs.js": [],
-  "lib/poller.js": [
-   "lib/agnes.js"
-  ],
-  "lib/routes.js": [],
-  "lib/seed.js": [],
-  "lib/store.js": [],
-  "package.json": [],
-  "public/css/app.css": [],
-  "public/index.html": [],
-  "public/js/api.js": [],
-  "public/js/app.js": [
-   "public/js/api.js",
-   "public/js/consts.js",
-   "public/js/pages/assets.js",
-   "public/js/pages/dashboard.js",
-   "public/js/pages/images.js",
-   "public/js/pages/projects.js",
-   "public/js/pages/scripts.js",
-   "public/js/pages/settings.js",
-   "public/js/pages/storyboards.js",
-   "public/js/pages/tasks.js",
-   "public/js/pages/videos.js",
-   "public/js/ui.js"
-  ],
-  "public/js/consts.js": [],
-  "public/js/pages/assets.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/dashboard.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/helpers.js": [
-   "public/js/consts.js"
-  ],
-  "public/js/pages/images.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/projects.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/scripts.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/settings.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/storyboards.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/tasks.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/pages/videos.js": [
-   "public/js/api.js",
-   "public/js/app.js",
-   "public/js/consts.js",
-   "public/js/pages/helpers.js",
-   "public/js/ui.js"
-  ],
-  "public/js/ui.js": [
-   "public/js/consts.js"
-  ],
-  "README.md": [],
-  "server.js": [],
-  "tools/apitest.mjs": [],
-  "tools/browser-test.mjs": [],
-  "tools/build-exe.mjs": [],
-  "tools/build-graph-data.mjs": [],
-  "tools/run-all.mjs": [],
-  "tools/selftest.mjs": [],
-  "tools/uitest.mjs": [],
-  "tools/port-check.mjs": [],
-  "docs/audit-summary.md": []
- }
 }

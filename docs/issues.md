@@ -1079,6 +1079,45 @@ R15 功能门禁全绿后，做了一次"代替肉眼"的真机几何复查（�
 - **下一轮**：批 7 收尾——R25 幂等键 / R26 上传压缩与时长校验 / R27 成本留痕 / R28 错误出口 /
   R29 `with_counts` / R30 `// 变更须知` 纪律（其中 R25/R27 已部分落在批 1 的 `costConfirm`，需先核对口径）。
 
+**B61 研读轮·十一（第 80 轮）**：**知识图谱重建（唯一挂账的技术债，已清）**。锚点 `ef8834d` → `d268a0d`，
+覆盖 **47 → 55 个文件**（新增 `public/js/textstats.js`、`public/js/pages/characters.js`、`tools/port-check.mjs`
+与 `docs/research/08-src-0{0..5}` 六篇研读文档），图谱从 **196 节点 / 605 边** 长到 **278 节点 / 1076 边**，
+9 层 15 步导览全部重跑，全部文本中文。
+
+- **扫描边界显式化**：往 `.understandignore` 补了「工具自身生成物」排除项（`knowledge-graph.json` /
+  `fingerprints.json` / `meta.json` / `intermediate/` / `tmp/` / `.trash-*`）。这些是**被分析对象的产物**，
+  光 `knowledge-graph.json` 就 7794 行、`fingerprints.json` 3000 行——送进 LLM 分析纯属浪费且会污染图谱。
+  同时保留 `.understandignore` 与 `config.json`（它们是配置事实，且曾是图谱里仅有的两个孤立节点）。
+- **本仓库的图谱有两条"工具盲区"，必须人工补**（已写进 `AGENTS.md` 注意事项与更新流程）：
+  ① **`tested_by` 会被合并脚本全部丢掉**：`merge-batch-graphs.py` 的 `is_test_path()` 对 JS 只认 stem 以
+  `.test`/`.spec` 结尾，而本项目测试在 `tools/` 下叫 `selftest/apitest/uitest/browser-test` → 19 条候选
+  全被判成"生产↔生产"丢弃，且路径约定补链一条也补不出来（测试节点集合为空）。本轮按**源码证据**
+  逐对复核后补回 **22 条**（证据 = 测试脚本正文里出现被测算文件的完整相对路径或唯一 basename；
+  `uitest.mjs` 用 `readdirSync('public/js/pages')` 动态列举并逐文件断言，故 10 个页面文件都算被覆盖），
+  是旧图 7 条的**超集**（旧 7 条 7/7 都在）。踩过的坑：第一版复核脚本把边界字符类写成 `[^\w./-]`，
+  于是 `public/css/app.css`、`./consts.js` 这类路径形态全部匹配不到，误剔了 10 对——边界只该排除
+  `\w` 与 `-`。另一个坑：**补边之后又跑了一次合并脚本**，22 条被覆盖清零，只能重补（已写进注意事项）。
+  ② **CJS 依赖不在 `imports` 边里**：`server.js`/`lib/*.js`/`tools/selftest.mjs` 用 `require()`（SEA 兼容），
+  70 条 `imports` 边**全部**落在 `public/js` 内部；后端真实依赖靠子代理读源补成 `depends_on`/`calls`。
+  分层时也因此踩到"顶层目录分组无区分度"（public/lib/tools 之间的 inter-group 依赖为 0），
+  架构子代理改用文件摘要 + `imports + depends_on` 合并依赖矩阵才分出正确的 9 层。
+- **审查阶段真抓到一个缺节点**：`lib/store.js:onWriteError` 真实存在（定义 `:91`、导出 `:519`、
+  `server.js:115` 调用，是 B4 写盘失败上报的钩子），但分析子代理漏产该节点，导致
+  `server.js → onWriteError` 的 calls 边成悬挂被丢。审查子代理补回节点 + contains/exports/calls 三条边
+  （277/1051 → 278/1076，其中 1051→1073 是本轮补的 22 条 tested_by）。同类漏产还有 `lib/store.js` 的
+  另外 8 个顶层函数（`failWrite`/`rescueFile`/`home`/`assetsDir`/`imagesDir`/`exportsDir`/`persistSettings`/
+  `assertColl`），但它们**没有任何边引用**、不产生悬挂，属"符号覆盖粒度"取舍，未补（记为已知边界）。
+- **校验结果（全过）**：55/55 文件级节点有且只有一个层归属、0 重复；`imports` 70 条与确定性 importMap
+  逐条一致（双向差集为空）；0 悬挂边、0 重复节点、0 孤立节点（上一版记为"仅有的两个孤立节点"的
+  `.understandignore`/`config.json` 现在各有 `related` 互链与来自 `AGENTS.md` 的 `documents` 边）；
+  `tour` 15 步 0 悬挂；竞品源码包路径未泄漏进图（5 个 Vibex 包只以 `docs/research/08-src-0*.md` 文档形式存在）。
+  语义边抽检通过率 >95%，无捏造。
+- **流程改进（已写进 `AGENTS.md`）**：批 7 这类"20 个孤儿文件挤成一批"的 misc 批（CJS 文件没有
+  `imports` 边 → 全被当孤儿合并）要按体积手工拆成 `batch-<N>-part-<k>.json` 分派，否则单个子代理读不完
+  `lib/routes.js` + 四个上千行测试脚本；分派前要先生成好各批的 `tmp/ua-file-extract-results-<批号>.json`。
+- **同步文档**：`AGENTS.md` 的快照锚点、节点/边/层计数表、层文件数表、注意事项 2/3 与更新流程第 5 条全部
+  按新图改写；`docs/knowledge-graph/`（手工讲解图 73 节点）本轮**未改动**，无需重跑 `build-graph-data.mjs`。
+
 **B60 研读轮·十（第 79 轮）**：**批 7 收尾：计费安全与数据效率（R25–R30）**。
 - **R25 提交幂等（本批最值钱的一条）**：视频是**提交即计费、不可撤销**的，而原来只有"页面布尔锁 +
   按钮禁用"两道客户端防线——客户端超时（api.js 给到 600s）或连接中断时，服务端很可能已经接单，
