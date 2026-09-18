@@ -29,6 +29,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 | `.understand-anything/intermediate/scan-result.json` | 文件清单 + 预解析 importMap（供增量分析复用） |
 
 当前快照：commit `d268a0debde803fa36749bb482e4ff30330df444`（批 7 收尾）— **278 节点 / 1076 边 / 9 层 / 15 步导览**，全部文本为中文。
+锚点之后另有两次**纯文档**提交（`AGENTS.md` 与 `docs/issues.md` 的图谱重建记录），按「改行不改结构」不计入失真；`git diff <锚点>..HEAD --name-only` 若只列出这两份文档，无需重建。
 扫描范围 = `git ls-files` 减去 `.understandignore` 里的排除项（工具自身的 `knowledge-graph.json` / `fingerprints.json` / `meta.json` / `intermediate/` / `tmp/` / `.trash-*` 一律排除：它们是被分析对象的产物，且体积最大）。
 
 ### 图谱 Schema
