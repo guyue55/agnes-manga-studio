@@ -163,6 +163,15 @@ try {
     // 首次 reload 后 window.__uiErrors 消失，末尾 `|| []` 兜底会让"无未捕获异常"永久假绿。
     const HOOK = `
       window.__uiErrors = [];
+      // 捕获 EventSource 实例：供测试向应用合成 SSE 事件（观测陈旧监听器泄漏）
+      window.__esRefs = [];
+      try {
+        const OrigES = window.EventSource;
+        const WrappedES = function (...a) { const es = new OrigES(...a); window.__esRefs.push(es); return es; };
+        WrappedES.prototype = OrigES.prototype;
+        ['CONNECTING', 'OPEN', 'CLOSED'].forEach((k) => { WrappedES[k] = OrigES[k]; });
+        window.EventSource = WrappedES;
+      } catch { /* ignore */ }
       window.__uiRejects = [];
       window.addEventListener('error', e => window.__uiErrors.push(String(e.message || e.error || 'window error')));
       window.addEventListener('unhandledrejection', e => window.__uiRejects.push(String((e.reason && e.reason.message) || e.reason || 'unhandled rejection')));
@@ -593,6 +602,47 @@ try {
       ok('重进页面控件与库值同步（读回显示）', await cdp.eval(`document.querySelector('#t-interval').value === '6' && document.querySelector('#t-auto').classList.contains('on') === (${adv === '1'})`), String(adv));
       await cdp.eval(`document.querySelector('#t-interval').value = '8'; document.querySelector('#save-task').click(); return true;`); // 复原默认
       await sleep(300);
+    }
+
+    group('路由竞态契约（B32：快速连切不得泄漏监听器）');
+    {
+      const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
+      const pid = (await Jget('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      // 强制排序：把 videos 页首个 /api/videos 请求延迟 350ms，使其 mount 后于 dashboard 的 resolve
+      await cdp.eval(`
+        window.__fetchLog = [];
+        const of = window.fetch;
+        let delayed = false;
+        window.fetch = (...a) => {
+          const u = String(a[0]);
+          window.__fetchLog.push(u);
+          if (!delayed && u.includes('/api/videos')) { delayed = true; return new Promise((r) => setTimeout(() => r(of(...a)), 350)); }
+          return of(...a);
+        };
+        location.hash = '#/videos?project=${pid}';
+        setTimeout(() => { location.hash = '#/dashboard'; }, 30);
+        return true;
+      `);
+      await sleep(1500);   // 等被取代的 videos mount 晚到并 resolve
+      const onDash = await cdp.eval(`return location.hash.indexOf('#/dashboard') === 0;`);
+      ok('竞态后停留在后发起的页面', onDash === true, String(onDash));
+      await cdp.eval(`window.__fetchLog = []; return true;`);
+      const fire = `const es = (window.__esRefs || [])[0]; if (!es) return -1; es.dispatchEvent(new MessageEvent('video', { data: JSON.stringify({ id: 'probe', status: 'completed' }) })); return 1;`;
+      const fired = await cdp.eval(`return (() => { ${fire} })();`);
+      ok('已捕获应用 EventSource 并可合成事件', fired === 1, `fired=${fired}`);
+      await sleep(1300);   // 覆盖 700ms 去抖
+      const raced = await cdp.eval(`return window.__fetchLog.filter((u) => u.includes('/api/videos')).length;`);
+      ok('被取代的 videos 页监听器未泄漏（合成事件不触发其抓取）', raced === 0, `fetches=${raced}`);
+      // 内置灵敏度对照：活跃的 videos 页收到同一事件**必须**抓取，证明事件与计数信号有效
+      await cdp.eval(`location.hash = '#/videos?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#reload');`), 'videos 页就绪');
+      await sleep(600);
+      await cdp.eval(`window.__fetchLog = []; return true;`);
+      await cdp.eval(`return (() => { ${fire} })();`);
+      await sleep(1300);
+      const live = await cdp.eval(`return window.__fetchLog.filter((u) => u.includes('/api/videos')).length;`);
+      ok('灵敏度对照：活跃页收到同一事件确实抓取（信号有效）', live >= 1, `fetches=${live}`);
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 
     group('防连点契约（R6：双击不得重复创建）');

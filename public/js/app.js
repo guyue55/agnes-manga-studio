@@ -39,6 +39,7 @@ export const state = {
 };
 
 let cleanup = null;
+let renderSeq = 0; // B32：渲染序号，用于识别"已被取代"的渲染（快速连切页面时防清理函数被覆写/泄漏）
 
 // ── 路由 ────────────────────────────────────────────────────
 function parseHash() {
@@ -66,6 +67,11 @@ async function render() {
   const { id, params } = parseHash();
   const nav = NAV.find((n) => n.id === id) || NAV[0];
   state.current = nav.id;
+  // B32：render 未串行化——快速连切两页时，先发起的 mount 可能后 resolve，
+  // 若直接 `cleanup = c` 会用旧页的清理函数覆写新页的，使新页的 onEvent 订阅/
+  // 去抖定时器永久泄漏（此后每次 SSE 事件都多跑一个陈旧处理器）。
+  // 序号守卫：只有"最新一次渲染"才有资格登记 cleanup，被取代的立即自清。
+  const seq = ++renderSeq;
 
   if (cleanup) { try { cleanup(); } catch { /* ignore */ } cleanup = null; }
 
@@ -83,10 +89,13 @@ async function render() {
 
   try {
     const c = await nav.page(page, params);
+    if (seq !== renderSeq) { try { if (typeof c === 'function') c(); } catch { /* ignore */ } return; }
     if (typeof c === 'function') cleanup = c;
   } catch (e) {
+    if (seq !== renderSeq) return;
     page.innerHTML = `<div class="note red">页面加载失败：${esc(e.message)}</div>`;
   }
+  if (seq !== renderSeq) return;
   window.scrollTo({ top: 0 });
 }
 
