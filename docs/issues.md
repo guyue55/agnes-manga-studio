@@ -670,3 +670,12 @@ run-all 全绿 128/207/452/69。图谱时效：9-12 轮对 poller.js（函数体
 - **自查踩坑留痕**：改 tasks.js 时我把注释插进了语句中间，导致 `load()` 被注释掉（保存后页面不刷新）——**自己引入的回归**，靠随后 `node --check` + 逐行复看发现并修正。教训：编辑后必须复看**改动行本身**，不能只看替换是否成功。
 - **死代码清单（已查证，判定"不值得动"，留档）**：CSS 侧 7 条无引用规则 `breathing`/`btn-ghost`/`preset-chips`/`dot`/`pulse`/`g4`/`hoverable`——注意 `btn-ghost` 全仓 87 处引用**全在竞品产物里**（`docs/research/`、`reference/manjugongfang-vibex/` 反混淆包），我们自己的渲染面 0 引用。JS 侧 6 个未使用导出 `uid`/`fmtBytes`(已转用)/`downloadUrl`(已转用)/`dataOf`/`selectField`/`inputField`/`textareaField`。**判定不动**：删 CSS 收益仅数百字节、`dot`/`pulse` 与 `@keyframes`、`g4` 与媒体查询共享选择器行，且静态抽取器看不见运行时拼接的类名（B38 同款：测量工具有盲区时不要据其下结论）；死导出留作后续页面复用候选。
 - **计数**：uitest 458 → **464**，browser-test 132 → **139**。门禁 135/261/464/139 全绿。
+
+**B43 巡检轮·三十一（第 62 轮）**：新维度「已有工具被绕过」+「静态 XSS 汇点审计」→ 前者全净，后者零发现但补齐了**最后一层未覆盖的 XSS 面**。
+- **绕过已有工具（四类全净）**：页面里无原生 `fetch(`（全走 api.js）✓ 无原生 `alert/confirm/prompt`（全走 ui.js）✓ `new EventSource` 全仓仅 `app.js:187` 一处（页面全走 `onEvent`，这正是 B32 监听器泄漏的前提）✓ 手写 HTML 转义仅 `consts.js` 的 `esc()` ✓。
+- **静态 XSS 审计（零发现）**：扫全部页面模板插值，收窄到"取值型未转义插值"90 处并逐类判读——结论全部安全：①布尔/数字/常量映射（`st.cls`/`s.id`/`job.done`/`p.shot_number`）②**JS 字符串上下文**而非 HTML（`storyboards.js:327-328` 的 `s.action`/`s.dialogue` 是拼给 LLM 的提示词、`assets.js:228` 是拼 URL）③经共享汇点转义。
+- **共享汇点审计（4 个全 esc）**：`toast`（`esc(message)`）、`errBox`（`esc(text)`+`esc(hint)`）、`options`（`esc(v)`+`esc(l)`）、`modal` 标题（`esc(o.title)`）。`modal` 的 `body`/`footer` 是**按设计的原始 HTML**（调用方负责转义）。
+- **🐛 补上最后一层未覆盖的面（7 钉）**：此前 XSS 组只覆盖"页面数据渲染"，**汇点自身没有直接钉**。新增「转义汇点契约」组：页内 `import('/js/ui.js')` 直接调四个汇点喂 `<img src=x onerror=…>`——①toast 零执行且原文可见 ②errBox 输出含 `&lt;img` 且无裸 `<img` ③options 的 value/label 均转义 ④modal 标题零执行且原文可见 ⑤**灵敏度对照**（未转义写法确实触发，证明"零执行"不是探测器失灵）。
+  - **正向对照（硬证据）**：摘掉 `toast` 与 `errBox` 的 `esc()` → **4 条钉失败**，其中「toast 不执行注入（零脚本）」失败即**注入真的执行了（真实 XSS）**；还原后全绿。
+- **探针自查**：首版 modal 那条钉复用了未清零的共享计数器，导致对照实验时被上一条的残留连带失败——已改为各钉独立清零，保证诊断精确到具体汇点。
+- **计数**：browser-test 139 → **146**。门禁 135/261/464/146 全绿。

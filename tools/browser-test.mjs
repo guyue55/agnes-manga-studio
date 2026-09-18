@@ -318,6 +318,36 @@ try {
       await fetch(`http://127.0.0.1:${port}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
     }
 
+    group('转义汇点契约（XSS：共享字符串汇点必须转义）');
+    {
+      // 静态审计（第 62 轮）结论：toast/errBox/options/modal.title 四个共享汇点均 esc；
+      // 但此前只有"页面数据渲染"被 XSS 组覆盖，汇点自身没有直接钉——本组补上行为级验证。
+      await cdp.eval(`window.__xssSink = []; return true;`);
+      const call = (js) => cdp.eval(`return (async () => { const m = await import('/js/ui.js'); ${js} })();`);
+      const PAY = '<img src=x onerror="window.__xssSink.push(1)">';
+      await call(`m.toast(${JSON.stringify(PAY)});`);
+      await sleep(400);
+      ok('toast 不执行注入（零脚本）', (await cdp.eval(`return (window.__xssSink || []).length;`)) === 0);
+      const tt = await cdp.eval(`return (document.querySelector('#toasts .toast:last-child') || {}).innerText || '';`);
+      ok('toast 原样显示注入文本（转义而非吞数据）', tt.includes('<img src=x onerror='), tt.slice(0, 50));
+      const eb = String(await call(`return m.errBox(${JSON.stringify(PAY)});`));
+      ok('errBox 输出已转义（&lt;img 且无裸 <img）', eb.includes('&lt;img') && !eb.includes('<img'), eb.slice(0, 70));
+      const op = String(await call(`return m.options([{ value: '"><img src=x>', label: '<img src=x>' }]);`));
+      ok('options 的 value/label 均已转义', op.includes('&lt;img') && !op.includes('<img'), op.slice(0, 80));
+      await cdp.eval(`window.__xssSink = []; return true;`); // 各自独立计数，避免上一条钉的残留干扰诊断
+      await call(`m.modal({ title: ${JSON.stringify(PAY)}, body: 'x' });`);
+      await sleep(400);
+      ok('modal 标题不执行注入', (await cdp.eval(`return (window.__xssSink || []).length;`)) === 0);
+      const mt = await cdp.eval(`return (document.querySelector('#modal-root h3') || {}).innerText || '';`);
+      ok('modal 标题原样显示（转义而非吞数据）', mt.includes('<img src=x onerror='), mt.slice(0, 50));
+      await cdp.eval(`const x = document.querySelector('#modal-root [data-close]'); if (x) x.click(); return true;`);
+      // 灵敏度对照：未转义的等价写法必须真的触发，证明上面的 0 不是探测器失灵
+      await cdp.eval(`window.__xssSink = []; const d = document.createElement('div'); d.innerHTML = ${JSON.stringify(PAY)}; document.body.appendChild(d); return true;`);
+      await sleep(400);
+      const ctrl = await cdp.eval(`return (window.__xssSink || []).length;`);
+      ok('灵敏度对照：未转义写法确实触发（探测器有效）', ctrl >= 1, `fired=${ctrl}`);
+    }
+
     group('容量性能基线');
     {
       const sbs = Array.from({ length: 300 }, (_, i) => ({
