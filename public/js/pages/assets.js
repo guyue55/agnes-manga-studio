@@ -4,7 +4,7 @@
  */
 import { icon, esc, copyText, relTime, IMAGE_USAGES, statusBadge } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, setBusy, errBox, twoClick } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, setBusy, errBox, twoClick, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate, onEvent, syncViewParams } from '../app.js';
 
@@ -82,7 +82,7 @@ export default async function assets(container, params) {
       el.innerHTML = list.map((img) => `
         <div class="asset-card" data-id="${esc(img.id)}">
           ${img.is_favorited ? `<span class="flag">${icon('star', 14)}</span>` : ''}
-          <img src="${esc(img.url)}" loading="lazy" alt="" />
+          ${imgWithFallback(img.url, { alt: String(img.prompt || '素材图片').slice(0, 40) })}
           <div class="ovl">
             <div class="top">
               <button class="icon-btn ${img.is_favorited ? 'gold' : ''}" data-fav="${esc(img.id)}" title="${img.is_favorited ? '取消收藏' : '收藏'}" aria-label="${img.is_favorited ? '取消收藏' : '收藏'}">${icon('star', 13)}</button>

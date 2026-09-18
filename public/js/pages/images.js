@@ -4,7 +4,7 @@
  */
 import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect, PRESET_TERMS, downloadUrl } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -177,9 +177,17 @@ export default async function images(container, params) {
       });
     }
 
+    // 付费确认：单张图片同样是真实计费。generating 占位提前到确认之前——
+    // 确认弹窗期间再点「生成」不得叠出第二层弹窗（否则确认两次会提交两次）。
     generating = true;
+    let confirmed;
+    try {
+      confirmed = await costConfirm({ what: '图片', count: 1 });
+    } catch { confirmed = false; }
+    if (!confirmed) { generating = false; return; }
+
     const genBtn = container.querySelector('#gen');
-    setBusy(genBtn, true);
+    setBusy(genBtn, true, '', '图片生成通常需要十几秒到一分钟');
     st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px">生成中，Agnes 出图通常需要十几秒…</span></div>`;
 
     let r;

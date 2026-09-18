@@ -4,7 +4,7 @@
  */
 import { icon, esc, relTime, fmtTime } from '../consts.js';
 import { api } from '../api.js';
-import { empty, spinner, toast, errBox, clickableCard } from '../ui.js';
+import { empty, spinner, toast, errBox, clickableCard, imgWithFallback } from '../ui.js';
 import { head } from './helpers.js';
 import { state, navigate } from '../app.js';
 
@@ -128,7 +128,7 @@ export default async function dashboard(container) {
     } else {
       el2.innerHTML = assets.map(({ kind, a }) => kind === 'image'
         ? `<div class="asset-card" data-go="assets" data-params='{"tab":"image"}'>
-             <img src="${esc(a.url)}" alt="" loading="lazy" onerror="this.style.display='none'" />
+             ${imgWithFallback(a.url, { alt: '生成结果缩略图' })}
              <div class="ovl">
                <div class="top"><span class="badge gray">图片</span></div>
                <div class="btm"><span class="mini-btn">${esc(relTime(a.created_at))}</span></div>

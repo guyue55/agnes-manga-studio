@@ -299,6 +299,62 @@ export function fmtBytes(n) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// ── 偏好持久化（带过期） ────────────────────────────────────
+/**
+ * 带过期时间的偏好读写。
+ * 为什么不用布尔：像「今天不再提醒」这类偏好若只存 true，用户第二天就再也收不到提醒了 ——
+ * 要么额外写清理任务，要么每次读取判断过期。存**到期时间戳**是唯一自洽的形态。
+ * localStorage 在隐私模式/配额满时会抛异常，一律吞掉当「没有偏好」：偏好读取绝不能拖垮页面。
+ */
+export function readUntil(key) {
+  try {
+    const at = Number(localStorage.getItem(key));
+    return Number.isFinite(at) && at > Date.now() ? at : null;
+  } catch { return null; }
+}
+
+export function rememberUntil(key, ms) {
+  try { localStorage.setItem(key, String(Date.now() + Math.max(0, Number(ms) || 0))); } catch { /* 存不了就当没记住 */ }
+}
+
+/** 今天 24 点（本地时区）的毫秒时间戳 —— 「当天免提醒」的统一到期口径 */
+export function endOfToday() {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
+// ── 错误文案 ────────────────────────────────────────────────
+/**
+ * 后端 errorType → 「下一步怎么办」提示（键取自 lib/agnes.js 与 lib/routes.js 的 errorType 取值）。
+ * 纪律（竞品用线上事故换来的反模式注释）：**只做补充，绝不替换后端原文**。
+ * 用户要先看到真实原因，再看到可操作建议；任何"按关键字白名单挑着拼"的做法都会吞掉真实报错。
+ */
+export const ERROR_HINTS = {
+  no_api_key: '去「设置」填一个 Agnes API Key',
+  invalid_api_key: 'Key 可能已失效，去「设置」重新填写',
+  agnes_error: '上游返回了错误，原文见上；可稍后重试',
+  proxy_timeout: '上游响应超时，可稍后重试或换更快的模型',
+  network_error: '检查本机网络与 API Base URL 是否可达',
+  model_fetch_failed: '可稍后重试；失败时会保留上一次的模型目录',
+  test_failed: '检查 Key / Base URL / 网络后重试',
+  no_video_id: '上游没返回 video_id，可在「镜头任务」页用「重新获取结果」补查',
+  submit_failed: '任务未提交成功，可直接重试；同一条重复提交才会重复计费',
+  query_failed: '查询失败，本地任务仍在，稍后会自动继续轮询',
+  text_failed: '文本生成失败，可重试或换一个文本模型',
+  image_failed: '图片生成失败，可重试或换一个图像模型',
+  download_failed: '可稍后在素材库重试下载（远端链接过期前有效）',
+  download_unauthorized_host: '视频地址与 API Base 不同主机，为保护 Key 未带凭证；请手动下载后导入',
+  client_timeout: '本地服务长时间没响应，可能在重启；稍后刷新页面确认结果',
+};
+
+/** 把 errorType 对应的「下一步」拼到后端原文之后；原文缺失时用兜底文案。 */
+export function formatError(errorType, raw, fallback = '操作失败') {
+  const msg = String(raw == null ? '' : raw).trim() || fallback;
+  const hint = ERROR_HINTS[errorType];
+  return hint ? `${msg}（${hint}）` : msg;
+}
+
 /**
  * 启发式修复模型输出 JSON 的常见毛病：
  *   · 字符串值里没转义的内嵌引号（agnes-flash 最常犯，整段解析就挂在这）

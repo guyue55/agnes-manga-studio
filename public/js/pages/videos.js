@@ -8,7 +8,7 @@ import {
   IMAGE_ROLES, statusBadge, relTime, modelChoices, sizeForAspect,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
 import { state, navigate, onEvent } from '../app.js';
 
@@ -230,7 +230,7 @@ export default async function videos(container, params) {
   function preview(url) {
     const el = container.querySelector('#img-preview');
     if (!el) return;
-    el.innerHTML = url ? `<img src="${esc(url)}" alt="" style="max-height:110px;max-width:100%;border-radius:10px;border:1px solid var(--border)" onerror="this.style.display='none'" />` : '';
+    el.innerHTML = url ? imgWithFallback(url, { style: 'max-height:110px;max-width:100%;border-radius:10px;border:1px solid var(--border)', alt: '参考图预览' }) : '';
   }
 
   function renderMi() {
@@ -299,23 +299,30 @@ export default async function videos(container, params) {
       });
     }
 
+    // 付费确认：单条视频也是真实计费，且提交后不可撤销（只能等结果）。
+    // 占位提前到确认之前——确认弹窗期间再点提交不得叠出第二层。
     submitting = true;
-    const btn = container.querySelector('#submit');
-    setBusy(btn, true, '提交中（图生视频可能 1-2 分钟）');
-
-    let r;
     try {
-      r = await api.createVideo(payload);
-    } finally {
-      // 网络断连时 res.text() 会抛出；不释放锁就永久卡在"提交中"无法重试
-      submitting = false;
-      setBusy(btn, false);
-    }
+      if (!(await costConfirm({ what: '视频', count: 1, note: '视频按条计费且单价高于图片；提交后无法撤销，只能等待结果。' }))) return;
 
-    if (!r.ok) { toast.err(r.error); showDiag(null, r.error); return; }
-    const d = r.data;
-    showDiag(d, null);
-    loadRecent();
+      const btn = container.querySelector('#submit');
+      setBusy(btn, true, '提交中（图生视频可能 1-2 分钟）');
+
+      let r;
+      try {
+        r = await api.createVideo(payload);
+      } finally {
+        // 网络断连时 res.text() 会抛出；不释放锁就永久卡在"提交中"无法重试
+        setBusy(btn, false);
+      }
+
+      if (!r.ok) { toast.err(r.error); showDiag(null, r.error); return; }
+      const d = r.data;
+      showDiag(d, null);
+      loadRecent();
+    } finally {
+      submitting = false;
+    }
   }
 
   function showDiag(d, error) {

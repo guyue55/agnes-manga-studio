@@ -334,6 +334,14 @@ try {
       await cdp.eval(`document.querySelectorAll('#toasts .toast').forEach((e) => e.click()); return true;`);
       await sleep(400);
       // ② img 必须有 alt（无 alt 的图片会被读成文件名/URL）——逐页真机清点
+      // 本钉要自证"确实扫到了图片"，故先建一张**可加载**的 fixture。
+      // 不能用 /assets/none.png 之类的坏链：加载失败会被 imgWithFallback 换成占位块，反而扫不到 <img>。
+      const altFix = await (await fetch(`http://127.0.0.1:${port}/api/images`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: pid, name: 'alt 扫描 fixture', usage_type: 'storyboard', generation_prompt: 'probe',
+          url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }),
+      })).json();
+      ok('alt 扫描 fixture 已建（自证非空跑）', !!altFix.id, JSON.stringify(altFix).slice(0, 60));
       const pages3 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/images', '#/videos', '#/tasks', '#/assets'];
       const noAlt = [];
       let imgTotal = 0;
@@ -348,6 +356,7 @@ try {
       ok('页面内所有 img 都有 alt 属性', noAlt.length === 0, noAlt.join(' || '));
       // 灵敏度对照：确实有图片被扫到（否则本钉等于空跑）
       ok('确实扫到了图片（自证非空跑）', imgTotal > 0, `img 总数=${imgTotal}`);
+      await fetch(`http://127.0.0.1:${port}/api/images/${altFix.id}`, { method: 'DELETE' }).catch(() => {});
       // 灵敏度对照：无 alt 的图片确实会被检出（证明探测有效）
       const ctrl = await cdp.eval(`const i = document.createElement('img'); i.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; document.body.appendChild(i); const bad = !i.hasAttribute('alt'); i.remove(); return bad;`);
       ok('灵敏度对照：无 alt 的图片会被检出', ctrl === true);
@@ -577,6 +586,66 @@ try {
       const heap = await cdp.eval(`performance.memory ? Math.round(performance.memory.usedJSHeapSize/1048576) : -1`);
       console.log(`  [容量] JS 堆 ${heap}MB`);
       ok('JS 堆占用 <250MB（渲染 300 行后）', heap < 250, `${heap}MB`);
+    }
+
+    group('付费确认契约（拦截 → 取消不提交 → 确认放行 → 当天免打扰）');
+    {
+      // 说明：本组是本文件里**第一次**触发生成类入口，因此必须先清掉"当天免提醒"票据，
+      // 才能验证"第一次必弹"。确认一次后票据写入当天 24 点 —— 后续各组（E2E/防连点等）
+      // 的生成点击便不再被弹窗打断，这也正是该机制要证明的行为。
+      const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+      const SKIP = 'agnes.cost.skipUntil';
+      const clearTicket = () => cdp.eval(`localStorage.removeItem('${SKIP}'); return true;`);
+      const dialogOpen = () => cdp.eval(`!!document.querySelector('.modal-mask [data-yes]')`);
+      const plist = await J('/api/projects');
+      const pid = (plist.find((x) => x.name === '浏览器验收剧') || {}).id;
+      const probe = await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: pid, episode_number: 91, shot_number: 9101, scene_description: '付费确认探针', image_prompt: 'cost confirm probe', duration_seconds: 4 }) });
+      await clearTicket();
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=91'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#batch-img') && !!document.querySelector('[data-img]')`), '付费确认探针页就绪');
+
+      // ① 批量入口：弹窗 → 取消 → 不得提交（无 BKEY）
+      await clearTicket();
+      await cdp.eval(`document.querySelector('#batch-img').click(); return true;`);
+      const batchDialog = await waitFor(dialogOpen, '批量入口弹出成本确认', 6000).then(() => true).catch(() => false);
+      ok('批量出图入口弹出成本确认', batchDialog);
+      const copy = await cdp.eval(`return (document.querySelector('.modal-body') || {}).textContent || '';`);
+      ok('确认文案说清真实费用与计费归属', copy.includes('真实费用') && copy.includes('Agnes'), copy.slice(0, 60));
+      ok('确认弹窗带"今天内不再提醒"勾选', await cdp.eval(`!!document.querySelector('.modal-mask [data-cb]')`));
+      await cdp.eval(`document.querySelector('.modal-mask [data-no]').click(); return true;`);
+      await sleep(700);
+      ok('批量取消后未提交（无 BKEY、无残留弹窗）',
+        !(await cdp.eval(`localStorage.getItem('agnes.batch.last')`)) && !(await dialogOpen()));
+
+      // ② 行内单发入口：弹窗 → 取消 → 镜头仍无图且按钮未锁死
+      await clearTicket();
+      await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+      const rowDialog = await waitFor(dialogOpen, '行内入口弹出成本确认', 6000).then(() => true).catch(() => false);
+      ok('行内出图入口弹出成本确认', rowDialog);
+      await cdp.eval(`document.querySelector('.modal-mask [data-no]').click(); return true;`);
+      await sleep(700);
+      const afterCancel = (await J(`/api/storyboards?project_id=${pid}&episode=91`)).find((r) => r.id === probe.id);
+      ok('取消后未提交（镜头仍无图）', !!afterCancel && !afterCancel.linked_image_id, JSON.stringify(afterCancel && { i: afterCancel.linked_image_id }));
+      ok('取消后按钮未被锁死', await cdp.eval(`!document.querySelector('[data-img]').dataset.busy`));
+
+      // ③ 确认放行：勾选状态下确认 → 弹窗关闭且真的走到提交（本组未配 Key，必然以错误收尾，正好当"确实提交过"的证据）
+      await clearTicket();
+      await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+      await waitFor(dialogOpen, '再次弹出成本确认', 6000);
+      await cdp.eval(`document.querySelector('.modal-mask [data-yes]').click(); return true;`);
+      await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), '确认后弹窗关闭', 5000);
+      const reached = await waitFor(() => cdp.eval(`!!document.querySelector('.toast.err') || !!document.querySelector('[data-img]').dataset.busy`), '确认后进入实际提交', 10000).then(() => true).catch(() => false);
+      ok('确认后放行到实际提交（不是只关弹窗）', reached);
+      ok('勾选后写入当天到期票据', !!(await cdp.eval(`return localStorage.getItem('${SKIP}');`)));
+      await waitFor(() => cdp.eval(`!document.querySelector('[data-img]').dataset.busy`), '提交结束后按钮解锁', 20000);
+
+      // ④ 当天免打扰：再点不得再弹（否则高频生成会被反复打断）
+      await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+      await sleep(900);
+      ok('当天免打扰生效：再点不再弹确认', !(await dialogOpen()));
+      // 清理探针镜头；票据**故意保留**（后续各组的生成点击不应被弹窗打断）
+      await fetch(`http://127.0.0.1:${port}/api/storyboards/${probe.id}`, { method: 'DELETE' });
     }
 
     group('全链路 E2E（mock 上游 × 真实 UI）');
@@ -853,6 +922,16 @@ try {
       await cdp.eval(`location.hash = '#/settings?sec=task'; return true;`);
       await waitFor(() => cdp.eval(`!!document.querySelector('#t-auto')`), '重进任务区');
       ok('重进页面控件与库值同步（读回显示）', await cdp.eval(`document.querySelector('#t-interval').value === '6' && document.querySelector('#t-auto').classList.contains('on') === (${adv === '1'})`), String(adv));
+      // E8 的 UI 半边：越界值被后端钳制后，界面必须同步显示"生效值"（否则又回到"显示≠生效"）
+      await cdp.eval(`document.querySelector('#t-interval').value = '1'; document.querySelector('#save-task').click(); return true;`);
+      await waitFor(async () => { const g = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json(); return Number((g.data || g).video_poll_interval) === 2; }, '越界值钳到下限=2', 8000);
+      await sleep(400);
+      ok('越界值保存后界面同步显示钳制值（显示=生效）', await cdp.eval(`document.querySelector('#t-interval').value === '2'`), await cdp.eval(`document.querySelector('#t-interval').value`));
+      // 灵敏度对照：区间内合法值不得被钳（证明上条不是"永远显示下限"）
+      await cdp.eval(`document.querySelector('#t-interval').value = '30'; document.querySelector('#save-task').click(); return true;`);
+      await waitFor(async () => { const g = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json(); return Number((g.data || g).video_poll_interval) === 30; }, '合法值原样落库=30', 8000);
+      await sleep(400);
+      ok('灵敏度对照：区间内合法值原样显示（未被钳）', await cdp.eval(`document.querySelector('#t-interval').value === '30'`), await cdp.eval(`document.querySelector('#t-interval').value`));
       await cdp.eval(`document.querySelector('#t-interval').value = '8'; document.querySelector('#save-task').click(); return true;`); // 复原默认
       await sleep(300);
     }
@@ -1166,6 +1245,33 @@ try {
         await cdp.send('Page.reload', {}); await sleep(700);
         await cdp.eval(`location.hash = '#/dashboard'; return true;`);
       }
+    }
+
+    group('设置页 API Key 收回明文契约');
+    {
+      // 保存成功后不得把刚输入的明文 Key 留在输入框里。旧实现靠"整页 render()"顺手重置，
+      // 去掉 render() 后必须显式收回（否则明文常驻 + 提示与实际不符）。
+      // 本组放在最后：上一组已把 Key 清空；base 指向不可达端口，避免刷新模型走真网。
+      const put = (b) => fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      await put({ agnes_api_base_url: 'http://127.0.0.1:1/v1', agnes_api_key: '' });
+      await cdp.eval(`location.hash = '#/settings?sec=api'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#s-key')`), 'API 配置区就绪');
+      const sentinel = 'ui-withdraw-probe-key-9f3a';
+      await cdp.eval(`document.querySelector('#toggle-key').click(); return true;`);
+      await waitFor(() => cdp.eval(`document.querySelector('#s-key').disabled === false`), 'Key 输入框进入编辑态');
+      await cdp.eval(`const k = document.querySelector('#s-key'); k.value = '${sentinel}'; document.querySelector('#save-api').click(); return true;`);
+      const savedKey = await waitFor(async () => {
+        const g = await (await fetch(`http://127.0.0.1:${port}/api/settings`)).json();
+        return !!(g.data || g).agnes_api_key_masked;
+      }, 'Key 已落库（脱敏值非空）', 20000).then(() => true).catch(() => false);
+      ok('UI 保存 Key 成功落库（脱敏值非空）', savedKey);
+      await sleep(300);
+      const ks = await cdp.eval(`return (() => { const k = document.querySelector('#s-key'); return { disabled: !!k.disabled, type: k.type, value: k.value, hint: (document.querySelector('#s-key-hint') || {}).textContent || '' }; })();`);
+      ok('保存后 Key 输入框收回只读（disabled）', ks.disabled === true, JSON.stringify(ks));
+      ok('保存后输入框类型回 password（不裸显）', ks.type === 'password', ks.type);
+      ok('保存后不残留明文 Key', !String(ks.value).includes(sentinel), String(ks.value));
+      ok('保存后提示显示当前脱敏 Key', String(ks.hint).includes('当前：'), ks.hint);
+      await put({ agnes_api_base_url: '', agnes_api_key: '' });
     }
 
     const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);

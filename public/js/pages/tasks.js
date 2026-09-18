@@ -8,7 +8,7 @@ import {
   relTime, fmtTime, copyText, fmtBytes,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy, errBox } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, prompt as promptDlg, options, setBusy, errBox, imgWithFallback } from '../ui.js';
 import { head } from './helpers.js';
 import { onEvent, syncViewParams } from '../app.js';
 
@@ -176,7 +176,7 @@ export default async function tasks(container, params = {}) {
               <div class="progress"><i style="width:${esc(v.progress)}%"></i></div>
             </div>` : ''}
           ${v.source_image_url ? `<div class="row" style="gap:8px">
-              <img src="${esc(v.source_image_url)}" alt="" style="width:48px;height:34px;object-fit:cover;border-radius:8px;border:1px solid var(--border)" onerror="this.style.display='none'" />
+              ${imgWithFallback(v.source_image_url, { style: 'width:48px;height:34px;object-fit:cover;border-radius:8px;border:1px solid var(--border)', alt: '来源图片' })}
               <span style="font-size:11px;color:var(--text-3)">来源图片</span>
             </div>` : ''}
           ${v.local_file ? `<video src="/assets/videos/${esc(v.local_file.split(/[\\/]/).pop())}" controls style="max-width:320px;max-height:130px;border-radius:10px;border:1px solid rgba(214,181,109,0.15)"></video>`

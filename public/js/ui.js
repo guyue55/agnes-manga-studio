@@ -2,7 +2,7 @@
  * ui.js — toast / 弹窗 / 确认框 / DOM 助手
  * 所有页面共用，避免每个页面各写一套。
  */
-import { icon, esc } from './consts.js';
+import { icon, esc, readUntil, rememberUntil, endOfToday } from './consts.js';
 
 // ── Toast ───────────────────────────────────────────────────
 const TOAST_ICON = { ok: 'check', err: 'alert', warn: 'alert', info: 'info' };
@@ -49,13 +49,16 @@ export function modal(o) {
   const root = document.getElementById('modal-root');
   // A11y（WAI-ARIA APG）：记住打开弹窗的元素，关闭后把焦点还回去
   const opener = (document.activeElement && document.activeElement !== document.body) ? document.activeElement : null;
+  const titleId = `mt-${Math.random().toString(36).slice(2, 8)}`;
   const mask = document.createElement('div');
   mask.className = 'modal-mask';
+  // role="dialog" + aria-modal + aria-labelledby：屏幕阅读器需要知道「这是一个模态、它叫什么」。
+  // 我们早有 ESC/焦点陷阱/焦点归还/脏守卫，唯独缺这三个属性（竞品反而只有这三个属性、其余全缺）。
   mask.innerHTML = `
-    <div class="modal ${o.wide ? 'wide' : ''}">
+    <div class="modal ${o.wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
       <div class="modal-head">
-        <h3>${esc(o.title || '')}</h3>
-        <button class="icon-btn" data-close style="background:transparent;color:var(--text-3)" title="关闭（Esc）">${icon('x', 16)}</button>
+        <h3 id="${titleId}">${esc(o.title || '')}</h3>
+        <button class="icon-btn" data-close style="background:transparent;color:var(--text-3)" title="关闭（Esc）" aria-label="关闭">${icon('x', 16)}</button>
       </div>
       <div class="modal-body">${typeof o.body === 'string' ? o.body : ''}</div>
       ${o.footer ? `<div class="modal-foot">${o.footer}</div>` : ''}
@@ -226,8 +229,33 @@ export function confirm(o) {
   });
 }
 
-/** 输入弹窗，返回 Promise<string|null> */
-export function prompt(o) {
+/** 「当天免提醒」偏好的存储键：存到期时间戳（今天 24 点），不是布尔 */
+const COST_SKIP_KEY = 'agnes.cost.skipUntil';
+
+/**
+ * 付费动作前的成本确认。
+ * 为什么必须有：出图/出视频都是**真实计费**，误点一次就是真金白银；而本项目删除类操作早就有
+ * 一层 confirm，偏偏"花钱"没有 —— 这个不对称是最该补的交互缺口（5 个竞品包全都有付费确认）。
+ * 已勾选「今天内不再提醒」则直接放行，避免高频生成时被反复打断。
+ * @param {object} o {what:'图片'|'视频', count:number, note?:string}
+ * @returns {Promise<boolean>} 是否确认继续
+ */
+export async function costConfirm(o = {}) {
+  if (readUntil(COST_SKIP_KEY)) return true;
+  const what = o.what || '内容';
+  const n = Math.max(1, Number(o.count) || 1);
+  const r = await confirm({
+    title: '确认开始生成',
+    text: `即将调用 Agnes 生成 <b>${n}</b> 个${what}任务，会产生<b>真实费用</b>（按 Agnes 账单结算，本工具不代扣）。<br><br>`
+      + `${o.note ? esc(o.note) + '<br><br>' : ''}提交后可以离开页面，任务在本地服务里继续跑。`,
+    okText: '开始生成',
+    checkbox: { label: '今天内不再提醒', checked: true },
+  });
+  if (r && r.confirmed && r.checked) rememberUntil(COST_SKIP_KEY, endOfToday() - Date.now());
+  return !!(r && r.confirmed);
+}
+
+/** 输入弹窗，返回 Promise<string|null> */export function prompt(o) {
   return new Promise((resolve) => {
     let done = false;
     const m = modal({
@@ -282,6 +310,20 @@ export function spinner(text) {
   return `<div class="loading-wrap"><div class="spinner"></div><span>${esc(text || '加载中…')}</span></div>`;
 }
 
+/**
+ * 图片 + 加载失败兜底。
+ * 为什么不能 `onerror="this.style.display='none'"`：隐藏会让布局塌陷（卡片高度突变、栅格错位），
+ * 用户看到"这里什么都没有"分不清是"没生成"还是"加载失败"。兜底块继承原 class 保持尺寸并写明失败。
+ */
+export function imgWithFallback(url, o = {}) {
+  const cls = o.cls || '';
+  const style = o.style ? ` style="${o.style}"` : '';
+  const alt = esc(o.alt || '');
+  const fbStyle = o.style ? `,style:'${o.style}'` : '';
+  return `<img class="${cls}"${style} src="${esc(url)}" alt="${alt}" loading="lazy"`
+    + ` onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'${cls} img-fallback'${fbStyle},textContent:'图片加载失败'}))" />`;
+}
+
 /** D-1/A-1：加载失败专用块——红字原因 + 重试钮（调用方负责绑定 [data-retry]）。
  *  杜绝"永久 spinner"和"API 故障谎报空态"两类伪装。 */
 export function errBox(text = '加载失败', hint = '本地服务可能未启动或正在重启') {
@@ -313,8 +355,9 @@ export function options(items, valueKey = 'value', labelKey = 'label', current) 
  * @param {HTMLElement} btn 按钮元素
  * @param {boolean} busy true 进入加载态，false 还原
  * @param {string} label 按钮上的文案；留空则只显示 spinner（适合小图标按钮）
+ * @param {string} hint 悬停提示；留空用通用预期。调用方知道更准的耗时（如"图生视频 1-2 分钟"）时应传入
  */
-export function setBusy(btn, busy, label = '') {
+export function setBusy(btn, busy, label = '', hint = '') {
   if (!btn) return;
   if (busy) {
     if (btn.dataset.busy === '1') return; // 已经在转了，别叠加
@@ -322,7 +365,7 @@ export function setBusy(btn, busy, label = '') {
     btn._origHtml = btn.innerHTML;
     btn._origTitle = btn.getAttribute('title') || '';
     btn.disabled = true;
-    btn.title = '模型生成通常需要 20〜60 秒，请耐心等待';
+    btn.title = hint || '模型生成通常需要 20〜60 秒，请耐心等待';
     const t0 = Date.now();
     btn.innerHTML = label
       ? `<span class="spinner sm"></span><span data-elapsed>${esc(label)}… 0s</span>`

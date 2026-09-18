@@ -7,7 +7,7 @@ import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, twoClick, confirm, options, setBusy } from '../ui.js';
+import { modal, toast, empty, spinner, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams } from '../app.js';
 
@@ -354,20 +354,25 @@ ${text}`,
     if (submitBusy) return;
     const shots = targetShots().filter((s) => s.image_prompt);
     if (!shots.length) { toast.err('选中的镜头还没有图片提示词，先「批量补图片提示词」'); return; }
+    // 付费确认期间再点不得叠出第二层弹窗（占位提前到确认之前）
     submitBusy = true;
-    const r = await api.batchImages({
-      items: shots.map((s) => ({
-        storyboard_id: s.id,
-        project_id: projectId,
-        prompt: s.image_prompt,
-        size: sizeForAspect(aspectOf(), 'image'),
-        usage_type: 'storyboard',
-      })),
-      concurrency: 3,
-    });
-    submitBusy = false;
-    if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 张图片的批量任务`); }
-    else toast.err(r.error);
+    try {
+      if (!(await costConfirm({ what: '图片', count: shots.length }))) return;
+      const r = await api.batchImages({
+        items: shots.map((s) => ({
+          storyboard_id: s.id,
+          project_id: projectId,
+          prompt: s.image_prompt,
+          size: sizeForAspect(aspectOf(), 'image'),
+          usage_type: 'storyboard',
+        })),
+        concurrency: 3,
+      });
+      if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 张图片的批量任务`); }
+      else toast.err(r.error);
+    } finally {
+      submitBusy = false;
+    }
   }
 
   /** R2/R3 统一判定：镜头关联图能否作为图生视频输入（必须公网 URL；本地 /assets/… Agnes 抓不到） */
@@ -402,16 +407,27 @@ ${text}`,
       toast.warn(`${downgraded} 个镜头的分镜图是本地文件，Agnes 无法抓取（需公网 URL），这些镜头已改用文生视频。`, 6500);
     }
     submitBusy = true;
-    const r = await api.batchVideos({ items, concurrency: 1 });
-    submitBusy = false;
-    if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`); }
-    else toast.err(r.error);
+    try {
+      if (!(await costConfirm({ what: '视频', count: items.length, note: '视频按条计费且单价高于图片，确认镜头数与提示词后再提交。' }))) return;
+      const r = await api.batchVideos({ items, concurrency: 1 });
+      if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`); }
+      else toast.err(r.error);
+    } finally {
+      submitBusy = false;
+    }
   }
+
+  // 行内单发入口的在途集合：按镜头 id 去重（保留"多行可同时生成"的能力，
+  // 只挡同一行连点——付费确认期间再点不得叠出第二层弹窗）。
+  const rowInflight = new Set();
 
   async function genImage(s, btn) {
     if (!s?.image_prompt) { toast.err('这个镜头还没有图片提示词——点「编辑」补上，或勾选后批量补提示词'); return; }
-    setBusy(btn, true);
+    if (rowInflight.has(s.id)) return;
+    rowInflight.add(s.id);
     try {
+      if (!(await costConfirm({ what: '图片', count: 1 }))) return;
+      setBusy(btn, true);
       const r = await api.genImage({
         project_id: projectId,
         storyboard_id: s.id,
@@ -422,13 +438,17 @@ ${text}`,
       if (r.ok) { toast.ok('图片已生成并关联到分镜'); load(); } else toast.err(r.error);
     } finally {
       setBusy(btn, false);
+      rowInflight.delete(s.id);
     }
   }
 
   async function genVideo(s, btn) {
     if (!s?.video_prompt) { toast.err('这个镜头还没有视频提示词——点「编辑」补上，或勾选后批量补提示词'); return; }
-    setBusy(btn, true);
+    if (rowInflight.has(s.id)) return;
+    rowInflight.add(s.id);
     try {
+      if (!(await costConfirm({ what: '视频', count: 1, note: '视频按条计费且单价高于图片。' }))) return;
+      setBusy(btn, true, '', '视频生成通常需要 1〜3 分钟，可离开页面，任务在本地服务里继续跑');
       // R3：与批量路径同一判定——有可用分镜图就走图生视频，不再永远文生视频
       const imgUrl = videoImageOf(s);
       const r = await api.createVideo({
@@ -446,6 +466,7 @@ ${text}`,
       else toast.err(r.error);
     } finally {
       setBusy(btn, false);
+      rowInflight.delete(s.id);
     }
   }
 

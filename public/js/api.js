@@ -1,42 +1,64 @@
 /**
  * api.js — 后端接口封装
- * 统一把 HTTP 错误、业务 ok:false 都收敛成 {ok, data, error}，页面里不用层层 try。
+ * 统一把 HTTP 错误、业务 ok:false 都收敛成 {ok, data, error, errorType}，页面里不用层层 try。
  */
+import { formatError } from './consts.js';
 
-async function req(method, url, body) {
-  const opts = { method, headers: {} };
+/**
+ * 请求超时分级（毫秒）。为什么需要：后端有超时，前端**没有**——后端进程挂住/重启时
+ * fetch 可以永久挂起，`setBusy` 的秒表就会一直转，用户以为"还在生成"。
+ * 生成类必须比后端超时更宽（文本/图片 120s、视频提交含退避重试最长约 4.5 分钟），
+ * 否则前端先放弃、后端还在跑，用户会以为失败而重复提交（= 重复计费）。
+ */
+const TIMEOUT = {
+  quick: 10000,    // 健康检查：本地调用，慢就是有问题
+  normal: 30000,   // 普通读写
+  gen: 180000,     // 文本/图片生成、模型目录拉取
+  submit: 600000,  // 视频提交/下载（后端含 429/503 指数退避重试）
+};
+
+async function req(method, url, body, opts = {}) {
+  const timeoutMs = opts.timeoutMs || TIMEOUT.normal;
+  const o = { method, headers: {} };
   if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
+    o.headers['Content-Type'] = 'application/json';
+    o.body = JSON.stringify(body);
   }
+  // 超时只终止"这一次等待"，不终止服务端任务：文案必须说清"可能仍在后台跑"，
+  // 否则用户会把"前端超时"当成"任务失败"而重复提交。
+  if (timeoutMs > 0) o.signal = AbortSignal.timeout(timeoutMs);
   let res;
   try {
-    res = await fetch(url, opts);
+    res = await fetch(url, o);
   } catch (e) {
-    return { ok: false, error: `无法连接到本地服务：${e.message}` };
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    return timedOut
+      ? { ok: false, errorType: 'client_timeout', error: formatError('client_timeout', `等待本地服务响应超过 ${Math.round(timeoutMs / 1000)}s`) }
+      : { ok: false, errorType: 'local_service_down', error: `无法连接到本地服务：${e.message}` };
   }
   let data = null;
   const text = await res.text();
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
   if (!res.ok) {
-    return { ok: false, error: data?.error || `请求失败（HTTP ${res.status}）`, status: res.status };
+    const et = data?.errorType;
+    return { ok: false, errorType: et, status: res.status, error: formatError(et, data?.error || `请求失败（HTTP ${res.status}）`) };
   }
   if (data && data.ok === false) {
-    return { ok: false, error: data.error || '操作失败', errorType: data.errorType, data };
+    return { ok: false, errorType: data.errorType, error: formatError(data.errorType, data.error || '操作失败'), data };
   }
   return { ok: true, data };
 }
 
 export const api = {
-  health: () => req('GET', '/api/health'),
+  health: () => req('GET', '/api/health', undefined, { timeoutMs: TIMEOUT.quick }),
   bootstrap: () => req('GET', '/api/bootstrap'),
   stats: () => req('GET', '/api/stats'),
 
   settings: () => req('GET', '/api/settings'),
   models: () => req('GET', '/api/models'),
-  refreshModels: () => req('POST', '/api/models/refresh', {}),
+  refreshModels: () => req('POST', '/api/models/refresh', {}, { timeoutMs: TIMEOUT.gen }),
   saveSettings: (patch) => req('PUT', '/api/settings', patch),
-  testSettings: (kind) => req('POST', '/api/settings/test', { kind }),
+  testSettings: (kind) => req('POST', '/api/settings/test', { kind }, { timeoutMs: TIMEOUT.gen }),
 
   projects: () => req('GET', '/api/projects'),
   createProject: (p) => req('POST', '/api/projects', p),
@@ -66,15 +88,15 @@ export const api = {
   createImage: (a) => req('POST', '/api/images', a),
   updateImage: (id, a) => req('PUT', `/api/images/${id}`, a),
   deleteImage: (id) => req('DELETE', `/api/images/${id}`),
-  genImage: (p) => req('POST', '/api/agnes/image', p),
+  genImage: (p) => req('POST', '/api/agnes/image', p, { timeoutMs: TIMEOUT.gen }),
 
   videos: (projectId) => req('GET', `/api/videos${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   updateVideo: (id, v) => req('PUT', `/api/videos/${id}`, v),
   deleteVideo: (id) => req('DELETE', `/api/videos/${id}`),
-  createVideo: (v) => req('POST', '/api/videos', v),
+  createVideo: (v) => req('POST', '/api/videos', v, { timeoutMs: TIMEOUT.submit }),
   refreshVideo: (id) => req('POST', `/api/videos/${id}/refresh`, {}),
   bindVideo: (id, videoId) => req('POST', `/api/videos/${id}/bind`, { video_id: videoId }),
-  downloadVideo: (id) => req('POST', `/api/videos/${id}/download`, {}),
+  downloadVideo: (id) => req('POST', `/api/videos/${id}/download`, {}, { timeoutMs: TIMEOUT.submit }),
   batchRefreshVideos: () => req('POST', '/api/videos/batch-refresh', {}),
 
   tasks: (type) => req('GET', `/api/tasks${type ? `?task_type=${type}` : ''}`),
@@ -87,10 +109,10 @@ export const api = {
   updateTemplate: (id, t) => req('PUT', `/api/templates/${id}`, t),
   deleteTemplate: (id) => req('DELETE', `/api/templates/${id}`),
 
-  genText: (p) => req('POST', '/api/agnes/text', p),
+  genText: (p) => req('POST', '/api/agnes/text', p, { timeoutMs: TIMEOUT.gen }),
 
-  batchImages: (p) => req('POST', '/api/batch/images', p),
-  batchVideos: (p) => req('POST', '/api/batch/videos', p),
+  batchImages: (p) => req('POST', '/api/batch/images', p, { timeoutMs: TIMEOUT.gen }),
+  batchVideos: (p) => req('POST', '/api/batch/videos', p, { timeoutMs: TIMEOUT.gen }),
   batch: (id) => req('GET', `/api/batch/${id}`),
   cancelBatch: (id) => req('POST', `/api/batch/${id}/cancel`, {}),
 

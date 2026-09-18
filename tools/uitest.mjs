@@ -412,6 +412,58 @@ group('复用一致性');
   ok('灵敏度对照：守卫检测式能命中旧手工写法', /\/\s*1024\s*\/\s*1024\s*\)\.toFixed/.test(probe));
 }
 
+// ── 批 1 守卫：付费确认 / 请求超时 / 弹窗 ARIA / 图片兜底 ──────
+group('付费确认与请求健壮性（源级棘轮）');
+{
+  const ui = read(path.join(PUB, 'js', 'ui.js'));
+  const apiSrc = read(path.join(PUB, 'js', 'api.js'));
+  const constsSrc = read(path.join(PUB, 'js', 'consts.js'));
+  const pageSrc = listJs(path.join(PUB, 'js', 'pages')).map((f) => ({ f: path.basename(f), s: read(f) }));
+
+  // ① 付费确认：共享件存在、走 confirm 的 checkbox、带当天过期偏好
+  ok('ui.js 导出 costConfirm', /export async function costConfirm/.test(ui));
+  ok('costConfirm 复用 confirm 且带"不再提醒"勾选', /await confirm\(/.test(ui) && /checkbox:\s*\{/.test(ui));
+  ok('"当天免提醒"走带过期的偏好（readUntil/rememberUntil），不是布尔',
+    /readUntil\(COST_SKIP_KEY\)/.test(ui) && /rememberUntil\(COST_SKIP_KEY/.test(ui));
+  ok('consts.js 提供 readUntil / rememberUntil / endOfToday',
+    /export function readUntil/.test(constsSrc) && /export function rememberUntil/.test(constsSrc) && /export function endOfToday/.test(constsSrc));
+
+  // ② 付费入口必须包一层确认（棘轮：入口数不得减少）
+  const paidSites = pageSrc.filter((p) => /costConfirm\(/.test(p.s)).map((p) => p.f);
+  ok('付费入口接入 costConfirm（≥3 个页面：分镜/视频/图片）', paidSites.length >= 3, paidSites.join(','));
+  ok('分镜页 4 个付费入口全部接入（批量图/批量视频/单图/单视频）',
+    (read(path.join(PUB, 'js', 'pages', 'storyboards.js')).match(/costConfirm\(/g) || []).length >= 4,
+    String((read(path.join(PUB, 'js', 'pages', 'storyboards.js')).match(/costConfirm\(/g) || []).length));
+  ok('页面不得绕过 confirm 直接提交（无自造 confirm 文案 "会产生真实费用" 的散装实现）',
+    pageSrc.filter((p) => /会产生真实费用/.test(p.s)).length === 0);
+
+  // ③ 前端请求超时：req 必须带 signal，且生成类必须显式放宽
+  ok('api.js 的 req 使用 AbortSignal.timeout', /AbortSignal\.timeout\(/.test(apiSrc));
+  ok('api.js 有超时分级常量表', /const TIMEOUT = \{/.test(apiSrc));
+  ok('生成类接口显式放宽超时（genText/genImage/batchImages/batchVideos/createVideo）',
+    ['genText', 'genImage', 'batchImages', 'batchVideos', 'createVideo']
+      .every((m) => new RegExp(`${m}:.*timeoutMs: TIMEOUT\\.`).test(apiSrc)));
+  ok('超时文案说明"任务可能仍在后台"（不谎报失败）',
+    /client_timeout/.test(constsSrc) && /仍在|继续|稍后刷新页面确认结果/.test(constsSrc));
+
+  // ④ 错误文案：只补充不替换（formatError 保留原文）
+  ok('consts.js 提供 formatError 且保留后端原文', /export function formatError/.test(constsSrc) && /return hint \? `\$\{msg\}/.test(constsSrc));
+  ok('api.js 失败分支走 formatError（不再裸传后端字符串）',
+    (apiSrc.match(/formatError\(/g) || []).length >= 3, String((apiSrc.match(/formatError\(/g) || []).length));
+
+  // ⑤ 弹窗 ARIA 三角
+  ok('modal 带 role="dialog" + aria-modal + aria-labelledby',
+    /role="dialog"/.test(ui) && /aria-modal="true"/.test(ui) && /aria-labelledby="\$\{titleId\}"/.test(ui));
+
+  // ⑥ 图片兜底：不得再用 display:none 隐藏加载失败的图（会塌陷布局）
+  const hiddenImg = pageSrc.filter((p) => /onerror="this\.style\.display/.test(p.s)).map((p) => p.f);
+  ok('页面不得用 display:none 隐藏加载失败的图（须走 imgWithFallback）', hiddenImg.length === 0, hiddenImg.join(','));
+  ok('ui.js 导出 imgWithFallback 且兜底块保留原 class',
+    /export function imgWithFallback/.test(ui) && /img-fallback/.test(ui));
+  // 灵敏度对照：守卫的检测式能命中旧写法
+  ok('灵敏度对照：display:none 检测式能命中旧写法', /onerror="this\.style\.display/.test('<img onerror="this.style.display=\'none\'" />'));
+}
+
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
   console.log('  失败项：');

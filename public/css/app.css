@@ -612,6 +612,22 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
 }
 .asset-card:hover { transform: translateY(-2px); border-color: rgba(214, 181, 109, 0.32); }
 .asset-card img, .asset-card video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 图片加载失败兜底（imgWithFallback 的落点）：占位而不是隐藏 —— 隐藏会让卡片塌陷、
+   栅格错位，用户也分不清"没生成"与"加载失败"。继承原 class 保持尺寸，再叠这一层样式。 */
+.img-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 72px;
+  background: var(--bg-2);
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-align: center;
+  padding: 6px;
+}
 .asset-card .ovl {
   position: absolute;
   inset: 0;
