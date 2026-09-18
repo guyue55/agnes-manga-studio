@@ -27,11 +27,11 @@
   --warn: #FFD60A;
   --info: #64D2FF;
 
-  /* 文本 */
+  /* 文本（灰阶整体提亮，11〜13px 次要文字也要过 WCAG AA 4.5） */
   --text: #F5F5F7;
-  --text-2: #A1A1AA;
-  --text-3: #6E7681;
-  --text-4: #4A4A52;
+  --text-2: #B4B6BE;
+  --text-3: #8A92A1;
+  --text-4: #767E8C; /* 版本号/路径/时间戳等次要内容，仍低于 text-3 保持层级，但过 WCAG AA 4.5 */
 
   /* 尺寸 */
   --radius-card: 20px;
@@ -362,6 +362,11 @@ select.select option { background: #12141C; color: var(--text); }
   cursor: pointer;
   transition: all 200ms ease;
   flex-shrink: 0;
+  /* 原生 button 复位（padding 会把 ::after 滑钮的定位基准挪位） */
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  font: inherit;
 }
 .switch::after {
   content: '';
@@ -743,6 +748,22 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
   gap: 10px;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+/* 弹窗打开时锁背景滚动（modal() 挂/卸 body.modal-open） */
+body.modal-open { overflow: hidden; }
+
+/* 键盘操作时的统一焦点环（鼠标点击不显示）。输入框已有自己的 :focus 光晕 */
+.btn:focus-visible, .icon-btn:focus-visible, .mini-btn:focus-visible, .chip:focus-visible,
+.tabs > button:focus-visible, .segmented > button:focus-visible,
+.nav-item:focus-visible, .quick-item:focus-visible, .switch:focus-visible, a:focus-visible {
+  outline: 2px solid rgba(245, 213, 138, 0.6);
+  outline-offset: 2px;
+}
+
+/* 系统级「减弱动态效果」时收敛动画（弹窗位移 / spinner 旋转等） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
 /* ── Toast ──────────────────────────────────────────────── */
