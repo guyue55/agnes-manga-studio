@@ -750,3 +750,51 @@ run-all 全绿 128/207/452/69。图谱时效：9-12 轮对 poller.js（函数体
   2. **重复留痕**：撤两层后失败信息里冒出一条**既有钉**（`双击创建只产生 1 个项目（R6 防连点）`，第 39 轮所加）——它本就带灵敏度对照（"非重叠两次点击应产生 2 个"）与清理校验，**我的新组是重复劳动**。故**删除我新增的组**，保留既有那条（避免同一承诺两处维护）。
 - **🐛 顺带修掉一处测试文件自身缺陷**：`tools/browser-test.mjs` 里有一行**重复的 `group(...)` 语句**（同一行写了两遍，我此前编辑的残留）→ 该组标题会打印两次。已删除重复语句（组数不变，输出恢复正常）。另用 `awk` 扫描全文连续重复行，仅命中我的灵敏度对照里**故意**的两条相同 POST ✓ 无其它残留。
 - **计数**：browser-test 保持 **173**（新增组已删除、缺陷已修，净变化 0）；门禁 135/261/468/173 全绿。
+
+---
+
+## 三、竞品源码研读轮（第 70 轮起）
+
+> 起点：用户提供 `/Users/apple/Project/Git/Webeye-Video/docs/AI创作资料/08-AI创作项目源码/` 下 5 个 Vibex 导出的
+> React+TS 源码包。逐包研读报告见 `docs/research/08-src-01..05-*.md`，综合对照与分批升级路线见
+> `docs/research/08-src-00-synthesis.md`（含 R1–R30 借鉴项总表与 10 条「明确不借鉴」边界）。
+
+**B51 研读轮·一（第 70 轮）**：**先读后改**——5 包逐条研读 + 综合路线，并落地「批 1：付费防护 + 请求健壮性 + 错误可读性」。
+
+- **研读产出（只读，未改竞品源码）**：5 份逐包报告（各 440–553 行，全部结论带 `文件:行号` 证据）+ 1 份综合对照。
+  关键校正：`ui-our-baseline.md`（锚定旧 commit `5150829`）至少 5 条结论已过期（videos 页 SSE 订阅、`empty()` 的 CTA 插槽、
+  `confirm()` 的取消守卫、toast live region、modal ARIA 仍成立），施工口径一律以当前代码为准。
+- **批 1 落地（R1–R7）**：
+  1. **付费确认**（R1）：新增共享件 `ui.js costConfirm()`（复用既有 `confirm` 的 checkbox 能力 + 带过期的偏好），
+     接入 **6 个真实花钱入口**：`storyboards.js` 批量出图/批量出视频/行内出图/行内出视频、`videos.js` 提交、`images.js` 生成。
+     旧状态是"删东西要确认、花钱不用"——唯一 `confirm()` 只用于删除类。
+  2. **带过期偏好**（R7）：`consts.js` 新增 `readUntil/rememberUntil/endOfToday`，免提醒存**到期时间戳**而非布尔
+     （布尔形态要么写清理任务、要么第二天永久静默）。
+  3. **前端请求超时**（R2）：`api.js` 的 `req()` 接入 `AbortSignal.timeout` + 四级超时表（quick/normal/gen/submit）。
+     生成类必须比后端超时更宽（视频提交含 429 退避重试最长约 4.5 分钟），否则"前端先放弃、后端还在跑"会诱导用户重复提交 = 重复计费。
+  4. **错误可读性**（R3）：`consts.js` 新增 `ERROR_HINTS`（覆盖后端全部 14 个 `errorType`）+ `formatError`，
+     在 `api.js` 统一拼装。纪律照抄竞品用事故换来的反模式注释：**只补充、绝不替换后端原文**。
+     此前 `errorType` 虽已由 `api.js:25` 透传但**页面层 0 消费者**，字段是死的。
+  5. **弹窗 ARIA 三角**（R4）：`modal()` 补 `role="dialog"` + `aria-modal="true"` + `aria-labelledby`（标题 id 随机生成）；
+     关闭按钮补 `aria-label`。我们早有 ESC/焦点陷阱/焦点归还/脏守卫，竞品反而只有这三个属性、其余全缺。
+  6. **`setBusy` 时间预期可传**（R5）：新增第 4 参 `hint`；视频提交/生成、图片生成、行内出视频各自传入准确耗时，
+     不再一律显示"20〜60 秒"。
+  7. **图片失败兜底**（R6）：新增 `ui.js imgWithFallback()`，替换 `dashboard.js`/`tasks.js`/`videos.js` 的
+     `onerror="this.style.display='none'"`（隐藏会让卡片塌陷、栅格错位，用户分不清"没生成"与"加载失败"）与 `assets.js` 的无 onerror `<img>`；
+     `app.css` 新增 `.img-fallback`。
+- **顺带抓到的真缺陷（不是测试问题）**：`DELETE /api/projects/:id?cascade=1` 的 query 形式**被静默忽略**——
+  handler 只读 `body.cascade`，调用方（脚本/测试清理）以为级联删干净，实际留下一堆孤儿分镜/素材。
+  已修为 body/query 两种形式都认，并补 4 条 apitest 钉（`removed ≥ 2` + 分镜/素材确实清空）。
+- **新增回归钉**：
+  - uitest「付费确认与请求健壮性（源级棘轮）」17 钉：付费入口数不得减少、`costConfirm` 必须走 `confirm`+checkbox+带过期偏好、
+    页面不得散装自造"会产生真实费用"文案、`req` 必须带 `AbortSignal.timeout`、生成类必须显式放宽超时、
+    超时文案不得谎报失败、`formatError` 必须保留原文、modal ARIA 三角、页面不得再用 `display:none` 隐藏坏图 + 灵敏度对照。
+  - browser-test「付费确认契约」10 钉：批量入口弹窗 → 取消不提交（无 BKEY）→ 行内弹窗 → 取消后镜头仍无图且按钮未锁死 →
+    确认后**真的走到提交**（本组未配 Key，必然以错误收尾，正好当"确实提交过"的证据）→ 票据写入 → **再点不再弹**（当天免打扰）。
+  - browser-test「设置页 API Key 收回明文契约」4 钉（补上一轮未提交的 WIP：去掉整页 `render()` 后必须显式收回明文态）。
+  - **修掉一条虚假保障**：browser-test 的"确实扫到了图片（自证非空跑）"原先依赖一个**坏链**图片（`/assets/none.png`）
+    留在库里才成立——换成 `imgWithFallback` 后坏图被替换成占位块，该钉立刻变 0 而失败。改为**自建可加载 fixture**（data URL）后扫描。
+    教训同 B47：DOM 扫描类断言必须自备 fixture，不能依赖"恰好有别的组留下的坏数据"。
+- **计数**：selftest 135 / apitest 261 → **265** / uitest 468 → **498** / browser-test 173 → **191**。门禁全绿；ui-audit 复测零发现。
+- **待办（显式记录，避免遗忘）**：`.understand-anything` 图谱锚点已落后（本批**新增了导出符号**：`readUntil/rememberUntil/endOfToday/ERROR_HINTS/formatError/costConfirm/imgWithFallback`）
+  → 需在批 2/3 稳定后跑一次 `/understand` 增量更新，并同步 `docs/knowledge-graph`（若手工图受影响）。
