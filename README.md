@@ -101,7 +101,8 @@ node tools/run-all.mjs
 
 ```bash
 node tools/ui-audit.mjs     # 真机视觉度量报表：4 视口 × 9 页的溢出/微字号/对比度/截断无提示
-node tools/port-check.mjs   # 端口撞车防护三场景实测（复用 / 漂移 / 影子实例），违例退出码 1
+node tools/port-check.mjs   # 端口撞车防护三场景 6 断言实测（复用 / 漂移 / 影子实例 + 收尾无残留自检）
+                            #   退出码：0 全过 / 1 真实违例 / 2 环境冲突（端口被无关进程占用，结论不可用）
 ```
 
 ## 打包 Windows exe
