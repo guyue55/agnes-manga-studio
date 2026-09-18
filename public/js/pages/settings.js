@@ -211,8 +211,8 @@ export default async function settings(container, params = {}) {
                 <td>${t.is_builtin ? '<span class="badge gold">内置</span>' : '<span class="badge gray">自定义</span>'}</td>
                 <td>
                   <div class="row" style="gap:4px">
-                    <button class="icon-btn" data-edit="${esc(t.id)}" style="background:rgba(255,255,255,0.07);color:var(--text-2)">${icon('edit', 13)}</button>
-                    <button class="icon-btn danger" data-del="${esc(t.id)}" style="background:rgba(255,255,255,0.07);color:var(--text-3)">${icon('trash', 13)}</button>
+                    <button class="icon-btn" data-edit="${esc(t.id)}" title="编辑模板" aria-label="编辑模板 ${esc(t.name)}" style="background:rgba(255,255,255,0.07);color:var(--text-2)">${icon('edit', 13)}</button>
+                    <button class="icon-btn danger" data-del="${esc(t.id)}" title="删除模板" aria-label="删除模板 ${esc(t.name)}" style="background:rgba(255,255,255,0.07);color:var(--text-3)">${icon('trash', 13)}</button>
                   </div>
                 </td>
               </tr>`).join('')}

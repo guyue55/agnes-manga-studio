@@ -115,7 +115,7 @@ function renderSidebar() {
     </div>
     <nav class="nav">
       ${NAV.map((n) => `
-        <button class="nav-item ${n.id === state.current ? 'active' : ''}" data-nav="${n.id}" title="${esc(n.label)}">
+        <button class="nav-item ${n.id === state.current ? 'active' : ''}" data-nav="${n.id}" title="${esc(n.label)}"${n.id === state.current ? ' aria-current="page"' : ''}>
           ${icon(n.icon, 17)}
           <span class="lbl">${esc(n.label)}</span>
           ${n.id === 'tasks' && running ? `<span class="badge">${running}</span>` : ''}

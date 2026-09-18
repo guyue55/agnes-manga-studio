@@ -421,7 +421,8 @@ try {
         await waitFor(() => cdp.eval(`!!document.querySelector('.page')`), `页面就绪 ${h}`); // 裸表达式：带 return 的 body 必须含分号，否则被包成 return(return …) → SyntaxError 被 waitFor 吞成静默超时
         await sleep(500);
         const res = await cdp.eval(`const name = ${NAME_FN};
-          const els = Array.from(document.querySelectorAll('.page input, .page select, .page textarea, .page [role=switch]'))
+          // 整篇文档（含侧栏/页头）——首版只扫 .page，侧栏导航与折叠钮从未被覆盖
+          const els = Array.from(document.querySelectorAll('input, select, textarea, [role=switch], button, a[href]'))
             .filter((e) => e.type !== 'hidden');
           const bad = els.filter((e) => !name(e)).map((e) => (e.id || e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ')[0] : '')));
           return { total: els.length, bad };`);
@@ -436,7 +437,8 @@ try {
         await cdp.eval(`document.querySelector('[data-sec="${sec}"]').click(); return true;`);
         await sleep(450);
         const res = await cdp.eval(`const name = ${NAME_FN};
-          const els = Array.from(document.querySelectorAll('.page input, .page select, .page textarea, .page [role=switch]'))
+          // 整篇文档（含侧栏/页头）——首版只扫 .page，侧栏导航与折叠钮从未被覆盖
+          const els = Array.from(document.querySelectorAll('input, select, textarea, [role=switch], button, a[href]'))
             .filter((e) => e.type !== 'hidden');
           const bad = els.filter((e) => !name(e)).map((e) => (e.id || e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ')[0] : '')));
           return { total: els.length, bad };`);
@@ -453,6 +455,12 @@ try {
       // 灵敏度对照：无 for 的等价标记点击后不会聚焦（证明上条不是"点什么都会聚焦"）
       const ctrlId = await cdp.eval(`const d = document.createElement('div'); d.innerHTML = '<label>x</label><input id="__inp">'; document.body.appendChild(d); d.querySelector('label').click(); const got = document.activeElement ? document.activeElement.id : ''; d.remove(); return got;`);
       ok('灵敏度对照：无 for 的标签点击不聚焦（探测有效）', ctrlId !== '__inp', String(ctrlId));
+      // 当前页必须可被 AT 识别（此前只有视觉 .active）
+      await cdp.eval(`location.hash = '#/videos'; return true;`);
+      await sleep(600); // 导航恒在，直接断言即可（用 waitFor 会让缺失退化成超时异常，不如断言信息精确）
+      const cur = await cdp.eval(`const a = Array.from(document.querySelectorAll('.nav-item[aria-current="page"]'));
+        return { n: a.length, nav: a.length ? a[0].getAttribute('data-nav') : '', active: a.length ? a[0].classList.contains('active') : false };`);
+      ok('当前页有且仅有一个 aria-current=page 且与视觉 .active 一致', cur.n === 1 && cur.nav === 'videos' && cur.active === true, JSON.stringify(cur));
     }
 
     group('转义汇点契约（XSS：共享字符串汇点必须转义）');
