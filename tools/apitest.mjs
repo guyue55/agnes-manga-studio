@@ -1048,6 +1048,23 @@ group('级联删除');
   eq('分镜已清空', left.data.length, 0);
 }
 
+group('级联删除 · 查询参数形式');
+{
+  // 回归：handler 只读 body.cascade，导致 `DELETE /api/projects/:id?cascade=1` 被**静默忽略** ——
+  // 调用方以为级联删干净了，实际留下一堆孤儿分镜/素材（测试清理与脚本最常踩这个坑）。
+  // 两种形式都必须生效：body 形式是 UI 在用的，query 形式是脚本/测试在用的。
+  const p = await api('POST', '/api/projects', { name: '查询参数级联剧' });
+  const pid = p.data.id;
+  await api('POST', '/api/storyboards', { project_id: pid, episode_number: 1, shot_number: 1, video_prompt: 'x' });
+  await api('POST', '/api/images', { project_id: pid, name: '查询参数级联图', url: '/assets/none.png' });
+  const r = await fetch(`${BASE}/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+  const d = await r.json();
+  eq('query 形式删除项目 200', r.status, 200);
+  ok('query 形式的 cascade 真的级联（removed ≥ 2）', d.removed >= 2, `removed=${d.removed}`);
+  eq('分镜确实被清空', (await api('GET', `/api/storyboards?project_id=${pid}`)).data.length, 0);
+  eq('素材确实被清空', (await api('GET', `/api/images?project_id=${pid}`)).data.length, 0);
+}
+
 // ── 写失败上报契约（数据完整性：保存失败必须让用户看得见） ──
 group('写失败上报');
 {
