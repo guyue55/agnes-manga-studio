@@ -23,7 +23,7 @@ export default async function projects(container, params) {
   container.querySelector('#refresh').onclick = () => load();
 
   async function load() {
-    const r = await api.projects();
+    const r = await api.projects({ withCounts: true });
     const el = container.querySelector('#list');
     if (!r.ok) { el.innerHTML = `<div class="note red">${esc(r.error)}</div>`; return; }
     const list = r.data || [];
@@ -33,16 +33,30 @@ export default async function projects(container, params) {
       if (nb) nb.onclick = () => openForm(null);
       return;
     }
-    // 顺带统计每个项目的素材数
-    const [sbs, imgs, vids] = await Promise.all([api.storyboards(), api.images(), api.videos()]);
-    const countBy = (arr, key) => {
-      const m = {};
-      (arr || []).forEach((x) => { if (x.project_id) m[x.project_id] = (m[x.project_id] || 0) + 1; });
-      return m;
-    };
-    const sbC = countBy(sbs.ok ? sbs.data : [], 'project_id');
-    const imC = countBy(imgs.ok ? imgs.data : [], 'project_id');
-    const vdC = countBy(vids.ok ? vids.data : [], 'project_id');
+    /**
+     * R29：计数优先用服务端聚合（`?with_counts=1`），拿不到再退回"并发拉三个全量列表"。
+     *
+     * 为什么留兼容分支而不是一刀切：这三个列表里每条都带着长提示词、URL、原始响应，
+     * 素材一多，项目页为了显示三个整数要传几 MB；但万一服务端是旧版（或参数被中间层吃掉），
+     * 页面不能因此不显示计数——退化到旧路径只是慢，不会错。
+     */
+    // 变更须知：计数优先用服务端聚合，但**必须**保留下面这条退回三拉的兼容分支——
+    // 服务端没给 counts 时页面只是慢，不能因此不显示计数。
+    let sbC = {}; let imC = {}; let vdC = {};
+    const countsFromServer = (r.data || []).every((p) => p && p.counts);
+    if (countsFromServer) {
+      for (const p of r.data) { sbC[p.id] = p.counts.storyboards; imC[p.id] = p.counts.image_assets; vdC[p.id] = p.counts.video_assets; }
+    } else {
+      const [sbs, imgs, vids] = await Promise.all([api.storyboards(), api.images(), api.videos()]);
+      const countBy = (arr) => {
+        const m = {};
+        (arr || []).forEach((x) => { if (x.project_id) m[x.project_id] = (m[x.project_id] || 0) + 1; });
+        return m;
+      };
+      sbC = countBy(sbs.ok ? sbs.data : []);
+      imC = countBy(imgs.ok ? imgs.data : []);
+      vdC = countBy(vids.ok ? vids.data : []);
+    }
 
     el.innerHTML = `<div class="grid g3">${list.map((p) => `
       <div class="proj-card" data-id="${esc(p.id)}">

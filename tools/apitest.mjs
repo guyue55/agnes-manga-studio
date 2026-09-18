@@ -46,6 +46,7 @@ let lastImageCreate = null; // B4.1：验证画风只在使用点注入、且注
 let chatFormats = [];
 // T5b 事故路径控制面：query 返回的下载地址可切换；deny 端点带 Key 命中次数必须恒 0
 let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0;
+let videoCreateHits = 0; // 批 7：幂等断言要能证明"复用时确实没向上游下单"，光看响应形状证明不了
 let imagesDelayMs = 0; // 批量取消契约：把出图放慢，稳定制造「运行中」窗口（测试专用）
 let badJsonUpstream = false; // R10：让上游回 200 + 非 JSON（真实世界里的"网关返回 HTML 错误页"） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
@@ -146,6 +147,7 @@ const mock = http.createServer((req, res) => {
       });
     }
     if (u.pathname === '/v1/videos') {
+      videoCreateHits++;
       try { lastVideoCreate = JSON.parse(body); } catch { lastVideoCreate = { bad_json: body }; }
       if (lastVideoCreate.model === 'mock-embed-err') return send(200, { error: { message: 'embedded boom in 200' } });
       if (lastVideoCreate.model === 'mock-slow') { setTimeout(() => { try { send(200, { id: 'vid_slow_1', status: 'queued' }); } catch { /* 客户端已断开 */ } }, 11500); return; }
@@ -498,6 +500,66 @@ group('视频任务');
     const resp = await fetch(`${BASE}/assets/videos/${name}`);
     eq('视频可静态访问', resp.status, 200);
   }
+}
+
+// ── 批 7：R25 提交幂等 / R26 钳制回报 / R27 费用落库 / R29 服务端计数 ──
+group('提交幂等与计费留痕（批 7）');
+{
+  // R25：同一个 client_token 在窗口内重复提交，只能向上游下一单
+  const before = lastVideoCreate;
+  const tok = `tok_${Date.now().toString(36)}_idem`;
+  const body = { prompt: 'idempotency probe', project_id: PROJECT_ID, mode: 'text_to_video', num_frames: 121, frame_rate: 24, client_token: tok };
+  const a1 = await api('POST', '/api/videos', body);
+  eq('带 token 首次提交成功', a1.data.ok, true);
+  eq('首次不是去重命中', a1.data.deduped, false);
+  ok('首次确实打到了上游', lastVideoCreate && lastVideoCreate.prompt === 'idempotency probe');
+  eq('token 落库（便于事后核对同一次意图被提了几遍）', a1.data.asset.client_token, tok);
+
+  const sentAfterFirst = videoCreateHits;
+  const a2 = await api('POST', '/api/videos', body);
+  eq('重复提交仍返回 200（不是报错，而是复用）', a2.status, 200);
+  eq('重复提交命中幂等', a2.data.deduped, true);
+  eq('复用同一条记录（没有新建 asset）', a2.data.asset.id, a1.data.asset.id);
+  eq('复用时不向上游下单（这才是防重复计费的关键）', videoCreateHits, sentAfterFirst);
+
+  // 不同 token = 另一次付费意图，必须放行（否则用户"就是想再来一条"会被吞掉）
+  const a3 = await api('POST', '/api/videos', { ...body, client_token: `${tok}_2` });
+  eq('换 token 视为新意图', a3.data.deduped, false);
+  ok('换 token 会真的下单', a3.data.asset.id !== a1.data.asset.id && videoCreateHits > sentAfterFirst, `hits=${videoCreateHits}`);
+
+  // 不带 token 的老客户端行为不变（幂等是可选增强，不是新门槛）
+  const a4 = await api('POST', '/api/videos', { prompt: 'no token probe', project_id: PROJECT_ID, mode: 'text_to_video' });
+  eq('不带 token 仍可提交', a4.data.ok, true);
+  eq('不带 token 时落库为 null（而不是空串）', a4.data.asset.client_token, null);
+
+  // R26：钳制必须回报，不能静默
+  const c1 = await api('POST', '/api/videos', { prompt: 'clamp probe', project_id: PROJECT_ID, mode: 'text_to_video', num_frames: 600, frame_rate: 24 });
+  eq('超上限帧数被夹到 441', c1.data.asset.num_frames, 441);
+  ok('夹了就要回报（否则用户按 25 秒预期等一个 18 秒的片子）',
+    Array.isArray(c1.data.clamps) && c1.data.clamps.length === 1
+    && c1.data.clamps[0].field === 'num_frames' && c1.data.clamps[0].requested === 600 && c1.data.clamps[0].used === 441,
+    JSON.stringify(c1.data.clamps));
+  const c2 = await api('POST', '/api/videos', { prompt: 'no clamp probe', project_id: PROJECT_ID, mode: 'text_to_video', num_frames: 121, frame_rate: 24 });
+  eq('没夹就返回空数组（不虚报）', (c2.data.clamps || []).length, 0);
+
+  // R27：费用字段——mock 不返回费用时必须落 null（不能兜成 0）
+  eq('上游没给费用 → cost_credits 为 null（不是 0，0 会被读成免费）', c1.data.asset.cost_credits, null);
+  eq('上游没给费用 → cost_unit 为 null', c1.data.asset.cost_unit, null);
+
+  // R29：服务端聚合计数
+  const plain = await api('GET', '/api/projects');
+  ok('不带参数时响应形状不变（裸数组、无 counts 字段）',
+    Array.isArray(plain.data) && plain.data.every((p) => !('counts' in p)));
+  const counted = await api('GET', '/api/projects?with_counts=1');
+  ok('带 with_counts=1 时每个项目都有 counts', Array.isArray(counted.data) && counted.data.every((p) => p.counts));
+  const target = counted.data.find((p) => p.id === PROJECT_ID);
+  const realSb = (await api('GET', `/api/storyboards?project_id=${PROJECT_ID}`)).data.length;
+  eq('counts.storyboards 与真实分镜数一致', target.counts.storyboards, realSb);
+  const realVid = (await api('GET', `/api/videos?project_id=${PROJECT_ID}`)).data.length;
+  eq('counts.video_assets 与真实视频数一致', target.counts.video_assets, realVid);
+  const noProj = counted.data.find((p) => p.id !== PROJECT_ID);
+  ok('无素材的项目计数为 0（不是缺字段）',
+    !noProj || (noProj.counts && noProj.counts.storyboards >= 0 && noProj.counts.image_assets >= 0));
 }
 
 // ── 8.5 Agnes Video 2.5 新协议适配（真实事故回归：旧字段被 400 拒绝） ──

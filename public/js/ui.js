@@ -381,15 +381,45 @@ export function imgWithFallback(url, o = {}) {
 
 /** D-1/A-1：加载失败专用块——红字原因 + 重试钮（调用方负责绑定 [data-retry]）。
  *  杜绝"永久 spinner"和"API 故障谎报空态"两类伪装。 */
-export function errBox(text = '加载失败', hint = '本地服务可能未启动或正在重启', trace = '') {
+/**
+ * 按错误类型给出**不同的下一步出口**（R28）。
+ *
+ * 为什么不能只有一个"重试加载"：`no_api_key` 重试一万次也还是没 Key，用户真正要做的是
+ * 去设置页填一个；内容审核失败重试同样会再被拒，要的是换个措辞。把"重试"当成万能出口，
+ * 用户就只能在原地打转——而这正是竞品把 `errorKind` 分成 8 类并各配文案的原因。
+ *
+ * 纪律：出口只是**补充**，原文与追踪码一律保留（见 consts.js 的 ERROR_HINTS 注释）。
+ * 未识别的类型保持原样（只有"重试加载"），不猜。
+ */
+// 变更须知：出口表只**补充**下一步动作，绝不替换后端原文与追踪码；
+// 未识别的 errorType 保持原样（只有"重试加载"），不猜分类。
+const ERR_OUTLETS = {
+  no_api_key: { label: '去设置填 API Key', go: '#/settings?sec=api' },
+  invalid_api_key: { label: '去设置重新填 Key', go: '#/settings?sec=api' },
+  test_failed: { label: '去设置检查 Key 与地址', go: '#/settings?sec=api' },
+  model_fetch_failed: { label: '去设置手动填模型名', go: '#/settings?sec=model' },
+  network_error: { label: '去设置检查 API 地址', go: '#/settings?sec=api' },
+  content_audit: { label: '换个措辞再试', retry: true },
+  quota: { label: '去设置换模型', go: '#/settings?sec=model' },
+  auth: { label: '去设置重新填 Key', go: '#/settings?sec=api' },
+};
+
+/** 取某个 errorType 对应的出口（errBox 与页面内的诊断面板共用同一张表，避免两处各写一份） */
+export function errorOutlet(errorType) { return ERR_OUTLETS[errorType] || null; }
+
+export function errBox(text = '加载失败', hint = '本地服务可能未启动或正在重启', trace = '', opts = {}) {
   // R10：带上失败追踪码并说明它有什么用——否则用户看到一个随机串只会更困惑。
   // 码同时已写进服务端「运行日志」，这是"用户截图 → 开发者定位"之间唯一的桥。
   const code = trace
     ? `<div style="margin-top:8px;font-size:12px;color:var(--text-3)">报错码 <b class="mono">${esc(trace)}</b> · 可在「设置 → 运行日志」中按此码搜索</div>`
     : '';
+  const outlet = ERR_OUTLETS[opts.errorType];
+  const extra = outlet && outlet.go
+    ? `<a class="btn btn-sm" href="${outlet.go}" style="margin-left:8px">${esc(outlet.label)}</a>`
+    : '';
   return `<div class="card" style="text-align:center;padding:36px 20px">
     <div class="note red" style="display:inline-block;text-align:left;max-width:560px">${esc(text)}<br>${esc(hint)}${code}</div>
-    <div style="margin-top:14px"><button class="btn btn-sm" data-retry>重试加载</button></div>
+    <div style="margin-top:14px"><button class="btn btn-sm" data-retry>重试加载</button>${extra}</div>
   </div>`;
 }
 

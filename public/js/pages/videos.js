@@ -8,8 +8,8 @@ import {
   IMAGE_ROLES, statusBadge, relTime, modelChoices, sizeForAspect,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, skeleton, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback } from '../ui.js';
-import { head, projectPicker } from './helpers.js';
+import { modal, toast, empty, spinner, skeleton, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback, errorOutlet } from '../ui.js';
+import { head, projectPicker, makeTokenStore } from './helpers.js';
 import { state, navigate, onEvent } from '../app.js';
 
 export default async function videos(container, params) {
@@ -18,6 +18,9 @@ export default async function videos(container, params) {
   const res0 = (() => { const v0 = sizeForAspect(aspectOf(), 'video'); const i = VIDEO_RESOLUTIONS.findIndex((r) => r.w === v0.w && r.h === v0.h); return i < 0 ? 0 : i; })();
   let mode = 't2v';
   let submitting = false;
+  // R25：幂等键。scope 固定为 'single'——同一时刻只可能有一次单条提交意图；
+  // 参数指纹由 payload 计算，重试复用、成功作废（见 makeTokenStore 的注释）。
+  const tokenFor = makeTokenStore();
   let recent = [];
   let images = [];
 
@@ -308,6 +311,9 @@ export default async function videos(container, params) {
       const btn = container.querySelector('#submit');
       setBusy(btn, true, '提交中（图生视频可能 1-2 分钟）');
 
+      // 参数指纹：payload 里已含 prompt/尺寸/帧数/参考图，改任何一项都会换新 token
+      payload.client_token = tokenFor('single', JSON.stringify(payload));
+
       let r;
       try {
         r = await api.createVideo(payload);
@@ -316,8 +322,14 @@ export default async function videos(container, params) {
         setBusy(btn, false);
       }
 
-      if (!r.ok) { toast.err(r.error); showDiag(null, r.error); return; }
+      if (!r.ok) { toast.err(r.error); showDiag({ ok: false, errorType: r.errorType }, r.error); return; }
       const d = r.data;
+      tokenFor.clear('single'); // 提交成功 = 这次意图完成，下一次同样的参数应当是一条新任务
+      if (d.deduped) toast.warn('这条提交与 10 分钟内的记录重复，已复用既有任务（未重复计费）', 6000);
+      if (Array.isArray(d.clamps) && d.clamps.length) {
+        // R26：参数被服务端夹过就说清实际提交的是什么，别让用户按自己填的数字去预期成片
+        toast.warn(`参数超出模型范围，实际按 ${d.clamps.map((c) => `${c.field}=${c.used}`).join('、')} 提交`, 7000);
+      }
       showDiag(d, null);
       loadRecent();
     } finally {
@@ -359,6 +371,10 @@ export default async function videos(container, params) {
             <div style="font-size:11.5px;font-family:var(--mono);color:var(--ok);word-break:break-all">${esc(d.asset.agnes_video_id || '（未拿到，需补录）')}</div>
           </div>` : ''}
         ${error ? `<div class="note red" style="margin-top:12px">${esc(error)}</div>` : ''}
+        ${error && errorOutlet(d?.errorType) ? `
+          <div style="margin-top:10px">
+            <a class="btn btn-sm" href="${errorOutlet(d.errorType).go}">${icon('arrowRight', 13)}${esc(errorOutlet(d.errorType).label)}</a>
+          </div>` : ''}
         ${ok && d.timed_out ? `
           <div class="note orange" style="margin-top:12px">
             请求已送到 Agnes，但 ${Math.round((Number(state.settings.request_timeout_ms) || 150000) / 1000)} 秒内没拿到任务 ID。

@@ -58,7 +58,7 @@ export default async function assets(container, params) {
     const bad = [i, v, s].find((r) => !r.ok); // D-1：失败≠空——红字+重试，不再谎报"还没有素材"
     if (bad) {
       const el = container.querySelector('#grid');
-      el.innerHTML = errBox(`素材加载失败：${bad.error || '网络错误'}`, undefined, bad.trace);
+      el.innerHTML = errBox(`素材加载失败：${bad.error || '网络错误'}`, undefined, bad.trace, { errorType: bad.errorType });
       el.querySelector('[data-retry]').onclick = load;
       return;
     }

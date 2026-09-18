@@ -5,11 +5,12 @@
  */
 import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
+  effectiveVideoSeconds, VIDEO_DURATION_RANGE,
   CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
-import { head, projectPicker, renderBatchBar } from './helpers.js';
+import { head, projectPicker, renderBatchBar, makeTokenStore } from './helpers.js';
 import { charCount, limitState, FIELD_SOFT_LIMIT } from '../textstats.js';
 import { state, onEvent, syncViewParams, loadCharacters } from '../app.js';
 
@@ -580,7 +581,7 @@ ${text}`,
     const items = shots.map((s) => {
       const imgUrl = videoImageOf(s);
       if (!imgUrl && s.linked_image_id) downgraded++;
-      return {
+      const body = {
         project_id: projectId,
         storyboard_id: s.id,
         mode: imgUrl ? 'image_to_video' : 'text_to_video',
@@ -593,16 +594,40 @@ ${text}`,
         key: s.id,
         ...sizeForAspect(aspectOf(), 'video'),
       };
+      // R25：每镜一个幂等键（scope 用镜头 id）。参数没变的重提会被服务端认出来——
+      // 批量视频最典型的双计费场景就是"点了没反应，又点了一次"。
+      body.client_token = batchTokenFor(s.id, JSON.stringify(body));
+      return body;
     });
     if (downgraded) {
       toast.warn(`${downgraded} 个镜头的分镜图是本地文件，Agnes 无法抓取（需公网 URL），这些镜头已改用文生视频。`, 6500);
+    }
+    // R26：前置时长校验。视频是提交即计费、不可撤销的，等扣完费再告诉用户"你要的 30 秒
+    // 实际只有 18 秒"是最差的一种惊喜。这里在**花钱之前**把偏差列清楚，让他自己决定。
+    const drifted = shots.map((s) => {
+      const want = Number(s.duration_seconds);
+      const eff = effectiveVideoSeconds(want);
+      return Number.isFinite(want) && want > 0 && Math.abs(eff - want) > 0.4 ? { shot: s.shot_number, want, eff } : null;
+    }).filter(Boolean);
+    if (drifted.length) {
+      const lines = drifted.slice(0, 6).map((d) => `镜头 #${d.shot}：${d.want} 秒 → ${d.eff.toFixed(2)} 秒`).join('；');
+      const more = drifted.length > 6 ? `……等 ${drifted.length} 个镜头` : '';
+      const okGo = await confirm({
+        title: '时长会被模型改写',
+        text: `模型只接受 ${VIDEO_DURATION_RANGE.minSec.toFixed(2)}–${VIDEO_DURATION_RANGE.maxSec.toFixed(2)} 秒且按 8n+1 帧量化，以下镜头将按实际值提交：<br><br>${esc(lines)}${esc(more)}<br><br>想改的话先去分镜编辑里调时长；继续则按上面这些实际值计费。`,
+        okText: '按实际值继续',
+      });
+      if (!okGo) return;
     }
     submitBusy = true;
     try {
       if (!(await costConfirm({ what: '视频', count: items.length, note: '视频按条计费且单价高于图片，确认镜头数与提示词后再提交。' }))) return;
       const r = await api.batchVideos({ items, concurrency: 1 });
-      if (r.ok) { localStorage.setItem(BKEY, r.data.jobId); toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`); }
-      else toast.err(r.error);
+      if (r.ok) {
+        for (const it of items) batchTokenFor.clear(it.key); // R25：这批意图已完成，token 作废
+        localStorage.setItem(BKEY, r.data.jobId);
+        toast.ok(`已提交 ${r.data.total} 个视频任务（${items.some((i) => i.mode === 'image_to_video') ? '含图生视频' : '文生视频'}）`);
+      } else toast.err(r.error);
     } finally {
       submitBusy = false;
     }
@@ -610,6 +635,9 @@ ${text}`,
 
   // 行内单发入口的在途集合：按镜头 id 去重（保留"多行可同时生成"的能力，
   // 只挡同一行连点——付费确认期间再点不得叠出第二层弹窗）。
+  // R25：批量视频的幂等键仓库（scope = 镜头 id）。与单条提交同一套规则：
+  // 参数没变的重试复用、成功后作废。
+  const batchTokenFor = makeTokenStore();
   const rowInflight = new Set();
   const variationSeen = new Map(); // 分镜 id → 已出图次数（R21 变体轮换用）
 
@@ -717,7 +745,8 @@ ${text}`,
           <div class="field"><label for="s-dlg">台词</label><textarea class="textarea" id="s-dlg" rows="2">${esc(s.dialogue)}</textarea></div>
           <div class="field"><label for="s-nar">旁白</label><textarea class="textarea" id="s-nar" rows="2">${esc(s.narration)}</textarea></div>
           <div class="field"><label for="s-sfx">音效</label><input class="input" id="s-sfx" value="${esc(s.sound_effect)}" /></div>
-          <div class="field"><label for="s-dur">时长（秒）</label><input class="input" id="s-dur" type="number" value="${esc(s.duration_seconds)}" /></div>
+          <div class="field"><label for="s-dur">时长（秒）</label><input class="input" id="s-dur" type="number" min="${VIDEO_DURATION_RANGE.minSec.toFixed(2)}" max="${VIDEO_DURATION_RANGE.maxSec.toFixed(2)}" step="0.5" value="${esc(s.duration_seconds)}" />
+            <div class="hint-xs" id="s-dur-hint"></div></div>
           <div class="field" style="grid-column:1/-1"><label for="s-ip">图片提示词</label><textarea class="textarea mono" id="s-ip" rows="3">${esc(s.image_prompt)}</textarea></div>
           <div class="field" style="grid-column:1/-1"><label for="s-vp">视频提示词</label><textarea class="textarea mono" id="s-vp" rows="3">${esc(s.video_prompt)}</textarea></div>
           <div class="field" style="grid-column:1/-1"><label for="s-np">负面提示词</label><textarea class="textarea mono" id="s-np" rows="2">${esc(s.negative_prompt)}</textarea></div>
@@ -741,6 +770,21 @@ ${text}`,
         };
         camSel.onchange = syncCamHint;
         syncCamHint();
+        // R26：时长的"实际提交值"必须写在用户填的地方。secondsToFrames 会量化到 8n+1 帧
+        // 并夹进模型区间——不说明的话，用户填 30 秒会一直等一个 18 秒的片子。
+        const durInp = root.querySelector('#s-dur');
+        const durHint = root.querySelector('#s-dur-hint');
+        const syncDurHint = () => {
+          const raw = Number(durInp.value);
+          const eff = effectiveVideoSeconds(raw);
+          const lo = VIDEO_DURATION_RANGE.minSec; const hi = VIDEO_DURATION_RANGE.maxSec;
+          if (!Number.isFinite(raw) || raw <= 0) { durHint.textContent = `留空或非正数按 5 秒算（实际提交 ${effectiveVideoSeconds(5).toFixed(2)} 秒）`; return; }
+          if (raw > hi) durHint.innerHTML = `<span style="color:var(--warn)">超出模型上限，实际提交 ${eff.toFixed(2)} 秒（最多 ${hi.toFixed(2)} 秒）</span>`;
+          else if (raw < lo) durHint.innerHTML = `<span style="color:var(--warn)">低于模型下限，实际提交 ${eff.toFixed(2)} 秒（最少 ${lo.toFixed(2)} 秒）</span>`;
+          else durHint.textContent = `实际提交 ${eff.toFixed(2)} 秒（模型按 8n+1 帧量化，与填写值略有出入是正常的）`;
+        };
+        durInp.oninput = syncDurHint;
+        syncDurHint();
         // R14：角色芯片切换。用 Set 存选中态而不是读 DOM class——保存时不必再解析一遍 DOM
         root.querySelectorAll('#s-char-pick [data-char]').forEach((b) => {
           b.onclick = () => {

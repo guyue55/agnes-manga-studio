@@ -305,6 +305,26 @@ group('批量队列');
   ok('取消后不留 pending', !j7.items.some((x) => x.state === 'pending'));
 }
 
+// ── 6.5 R27 费用提取（null ≠ 0）──────────────────────────────
+group('费用提取（R27）');
+{
+  eq('顶层 credits 直接取', agnes.extractCost({ status: 'completed', credits: 12 }).cost_credits, 12);
+  eq('credits 的单位标为 credits', agnes.extractCost({ credits: 12 }).cost_unit, 'credits');
+  eq('嵌套 usage.points 也认', agnes.extractCost({ usage: { points: 3 } }).cost_credits, 3);
+  eq('嵌套 data.cost 落到金额字段', agnes.extractCost({ data: { cost: 0.25 } }).cost_amount, 0.25);
+  eq('金额单位标为 currency', agnes.extractCost({ data: { cost: 0.25 } }).cost_unit, 'currency');
+  eq('上游明确给 0 = 免费（不是未知）', agnes.extractCost({ amount: 0 }).cost_amount, 0);
+  eq('上游没给 → null（不能兜成 0，0 会被读成免费）', agnes.extractCost({ status: 'completed' }).cost_credits, null);
+  eq('没给时 cost_unit 也是 null', agnes.extractCost({}).cost_unit, null);
+  eq('点数优先于金额（同一响应里两者都有时）', agnes.extractCost({ credits: 5, cost: 9.9 }).cost_credits, 5);
+  eq('非对象输入不炸', agnes.extractCost(null).cost_credits, null);
+  eq('字符串数字能认（上游常返回 "12"）', agnes.extractCost({ credits: '12' }).cost_credits, 12);
+  eq('非数字的 credits 不认（不把 NaN 当钱存）', agnes.extractCost({ credits: 'many' }).cost_credits, null);
+  const upd = agnes.buildSafeStatusUpdate({ status: 'completed', video_url: 'https://x/y.mp4', credits: 7 });
+  eq('状态更新里带上费用（轮询路径自动落库）', upd.cost_credits, 7);
+  eq('状态更新仍照常解析 video_url', upd.video_url, 'https://x/y.mp4');
+}
+
 // ── 7. 路由分发 ──────────────────────────────────────────────
 group('路由分发');
 {

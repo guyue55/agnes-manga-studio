@@ -236,6 +236,25 @@ export function secondsToFrames(sec, fps = 24) {
   const n = Math.max(10, Math.min(55, Math.round((raw - 1) / 8)));
   return 8 * n + 1;
 }
+/**
+ * R26：帧数 ↔ 秒的换算，以及模型真正支持的时长区间。
+ *
+ * 为什么要有这两个导出：`secondsToFrames` 会**量化并夹住**时长（8n+1、[81,441]），
+ * 也就是"用户填 30 秒、实际提交 18.4 秒"是**正常行为**——问题在于以前没有任何地方
+ * 告诉他这件事，他按 30 秒的预期去等成片。区间由同一个函数的量化边界反推（单源，
+ * 改了 secondsToFrames 这里跟着变，不会各写一份而漂移）。
+ */
+// 变更须知：secondsToFrames 会量化并夹住时长（8n+1、[81,441]），这是模型契约不是 bug；
+// 任何"用户填的秒数"都必须经 effectiveVideoSeconds 展示实际值，不许直接把填写值当结果用。
+export function framesToSeconds(frames, fps = 24) {
+  const f = Number(frames);
+  const r = Number(fps);
+  return Number.isFinite(f) && Number.isFinite(r) && r > 0 ? f / r : 0;
+}
+/** 分镜里写的秒数 → 实际会提交给模型的秒数 */
+export function effectiveVideoSeconds(sec, fps = 24) { return framesToSeconds(secondsToFrames(sec, fps), fps); }
+export const VIDEO_DURATION_RANGE = { minSec: framesToSeconds(81), maxSec: framesToSeconds(441) };
+
 export const IMAGE_USAGES = [
   { value: 'storyboard', label: '分镜图' },
   { value: 'character', label: '角色图' },

@@ -69,7 +69,7 @@ export default async function characters(container, params) {
     // 参考图选择器要用的候选图：只取本项目的图片，避免把别的剧的图挂上来
     const [cr, ir] = await Promise.all([api.characters(projectId), api.images(projectId)]);
     if (!cr.ok) {
-      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`角色加载失败：${cr.error || '网络错误'}`, undefined, cr.trace)}</div>`;
+      el.innerHTML = `<div class="card" style="grid-column:1/-1">${errBox(`角色加载失败：${cr.error || '网络错误'}`, undefined, cr.trace, { errorType: cr.errorType })}</div>`;
       const rb = el.querySelector('[data-retry]');
       if (rb) rb.onclick = () => load();
       return;

@@ -1345,6 +1345,200 @@ try {
         JSON.stringify({ ip: restored.image_prompt === orig.image_prompt, vp: restored.video_prompt === orig.video_prompt }));
     }
 
+    group('计费安全与数据效率契约（批 7：R25 幂等 / R26 时长 / R27 费用 / R28 出口 / R29 计数）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+
+      // ── R25 token 复用规则（前端逻辑核心：重试复用、参数变化换新、成功作废）
+      const tok = await cdp.eval(`
+        const m = await import('/js/pages/helpers.js');
+        const t = m.makeTokenStore();
+        const a = t('s', 'k1');
+        const b = t('s', 'k1');   // 同一参数指纹 → 必须复用
+        const c = t('s', 'k2');   // 参数变了 → 必须换新
+        const d = t('other', 'k1'); // 不同 scope 互不干扰
+        t.clear('s');
+        const e = t('s', 'k1');   // 作废后 → 新 token
+        return { same: a === b, changed: a !== c, scoped: a !== d, cleared: a !== e, looksUuid: /^[0-9a-f-]{36}$/i.test(a) || a.length > 8 };`);
+      ok('R25 参数没变的重试复用同一个幂等键（否则服务端查重形同虚设）', tok.same === true, JSON.stringify(tok));
+      ok('R25 参数一变立刻换新键（"我就是想再来一条"不能被误判成重复）', tok.changed === true, JSON.stringify(tok));
+      ok('R25 不同 scope 互不干扰（批量按镜头 id 分桶）', tok.scoped === true, JSON.stringify(tok));
+      ok('R25 作废后换新键（提交成功 = 这次意图完成）', tok.cleared === true, JSON.stringify(tok));
+      ok('R25 幂等键形状可用（UUID 或足够长的随机串）', tok.looksUuid === true, JSON.stringify(tok));
+
+      // ── R25/R28 端到端：真实页面提交确实带 token，且重试复用；no_api_key 时给"去设置"出口
+      // 付费确认的"当天免打扰"键：**先存原值再改**。这里踩过一次——第一版直接在收尾 removeItem，
+      // 结果后面「失败恢复契约」分组靠这个键跳过付费确认弹窗，键没了就永远等不到 busy 态。
+      // 清理的正确含义是"还原成原样"，不是"删掉"。
+      await cdp.eval(`
+        window.__prevSkip = localStorage.getItem('agnes.cost.skipUntil');
+        localStorage.setItem('agnes.cost.skipUntil', String(Date.now() + 3600e3));
+        return true;`);
+      await cdp.eval(`location.hash = '#/videos?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#f-prompt') && !!document.querySelector('#submit');`), '视频表单就绪', 10000);
+      await cdp.eval(`
+        window.__cap = [];
+        window.__mode = 'fail';
+        window.__fetchOrig = window.__fetchOrig || window.fetch; // 留底，分组结束必须还原
+        const orig = window.fetch;
+        window.fetch = async (u, o) => {
+          if (String(u).includes('/api/videos') && o && o.method === 'POST') {
+            window.__cap.push(o.body);
+            if (window.__mode === 'fail') {
+              return new Response(JSON.stringify({ ok: false, error: '本地未配置 API Key', errorType: 'no_api_key' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+            return new Response(JSON.stringify({ ok: true, deduped: false, clamps: [], asset: { id: 'stub_asset', agnes_video_id: 'vid_stub' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+          return orig(u, o);
+        };
+        return true;`);
+      const setPrompt = `
+        const ta = document.querySelector('#f-prompt');
+        ta.value = 'e2e idempotency probe';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;`;
+      await cdp.eval(setPrompt);
+      await cdp.eval(`document.querySelector('#submit').click(); return true;`);
+      await waitFor(() => cdp.eval(`return window.__cap.length >= 1;`), '第一次提交被捕获', 8000);
+      await cdp.eval(setPrompt); // 表单重渲染后重新填（同一参数指纹）
+      // 关键：等按钮解锁再点。请求被捕获 ≠ 页面已处理完响应——此时按钮仍是 disabled，
+      // 浏览器会直接丢弃这次 click，表现为"偶发少一次请求"（踩过一次的 flake）。
+      await waitFor(() => cdp.eval(`const b = document.querySelector('#submit'); return !!b && !b.disabled && b.dataset.busy !== '1';`), '提交按钮解锁', 10000);
+      await cdp.eval(`document.querySelector('#submit').click(); return true;`);
+      await waitFor(() => cdp.eval(`return window.__cap.length >= 2;`), '第二次提交被捕获', 8000);
+      const caps = await cdp.eval(`return window.__cap.map((b) => { try { return JSON.parse(b); } catch { return {}; } });`);
+      ok('R25 页面提交确实带上了幂等键（不是只写在注释里）',
+        !!caps[0].client_token && caps[0].client_token.length > 8, JSON.stringify(caps[0].client_token));
+      ok('R25 失败后重试复用同一个幂等键（这正是"超时后再点一次"的双计费窗口）',
+        caps[1].client_token === caps[0].client_token, JSON.stringify([caps[0].client_token, caps[1].client_token]));
+      // R28：no_api_key 的出口必须出现，且指向设置页 API 分节
+      const outlet = await cdp.eval(`
+        const diag = document.querySelector('#diag');
+        const a = diag && diag.querySelector('a[href*="settings"]');
+        return { has: !!a, href: a ? a.getAttribute('href') : null, label: a ? a.textContent.trim() : null, raw: diag ? diag.innerText.includes('本地未配置 API Key') : false };`);
+      ok('R28 no_api_key 时给"去设置填 Key"出口（重试一万次也还是没 Key）',
+        outlet.has && /sec=api/.test(outlet.href || '') && /API Key/.test(outlet.label || ''), JSON.stringify(outlet));
+      ok('R28 出口只是补充：后端原文仍然完整显示', outlet.raw === true, JSON.stringify(outlet));
+      // 成功路径：token 必须作废（下一次同样的参数应当是一条新任务）
+      await cdp.eval(`window.__mode = 'ok'; return true;`);
+      await cdp.eval(setPrompt);
+      await waitFor(() => cdp.eval(`const b = document.querySelector('#submit'); return !!b && !b.disabled && b.dataset.busy !== '1';`), '提交按钮解锁（成功前）', 10000);
+      await cdp.eval(`document.querySelector('#submit').click(); return true;`);
+      await waitFor(() => cdp.eval(`return window.__cap.length >= 3;`), '第三次提交被捕获', 8000);
+      await cdp.eval(setPrompt);
+      await waitFor(() => cdp.eval(`const b = document.querySelector('#submit'); return !!b && !b.disabled && b.dataset.busy !== '1';`), '提交按钮解锁（第四次前）', 10000);
+      await cdp.eval(`document.querySelector('#submit').click(); return true;`);
+      await waitFor(() => cdp.eval(`return window.__cap.length >= 4;`), '第四次提交被捕获', 8000);
+      const caps2 = await cdp.eval(`return window.__cap.map((b) => { try { return JSON.parse(b); } catch { return {}; } });`);
+      ok('R25 提交成功后 token 作废（同参数再提交 = 新一轮付费意图，不被吞掉）',
+        caps2[3].client_token !== caps2[2].client_token, JSON.stringify([caps2[2].client_token, caps2[3].client_token]));
+      await cdp.eval(`
+        if (window.__prevSkip == null) localStorage.removeItem('agnes.cost.skipUntil');
+        else localStorage.setItem('agnes.cost.skipUntil', window.__prevSkip);
+        delete window.__prevSkip;
+        return true;`);
+
+      // ── R26 时长前置说明 + 批量前置拦截
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`return document.querySelectorAll('#table tbody tr').length > 0;`), '分镜表就绪', 12000);
+      const firstId = await cdp.eval(`return document.querySelector('#table tbody tr [data-edit]').getAttribute('data-edit');`);
+      await cdp.eval(`document.querySelector('[data-edit="${firstId}"]').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#s-dur');`), '分镜弹窗就绪', 8000);
+      const dur = await cdp.eval(`
+        const i = document.querySelector('#s-dur');
+        i.value = '30';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+        return { hint: document.querySelector('#s-dur-hint').innerText, min: i.getAttribute('min'), max: i.getAttribute('max') };`);
+      ok('R26 时长超上限时当场说明实际提交值（不是等扣完费才让用户发现）',
+        /超出模型上限/.test(dur.hint) && /18\.3/.test(dur.hint), JSON.stringify(dur));
+      ok('R26 输入框带 min/max（浏览器层面先挡一道）',
+        Number(dur.min) > 3 && Number(dur.max) > 18, JSON.stringify({ min: dur.min, max: dur.max }));
+      const durInRange = await cdp.eval(`
+        const i = document.querySelector('#s-dur');
+        i.value = '5';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+        return document.querySelector('#s-dur-hint').innerText;`);
+      ok('R26 合法时长也给实际值（模型按 8n+1 帧量化，填写值与提交值本就略有出入）',
+        /实际提交 5\.0/.test(durInRange), JSON.stringify(durInRange));
+      await cdp.eval(`document.querySelector('.modal [data-yes]')?.click(); document.querySelector('.modal [data-no]')?.click(); return true;`);
+      await sleep(400);
+      // 把这一镜改成 30 秒并保存，然后点批量视频：必须先弹出时长偏差确认（在计费确认之前）
+      await cdp.eval(`document.querySelector('[data-edit="${firstId}"]').click(); return true;`);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#s-dur');`), '分镜弹窗再次就绪', 8000);
+      await cdp.eval(`
+        const i = document.querySelector('#s-dur'); i.value = '30'; i.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('.modal [data-yes]')?.click();
+        return true;`);
+      await sleep(900);
+      await cdp.eval(`const sa = document.querySelector('#sel-all'); sa.checked = true; sa.dispatchEvent(new Event('change')); return true;`);
+      await cdp.eval(`document.querySelector('#batch-vid').click(); return true;`);
+      const pre = await waitFor(() => cdp.eval(`const m = document.querySelector('.modal'); return m && /时长会被模型改写/.test(m.innerText) ? m.innerText : '';`), '时长前置确认', 8000).catch(() => '');
+      ok('R26 批量提交前先列清时长偏差（花钱之前给用户改的机会）',
+        /时长会被模型改写/.test(pre) && /镜头 #/.test(pre) && /按实际值继续/.test(pre), JSON.stringify(String(pre).slice(0, 160)));
+      await cdp.eval(`document.querySelector('.modal [data-no]')?.click(); return true;`);
+      await sleep(400);
+      // 复原这一镜的时长，不给后续分组留污染
+      await J(`/api/storyboards/${firstId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration_seconds: 5 }) });
+
+      // ── R27 费用展示：null 不显示、有值才显示
+      // 费用字段**刻意**不在 PUT 白名单里：它是上游回报的事实，不该由界面改写
+      // （否则"我的账目"可以随便被改成 0）。测试从备份恢复通路（/api/import）灌带费用的记录。
+      const probeVid = (id, name, credits) => J('/api/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'merge', data: { collections: { video_assets: [{
+          id, project_id: pid, name, status: 'completed', local_status: 'completed',
+          video_prompt: name, model_name: 'probe-model', generation_mode: 'text_to_video',
+          num_frames: 121, frame_rate: 24, progress: 100, cost_credits: credits, cost_unit: credits == null ? null : 'credits',
+          created_at: new Date().toISOString(),
+        }] } } }),
+      });
+      // 探针文案必须互不为子串（踩过：'费用探针' 是 '无费用探针' 的子串，find 抓错了行）
+      await probeVid('probe_cost_vid', 'probe-cost-alpha', 12);
+      await probeVid('probe_nocost_vid', 'probe-cost-beta', null);
+      await cdp.eval(`location.hash = '#/tasks'; return true;`);
+      // 等**内容**而不是等骨架：任务页先渲染一排空 .task-row（skeleton），
+      // 只等元素出现会读到空 innerText（这次 flake 的真身，靠打印行文本才看见）。
+      await waitFor(() => cdp.eval(`return document.body.innerText.includes('probe-cost-alpha');`), '费用探针行就绪', 15000);
+      const cost = await cdp.eval(`
+        const rows = Array.from(document.querySelectorAll('.task-row'));
+        const w = rows.find((r) => r.innerText.includes('probe-cost-alpha'));
+        const n = rows.find((r) => r.innerText.includes('probe-cost-beta'));
+        return { withCost: w ? w.innerText.replace(/\s+/g, ' ') : null, noCost: n ? n.innerText.replace(/\s+/g, ' ') : null,
+          rowCount: rows.length, texts: rows.slice(0, 3).map((r) => r.innerText.replace(/\s+/g, ' ').slice(0, 60)) };`);
+      ok('R27 有费用时显示"消耗 N 点"（上游真实值，不是按条数估的）',
+        !!cost.withCost && /消耗 12 点/.test(cost.withCost), JSON.stringify(cost));
+      ok('R27 null ≠ 0：没有费用时一个字都不显示（显示 0 会被读成免费）',
+        !!cost.noCost && !/消耗|费用/.test(cost.noCost), JSON.stringify(cost));
+      await J('/api/videos/probe_cost_vid', { method: 'DELETE' }).catch(() => {});
+      await J('/api/videos/probe_nocost_vid', { method: 'DELETE' }).catch(() => {});
+
+      // ── R29 项目页不再拉三个全量列表
+      await cdp.eval(`
+        window.__listCalls = [];
+        window.__fetchOrig = window.__fetchOrig || window.fetch;
+        const orig = window.fetch;
+        window.fetch = async (u, o) => {
+          const s = String(u);
+          if (s.includes('/api/storyboards?') || s.endsWith('/api/storyboards') || s.includes('/api/images') || s.includes('/api/videos?')) window.__listCalls.push(s.replace(location.origin, ''));
+          return orig(u, o);
+        };
+        return true;`);
+      await cdp.eval(`location.hash = '#/projects'; return true;`);
+      await waitFor(() => cdp.eval(`return document.querySelectorAll('.proj-card').length > 0;`), '项目卡就绪', 10000);
+      await sleep(500);
+      const calls = await cdp.eval(`return window.__listCalls;`);
+      ok('R29 项目页不再为三个计数额外拉全量列表（服务端聚合代替）',
+        calls.length === 0, JSON.stringify(calls));
+      const countsOk = await cdp.eval(`return document.querySelector('.proj-card .stats')?.innerText.replace(/\s+/g, ' ') || '';`);
+      ok('R29 计数照常显示（省了传输，不是省了功能）', /\d/.test(countsOk), JSON.stringify(countsOk));
+      // 分组收尾：还原真实 fetch（后面还有分组要走真网络）+ 清掉打桩残留
+      await cdp.eval(`
+        if (window.__fetchOrig) window.fetch = window.__fetchOrig;
+        delete window.__cap; delete window.__listCalls; delete window.__mode; delete window.__fetchOrig;
+        return true;`);
+    }
+
     group('提示词资产化契约（批 5：R19 运镜 / R20 平台画幅 / R21 变体）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

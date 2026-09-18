@@ -421,6 +421,109 @@ group('ui-audit 采样选择器必须真实存在（防"死采样"）');
   ok('灵敏度对照：不存在的 class 会被检出', !known.has('definitely-not-a-class'));
 }
 
+group('批 7：计费安全与数据效率（R25–R30）');
+{
+  const routesSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+  const agnesSrc = read(path.join(ROOT, 'lib', 'agnes.js'));
+  const helperSrc = read(path.join(PUB, 'js', 'pages', 'helpers.js'));
+  const vidsSrc = read(path.join(PUB, 'js', 'pages', 'videos.js'));
+  const sbsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const uiSrc = read(path.join(PUB, 'js', 'ui.js'));
+  const projSrc = read(path.join(PUB, 'js', 'pages', 'projects.js'));
+  const apiSrc = read(path.join(PUB, 'js', 'api.js'));
+  const constsSrc = read(path.join(PUB, 'js', 'consts.js'));
+  const tasksSrc = read(path.join(PUB, 'js', 'pages', 'tasks.js'));
+
+  // ① R25 提交幂等
+  ok('R25 服务端有幂等窗口常量与说明（不是魔法数字）',
+    /const VIDEO_DEDUP_WINDOW_MS = 10 \* 60 \* 1000;/.test(routesSrc) && /幂等窗口/.test(routesSrc));
+  ok('R25 幂等只对"可能已花钱"的记录生效（submit_failed 必须放行，否则失败会被永久锁死）',
+    /a\.local_status !== 'submit_failed'/.test(routesSrc) && /client_token === clientToken/.test(routesSrc));
+  ok('R25 去重命中直接返回既有 asset 且标 deduped（不向上游下单）',
+    /timed_out: dup\.status === 'submit_timeout_unknown', deduped: true/.test(routesSrc));
+  ok('R25 正常路径也带 deduped:false（形状对称，前端不用猜字段在不在）',
+    (routesSrc.match(/deduped: false/g) || []).length >= 2);
+  ok('R25 幂等键落库且长度截断（防超长键撑爆 JSON）',
+    /client_token: clientToken \|\| null/.test(routesSrc) && /slice\(0, 80\)/.test(routesSrc));
+  ok('R25 token 复用规则写成共享工具（单源，避免两处各写一份）',
+    /export function makeTokenStore\(\)/.test(helperSrc) && /api\.clear = /.test(helperSrc));
+  ok('R25 单条提交带幂等键，且成功后才作废（重试必须复用）',
+    /payload\.client_token = tokenFor\('single', JSON\.stringify\(payload\)\)/.test(vidsSrc)
+    && /tokenFor\.clear\('single'\)/.test(vidsSrc));
+  ok('R25 批量视频每镜一个幂等键（scope = 镜头 id）',
+    /body\.client_token = batchTokenFor\(s\.id, JSON\.stringify\(body\)\)/.test(sbsSrc)
+    && /batchTokenFor\.clear\(it\.key\)/.test(sbsSrc));
+  ok('R25 命中幂等时明确告知用户（复用而不是静默吞掉）',
+    /已复用既有任务（未重复计费）/.test(vidsSrc));
+
+  // ② R26 钳制回报 + 时长前置说明
+  ok('R26 钳制结果被回报（不许静默夹参数）',
+    /const clampReport = /.test(routesSrc) && /clamps, \/\/ R26/.test(routesSrc) && /clampReport\(reqFrames, usedFrames/.test(routesSrc));
+  ok('R26 前端把"实际提交的秒数"写在时长输入框旁',
+    /effectiveVideoSeconds/.test(sbsSrc) && /超出模型上限，实际提交/.test(sbsSrc) && /s-dur-hint/.test(sbsSrc));
+  ok('R26 时长区间由 secondsToFrames 的边界反推（单源，不另写一份）',
+    /export const VIDEO_DURATION_RANGE = \{ minSec: framesToSeconds\(81\), maxSec: framesToSeconds\(441\) \};/.test(constsSrc));
+  ok('R26 批量提交前先列清时长偏差再计费（花了钱才发现被改写是最差的惊喜）',
+    /const drifted = shots\.map/.test(sbsSrc) && /时长会被模型改写/.test(sbsSrc) && /按实际值继续/.test(sbsSrc));
+  ok('R26 时长输入框有 min/max/step（浏览器层面就挡住越界输入）',
+    /min="\$\{VIDEO_DURATION_RANGE\.minSec\.toFixed\(2\)\}"/.test(sbsSrc));
+
+  // ③ R27 费用留痕
+  ok('R27 费用提取是独立纯函数（可单测，不埋在轮询里）',
+    /function extractCost\(result\)/.test(agnesSrc) && /module\.exports = \{[\s\S]*extractCost/.test(agnesSrc));
+  ok('R27 费用随状态更新自动落库（轮询路径不用改）',
+    /const updates = \{ raw_status_response: result, \.\.\.extractCost\(result\) \};/.test(agnesSrc));
+  ok('R27 创建响应里的费用也落库', /\.\.\.agnes\.extractCost\(result\)/.test(routesSrc));
+  ok('R27 失败路径写 null（不猜费用）', /cost_credits: null, cost_amount: null, cost_unit: null/.test(routesSrc));
+  ok('R27 null ≠ 0：界面只在有值时显示数字',
+    /if \(v\.cost_credits != null\)/.test(tasksSrc) && /if \(v\.cost_amount != null\)/.test(tasksSrc)
+    && /消耗 \$\{esc\(v\.cost_credits\)\} 点/.test(tasksSrc));
+  ok('R27 只扫顶层与 usage/data 两层（不递归整棵树，避免把无关数字当钱）',
+    /\[result, result\.usage, result\.data\]/.test(agnesSrc));
+
+  // ④ R28 错误出口
+  ok('R28 errBox 有分类出口表（不再是只有"重试加载"一个出口）',
+    /const ERR_OUTLETS = \{/.test(uiSrc) && /no_api_key: \{ label: '去设置填 API Key'/.test(uiSrc));
+  ok('R28 no_api_key 引导到设置页 API 分节（重试一万次也还是没 Key）',
+    /go: '#\/settings\?sec=api'/.test(uiSrc) && /errorOutlet/.test(uiSrc));
+  ok('R28 未识别类型保持原样（不猜分类，只有重试）',
+    /return ERR_OUTLETS\[errorType\] \|\| null;/.test(uiSrc));
+  ok('R28 视频诊断面板也用同一张出口表（不另写一份）',
+    /errorOutlet\(d\?\.errorType\)/.test(vidsSrc) && /showDiag\(\{ ok: false, errorType: r\.errorType \}, r\.error\)/.test(vidsSrc));
+  ok('R28 各页把 errorType 传给 errBox（不传则出口表永远匹配不到）',
+    (read(path.join(PUB, 'js', 'pages', 'tasks.js')) + read(path.join(PUB, 'js', 'pages', 'assets.js'))
+      + read(path.join(PUB, 'js', 'pages', 'characters.js')) + read(path.join(PUB, 'js', 'pages', 'settings.js'))
+    ).match(/errorType: \w+\.errorType/g).length >= 4);
+
+  // ⑤ R29 服务端计数
+  ok('R29 with_counts=1 服务端聚合（不带参数时形状不变）',
+    /str\(query\.with_counts\) !== '1'/.test(routesSrc) && /counts: counts\[p\.id\] \|\| zero\(\)/.test(routesSrc));
+  ok('R29 项目页优先用服务端计数，且保留退回三拉的兼容分支',
+    /api\.projects\(\{ withCounts: true \}\)/.test(projSrc) && /countsFromServer/.test(projSrc)
+    && /api\.storyboards\(\), api\.images\(\), api\.videos\(\)/.test(projSrc));
+  ok('R29 api.projects 支持 withCounts 开关（默认路径逐字节不变）',
+    /projects: \(opts = \{\}\) => req\('GET', opts\.withCounts \? '\/api\/projects\?with_counts=1' : '\/api\/projects'\)/.test(apiSrc));
+
+  // ⑥ R30 变更须知纪律
+  const need = [
+    ['lib/routes.js', '去重只放行'],
+    ['lib/routes.js', '不许改回静默'],
+    ['lib/agnes.js', '上游没给（未知）'],
+    ['lib/jobs.js', '按下标预填、原地改'],
+    ['public/js/pages/helpers.js', '防重复计费'],
+    ['public/js/ui.js', '只**补充**下一步动作'],
+    ['public/js/pages/projects.js', '保留下面这条退回三拉的兼容分支'],
+    ['public/js/consts.js', '量化并夹住时长'],
+  ];
+  const missing = need.filter(([f, kw]) => !read(path.join(ROOT, f)).includes(`变更须知`) || !read(path.join(ROOT, f)).includes(kw));
+  ok('R30 高风险接缝都写了单行「变更须知」（改之前先看它）', missing.length === 0,
+    missing.map(([f, kw]) => `${f}:${kw}`).join(' | ') || `${need.length} 处全部命中`);
+  const total = ['lib/routes.js', 'lib/agnes.js', 'lib/jobs.js', 'public/js/api.js', 'public/js/consts.js',
+    'public/js/ui.js', 'public/js/pages/helpers.js', 'public/js/pages/projects.js']
+    .map((f) => (read(path.join(ROOT, f)).match(/\/\/ 变更须知/g) || []).length).reduce((a, b) => a + b, 0);
+  ok('R30 变更须知数量下限（新增接缝时应同步增加）', total >= 8, String(total));
+}
+
 group('测试选择器一致性');
 {
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>

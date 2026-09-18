@@ -113,7 +113,7 @@ export default async function tasks(container, params = {}) {
     const bad = [v, t].find((r) => !r.ok); // A-1：任务页加载失败不再转圈/空列表两装
     if (bad) {
       const el = container.querySelector('#list');
-      el.innerHTML = errBox(`任务列表加载失败：${bad.error || '网络错误'}`, undefined, bad.trace);
+      el.innerHTML = errBox(`任务列表加载失败：${bad.error || '网络错误'}`, undefined, bad.trace, { errorType: bad.errorType });
       el.querySelector('[data-retry]').onclick = load;
       return;
     }
@@ -150,6 +150,21 @@ export default async function tasks(container, params = {}) {
     bind();
   }
 
+  /**
+   * R27：上游真实扣费的展示。
+   *
+   * 三条纪律：
+   * ① **null ≠ 0**：上游没给费用就是"未知"，不显示任何数字——显示 0 会被读成"免费"，
+   *    而竞品正因为 `estimatedPrice=0` 的语义模糊不得不写降级文案，我们不去继承这个歧义。
+   * ② 显示的是**上游回报的真实值**，不是我们按条数估的：估的数与账单对不上时，用户只会信任账单。
+   * ③ 单位随字段走：点数说"点"，金额按原值展示——不去猜汇率、不做换算。
+   */
+  function costLabel(v) {
+    if (v.cost_credits != null) return `<span>·</span><span title="Agnes 回报的真实消耗">消耗 ${esc(v.cost_credits)} 点</span>`;
+    if (v.cost_amount != null) return `<span>·</span><span title="Agnes 回报的真实费用">费用 ${esc(v.cost_amount)}</span>`;
+    return '';
+  }
+
   function videoRow(v) {
     const needsRefetch = REF_STATUS.has(v.status) || REF_STATUS.has(v.local_status);
     const running = ['queued', 'in_progress'].includes(v.status);
@@ -169,6 +184,7 @@ export default async function tasks(container, params = {}) {
             <span class="cjk-latin">${esc(v.num_frames)}帧 ${esc(v.frame_rate)}fps</span><span>·</span>
             <span>${esc(v.model_name)}</span>
             <span>·</span><span>${esc(relTime(v.created_at))}</span>
+            ${costLabel(v)}
           </div>
           <div class="prompt-line">${esc(v.video_prompt)}</div>
           ${v.progress > 0 && v.progress < 100 ? `

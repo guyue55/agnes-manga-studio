@@ -68,7 +68,9 @@ export const api = {
   saveSettings: (patch) => req('PUT', '/api/settings', patch),
   testSettings: (kind) => req('POST', '/api/settings/test', { kind }, { timeoutMs: TIMEOUT.gen }),
 
-  projects: () => req('GET', '/api/projects'),
+  // R29：withCounts 让服务端把三个计数一起算好，省掉项目页额外三次全量列表拉取。
+  // 不传时响应与以前完全一致（裸数组、无 counts 字段）——见 lib/routes.js 的变更须知。
+  projects: (opts = {}) => req('GET', opts.withCounts ? '/api/projects?with_counts=1' : '/api/projects'),
   createProject: (p) => req('POST', '/api/projects', p),
   updateProject: (id, p) => req('PUT', `/api/projects/${id}`, p),
   deleteProject: (id, cascade) => req('DELETE', `/api/projects/${id}`, { cascade }),

@@ -86,3 +86,31 @@ export function textareaField(label, id, value = '', placeholder = '', rows = 4,
     <textarea class="textarea ${cls}" id="${id}" rows="${rows}" placeholder="${esc(placeholder)}">${esc(value)}</textarea>
   </div>`;
 }
+
+/**
+ * R25：幂等键按"参数指纹"复用。
+ *
+ * 为什么不能每次提交都新生成一个 token：那样服务端的查重形同虚设——客户端超时后用户再点一次，
+ * 就是一个全新的 token，服务端认不出来，于是同一件事下两次单、收两份钱。
+ * 也不能永远复用同一个：用户"就是想再要一条一样的"时会被误判成重复提交。
+ *
+ * 所以规则是：**参数没变的重试复用同一个 token，参数一变立刻换新 token，提交成功后作废**。
+ * 调用方负责在成功时 clear（见 videos.js / storyboards.js 的用法）。
+ */
+// 变更须知：token 的复用/作废规则是"防重复计费"的核心——重试（参数没变）必须复用，
+// 成功或参数变化必须换新。改成"每次都新生成"= 服务端查重形同虚设（同一次提交会下两次单）。
+export function makeTokenStore() {
+  const m = new Map();
+  const fresh = () => (globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  const api = (scope, key) => {
+    const prev = m.get(scope);
+    if (prev && prev.key === key) return prev.token;
+    const token = fresh();
+    m.set(scope, { key, token });
+    return token;
+  };
+  api.clear = (scope) => { if (scope === undefined) m.clear(); else m.delete(scope); };
+  return api;
+}
