@@ -536,6 +536,38 @@ try {
       ok('F5 后深链参数保留且项目不错位', String(boot.hash).includes(`#/storyboards?project=${pid}`) && !boot.empty, JSON.stringify(boot));
     }
 
+    group('弹窗键盘行为（焦点陷阱 / ESC / Ctrl+Enter）');
+    {
+      const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
+      const pid = (await Jget('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('[data-edit]')`), '编辑钮就绪');
+      const key = (k, code, mods) => {
+        cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, modifiers: mods || 0 });
+        cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, modifiers: mods || 0 });
+      };
+      await cdp.eval(`document.querySelector('[data-edit]').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.modal-mask')`), '编辑弹窗打开');
+      const a1 = await cdp.eval(`({tag:document.activeElement.tagName, inMask:!!document.activeElement.closest('.modal-mask'), locked:document.body.classList.contains('modal-open')})`);
+      ok('自动聚焦进表单且页面锁滚动', ['INPUT', 'TEXTAREA', 'SELECT'].includes(a1.tag) && a1.inMask && a1.locked, JSON.stringify(a1));
+      await cdp.eval(`document.activeElement.blur(); return true;`); // 焦点丢到体外
+      for (let i = 0; i < 3; i++) { key('Tab', 'Tab'); await sleep(60); }
+      ok('Tab 回捕：焦点曾逸出仍被拉回弹窗', await cdp.eval(`!!document.activeElement.closest('.modal-mask')`));
+      for (let i = 0; i < 15; i++) { key('Tab', 'Tab'); await sleep(50); }
+      ok('Tab×15 不逃出焦点陷阱', await cdp.eval(`!!document.activeElement.closest('.modal-mask')`));
+      await cdp.eval(`({tag:document.activeElement.tagName})`);
+      key('Escape', 'Escape');
+      await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), 'ESC 关闭弹窗', 6000);
+      await sleep(250);
+      ok('ESC 关闭且解锁滚动', await cdp.eval(`!document.body.classList.contains('modal-open')`));
+      await cdp.eval(`document.querySelector('[data-edit]').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('.modal-mask')`), '二开弹窗');
+      key('Enter', 'Enter', 2); // Ctrl+Enter
+      await waitFor(() => cdp.eval(`!document.querySelector('.modal-mask')`), 'Ctrl+Enter 提交关闭', 6000);
+      ok('Ctrl+Enter 走主按钮提交路径', true);
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
     const collected = await cdp.eval(`({errors:window.__uiErrors || [], rejects:window.__uiRejects || []})`);
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
     ok('无未处理 Promise 拒绝', collected?.rejects?.length === 0, JSON.stringify(collected?.rejects || []));
