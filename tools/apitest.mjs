@@ -981,6 +981,38 @@ group('级联删除');
   eq('分镜已清空', left.data.length, 0);
 }
 
+// ── 写失败上报契约（数据完整性：保存失败必须让用户看得见） ──
+group('写失败上报');
+{
+  const logsBefore = (await api('GET', '/api/logs')).data;
+  const before = logsBefore.length;
+  fs.chmodSync(HOME, 0o555); // 目录只读 → 原子写的临时文件创建必失败
+  let failedWrite = false;
+  try {
+    await api('PUT', '/api/settings', { default_text_model: '写失败探针' });
+    // 异步写队列的失败晚于响应：轮询日志直到出现，最多 4s
+    let hit = null;
+    for (let i = 0; i < 40 && !hit; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const logs = (await api('GET', '/api/logs')).data;
+      hit = logs.find((l) => l.level === 'error' && String(l.msg).includes('保存失败'));
+    }
+    ok('写盘失败经 onWriteError 上报到日志流（用户可见）', !!hit, hit ? hit.msg.slice(0, 90) : `日志 ${before} 条内无"保存失败"`);
+    failedWrite = !!hit;
+  } finally {
+    fs.chmodSync(HOME, 0o755); // 必须恢复，否则后续写全失败
+  }
+  ok('探针确实制造了写失败（非空跑自证）', failedWrite === true, `failedWrite=${failedWrite}`);
+  // 恢复可写后：写入应重新生效且不再产生新的失败日志
+  await api('PUT', '/api/settings', { default_text_model: '恢复探针' });
+  await new Promise((r) => setTimeout(r, 500));
+  const st = (await api('GET', '/api/settings')).data.settings || (await api('GET', '/api/settings')).data;
+  const modelOk = String((st && st.default_text_model) || '').includes('恢复探针');
+  const logsAfter = (await api('GET', '/api/logs')).data.filter((l) => l.level === 'error' && String(l.msg).includes('保存失败')).length;
+  ok('恢复可写后写入重新生效', modelOk, JSON.stringify(st && st.default_text_model));
+  ok('恢复后无新增写失败日志', logsAfter <= 1, `失败日志数=${logsAfter}`);
+}
+
 // ── 收尾 ─────────────────────────────────────────────────────
 srv.kill();
 mock.close();

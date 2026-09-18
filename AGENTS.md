@@ -9,7 +9,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 - 后端链路：`server.js` → `lib/routes.js`（全部 /api 端点）→ `lib/agnes.js`（Agnes 云 API 客户端）→ 外部 API；异步任务链 `lib/jobs.js` + `lib/poller.js`（后台轮询 + SSE 推送）；持久化基石 `lib/store.js`
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（10 个页面模块）；共享设施 `api.js` / `ui.js` / `consts.js` / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 135 / apitest 218 / uitest 452 / browser-test 106），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表）与 `node tools/port-check.mjs`（端口撞车防护三场景 5 断言真机验证，违例 exit 1），均按需跑、非门禁
+- 测试：`tools/` 下四套断言脚本（selftest 135 / apitest 222 / uitest 452 / browser-test 106），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表）与 `node tools/port-check.mjs`（端口撞车防护三场景 5 断言真机验证，违例 exit 1），均按需跑、非门禁
 
 ---
 
