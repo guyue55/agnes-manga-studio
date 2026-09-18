@@ -189,4 +189,19 @@ Agnes Video 2.5 系改用 **OpenAI-Videos 兼容新协议**（官方文档 `docs
 ### 验证
 - **单测/集成**：apitest 新增「视频 2.5 新协议」组（mock 捕获请求体 + 2.5 查询分支），断言 mode/seconds/size/aspect_ratio 正确、旧字段不发送、负向并入、四模式媒体映射、查询带 model_name、completed 后 `video_url` 落 `url`，并对照 v2.0 仍走旧 body。**apitest 141 → 165 全过**。
 - **真实 API 端到端**：经本地服务连发（命中免费用户 `video_queue_full`/`rate limit` 属正常限流，非 schema 错误），第 5 次成功创建 `task_…` → 轮询 `queued→in_progress(progress 10→90)→completed`，拿到真实 `video_url`；`保存到本机` 首次因 CDN 瞬时 401 失败、重试后落盘 3.8MB MP4（`file` 校验为 `ISO Media MP4`）。
-- 全量：selftest 113 / apitest 165 / uitest 395 / browser-test 29，0 失败。
+- 全量：selftest 113 / apitest 165（+24 条 2.5 协议回归与 v2.0 对照）/ uitest 395 / browser-test 29，0 失败。
+
+### V2 批量生成视频"秒完但全失败"（第七节修后遗留，2026-09-18 已修 ✅）
+- **现象**：2.5 协议修好后，分镜「批量生视频」进度条几秒走完，全部标失败。
+- **根因**：落库报错已不再是字段问题，而是免费档**瞬时拒绝**——同一秒内 2×`video queue is full`(503) + 4×`rate limit for free users`(429)。批量串行提交、逐条**立即判死**，免费档高峰期 8 条基本全灭；且失败提示是英文原文，用户以为又坏了。
+- **修复（`lib/agnes.js` / `routes.js` / `store.js`）**：
+  - `isTransientError()`：408/429/≥500 按状态判；无 HTTP 状态时按文案（queue full / rate limit / too many / 超时 / 网络异常）。**4xx（schema、鉴权、配额）绝不高频重试**。
+  - `createVideo` 拆为 `submitVideoOnce` + 重试包装：瞬时拒绝指数退避（`video_submit_backoff_s` 3s 起、倍增封顶 60s），预算 `video_submit_retries` 默认 **8 次/条 ≈ 最长 4.5 分钟**；单发与批量共用。
+  - **`proxy_timeout` 不参与重试**（可能已收单，重复提交=重复扣费），仍走原 timed_out 补录流程。
+  - 失败记录与提示中文化：「Agnes 免费通道排队已满或限流，不是参数问题（已自动重试 N 次）…」，返回体带 `retryable`；批量 `items` 支持整批覆盖 `submit_retries`。
+  - 中途重试不重复落库（预算耗尽才写一条 failed），避免任务页被瞬时 503 刷屏。
+- **验证**：
+  - apitest 新增「视频提交限流自动重试」组 11 断言：503×2→第 3 次成功（恰好 3 次调用）、预算耗尽止步（1+3 次）、**400 不重试（仅 1 次）**、批量限流 1 次后整批全绿、中文提示命中。mock 用提示词标记 `__retryN__`/`__bad400__` 精确计数。
+  - **真实限流实测**：连发批量 2 条正撞排队高峰，每条自动退避 4 次（当时默认）约 45s 后才认败，中文报错正确呈现——机制有效，仅免费档容量所限。
+  - 全量：selftest 113 / apitest 176 / uitest 395 / browser-test 29，0 失败。
+- **顺带说明**：批量重试期间进度条停在 done=x/N 属预期（单项最长数分钟在等排队）；想要更快认败可把 `video_submit_retries` 调小（设置接口可写）。
