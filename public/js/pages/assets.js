@@ -4,9 +4,9 @@
  */
 import { icon, esc, copyText, relTime, IMAGE_USAGES, statusBadge } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, confirm } from '../ui.js';
+import { modal, toast, empty, spinner, confirm, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, navigate } from '../app.js';
+import { state, navigate, onEvent } from '../app.js';
 
 export default async function assets(container, params) {
   let tab = params.tab || 'image';
@@ -23,7 +23,7 @@ export default async function assets(container, params) {
       actions: `
         ${projectPicker(state.projects, '', { id: 'p-picker', allOption: true })}
         <button class="btn btn-sm" id="fav-only">${icon('star', 13)}只看收藏</button>
-        <button class="btn" id="reload">${icon('refresh', 16)}</button>`,
+        <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="tabs" id="tabs" style="margin-bottom:16px">
       <button data-tab="image" class="on">图片素材</button>
@@ -74,9 +74,9 @@ export default async function assets(container, params) {
           <img src="${esc(img.url)}" loading="lazy" alt="" />
           <div class="ovl">
             <div class="top">
-              <button class="icon-btn ${img.is_favorited ? 'gold' : ''}" data-fav="${esc(img.id)}">${icon('star', 13)}</button>
-              <button class="icon-btn" data-zoom="${esc(img.id)}">${icon('eye', 13)}</button>
-              <button class="icon-btn danger" data-del="${esc(img.id)}">${icon('trash', 13)}</button>
+              <button class="icon-btn ${img.is_favorited ? 'gold' : ''}" data-fav="${esc(img.id)}" title="${img.is_favorited ? '取消收藏' : '收藏'}" aria-label="${img.is_favorited ? '取消收藏' : '收藏'}">${icon('star', 13)}</button>
+              <button class="icon-btn" data-zoom="${esc(img.id)}" title="查看大图" aria-label="查看大图">${icon('eye', 13)}</button>
+              <button class="icon-btn danger" data-del="${esc(img.id)}" title="删除" aria-label="删除图片">${icon('trash', 13)}</button>
             </div>
             <div class="btm">
               <span class="mini-btn">${esc(IMAGE_USAGES.find((u) => u.value === img.usage_type)?.label || img.usage_type || '图片')}</span>
@@ -100,9 +100,9 @@ export default async function assets(container, params) {
               : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-4);font-size:12px">生成中…</div>`}
           <div class="ovl">
             <div class="top">
-              <button class="icon-btn ${v.is_favorited ? 'gold' : ''}" data-favv="${esc(v.id)}">${icon('star', 13)}</button>
-              <button class="icon-btn" data-open="${esc(v.id)}">${icon('play', 13)}</button>
-              <button class="icon-btn danger" data-delv="${esc(v.id)}">${icon('trash', 13)}</button>
+              <button class="icon-btn ${v.is_favorited ? 'gold' : ''}" data-favv="${esc(v.id)}" title="${v.is_favorited ? '取消收藏' : '收藏'}" aria-label="${v.is_favorited ? '取消收藏' : '收藏'}">${icon('star', 13)}</button>
+              <button class="icon-btn" data-open="${esc(v.id)}" title="打开视频" aria-label="打开视频">${icon('play', 13)}</button>
+              <button class="icon-btn danger" data-delv="${esc(v.id)}" title="删除" aria-label="删除视频">${icon('trash', 13)}</button>
             </div>
             <div class="btm">
               <span class="mini-btn">${esc(relTime(v.created_at))}</span>
@@ -122,7 +122,7 @@ export default async function assets(container, params) {
               <div style="font-size:13px;font-weight:550;margin-bottom:4px">${esc(s.title)}</div>
               <div style="font-size:11px;color:var(--text-4)">${esc(relTime(s.created_at))}</div>
             </div>
-            <button class="icon-btn danger" data-dels="${esc(s.id)}" style="background:rgba(255,255,255,0.07);color:var(--text-3)">${icon('trash', 13)}</button>
+            <button class="icon-btn danger" data-dels="${esc(s.id)}" title="删除" aria-label="删除文本" style="background:rgba(255,255,255,0.07);color:var(--text-3)">${icon('trash', 13)}</button>
           </div>
           <pre class="json-out" style="max-height:150px;margin-top:10px">${esc(String(s.content).slice(0, 500))}${String(s.content).length > 500 ? '\n…' : ''}</pre>
         </div>`).join('');
@@ -191,8 +191,14 @@ export default async function assets(container, params) {
     });
     el.querySelectorAll('[data-save]').forEach((b) => b.onclick = async (e) => {
       e.stopPropagation();
-      toast.info('正在下载…');
-      const r = await api.downloadVideo(b.getAttribute('data-save'));
+      if (b.disabled) return;
+      setBusy(b, true, '下载中');
+      let r;
+      try {
+        r = await api.downloadVideo(b.getAttribute('data-save'));
+      } finally {
+        setBusy(b, false);
+      }
       if (r.ok) toast.ok('已保存到本机'); else toast.err(r.error);
       load();
     });
@@ -222,4 +228,17 @@ export default async function assets(container, params) {
   }
 
   await load();
+
+  // 视频任务状态经 SSE 实时落到卡片上（此前素材库要手动刷新才变化）
+  let liveTmr = null;
+  const off = onEvent('video', (v) => {
+    if (document.querySelector('.modal-mask')) return; // 弹窗开着时不打扰，关闭后手动刷新
+    clearTimeout(liveTmr);
+    liveTmr = setTimeout(() => {
+      const hit = videos.find((x) => x.id === v.id);
+      if (hit) Object.assign(hit, v); else { load(); return; } // 没见过的新任务，整表重拉
+      render();
+    }, 700);
+  });
+  return () => { clearTimeout(liveTmr); off(); };
 }
