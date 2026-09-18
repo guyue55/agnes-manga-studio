@@ -11,6 +11,7 @@ import { state, navigate, onEvent, syncViewParams } from '../app.js';
 export default async function assets(container, params) {
   let tab = ['image', 'video', 'script'].includes(params.tab) ? params.tab : 'image';
   let projectId = localStorage.getItem('agnes.assets.project') || ''; // 2.12：筛选跨会话记忆
+  if (projectId && !state.projects.some((p) => p.id === projectId)) { projectId = ''; localStorage.removeItem('agnes.assets.project'); } // 死指针不如没有指针
   let favOnly = localStorage.getItem('agnes.assets.favOnly') === '1';
   let images = [];
   let videos = [];

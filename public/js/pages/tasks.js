@@ -63,7 +63,7 @@ export default async function tasks(container, params = {}) {
     const vocab = tab === 'image' || tab === 'text'
       ? { completed: '已完成', failed: '失败' }
       : Object.fromEntries(Object.entries(VIDEO_STATUS).map(([k, v]) => [k, v.label]));
-    if (tab === 'all' && statusFilter !== 'all' && !vocab[statusFilter]) statusFilter = 'all';
+    if (statusFilter !== 'all' && !vocab[statusFilter]) statusFilter = 'all'; // 深链来的 status 也要过词表闸
     sel.innerHTML = `<option value="all">全部状态</option>`
       + Object.entries(vocab).map(([k, label]) => `<option value="${k}"${k === statusFilter ? ' selected' : ''}>${esc(label)}</option>`).join('');
   }
