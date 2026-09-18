@@ -54,6 +54,9 @@ const ICONS = {
   cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
   history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  unlock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
 };
 
 /** 生成图标 SVG */
@@ -67,6 +70,9 @@ export const PROJECT_TYPES = ['爽文漫剧', '悬疑漫剧', '都市逆袭', '�
 export const PLATFORMS = ['抖音', '快手', '视频号', '小红书', 'B站', 'YouTube Shorts', 'TikTok', '横版视频', '自定义'];
 export const ASPECTS = ['9:16 竖屏', '16:9 横屏', '1:1 方形', '3:4 竖版', '4:3 横版'];
 export const SHOT_TYPES = ['远景', '全景', '中景', '近景', '特写', '极特写', '俯拍', '仰拍'];
+// R14：角色定位。只影响档案分组与提示词里的称呼方式，不做权限/流程限制——
+// 竞品把"主角/配角"做成了流程门禁（配角不许锁外貌），结果用户被自己的工具挡住。
+export const CHARACTER_ROLES = ['主角', '配角', '反派', '群演', '道具化角色'];
 export const IMAGE_SIZES = [
   { label: '横版 1024×768', value: '1024x768', w: 1024, h: 768 },
   { label: '竖版 768×1024', value: '768x1024', w: 768, h: 1024 },

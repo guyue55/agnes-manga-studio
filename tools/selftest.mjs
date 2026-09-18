@@ -122,7 +122,10 @@ group('导入导出');
   ok('导出带时间戳', !!dump.exported_at);
 
   const all = store.exportAll();
-  ok('全量导出含 8 张表', Object.keys(all.collections).length === 8, Object.keys(all.collections).join(','));
+  // 计数跟着 COLLECTIONS 走，而不是写死数字：加集合时不会"忘了改测试"而假绿
+  ok('全量导出含全部集合（与 COLLECTIONS 同源）',
+    Object.keys(all.collections).length === store.COLLECTIONS.length && store.COLLECTIONS.includes('characters'),
+    Object.keys(all.collections).join(','));
 
   // 改 id 后合并导入 → 应新增
   const copy = JSON.parse(JSON.stringify(all.collections));

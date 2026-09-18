@@ -1055,6 +1055,68 @@ group('级联删除');
   eq('分镜已清空', left.data.length, 0);
 }
 
+group('角色库（R14：档案 CRUD + 分镜绑定 + 引用守卫删除 + 级联）');
+{
+  const pj = await api('POST', '/api/projects', { name: '角色库验收剧' });
+  const PID = pj.data.id;
+  // 建：名称必填、必须属于项目
+  const noname = await api('POST', '/api/characters', { project_id: PID, name: '  ' });
+  eq('缺名称 → 400', noname.status, 400);
+  const noproj = await api('POST', '/api/characters', { name: '无主角色' });
+  eq('缺 project_id → 400', noproj.status, 400);
+
+  const c1 = await api('POST', '/api/characters', {
+    project_id: PID, name: '林岚', role: '主角', appearance: '黑色长直发、丹凤眼',
+    outfit: '白色衬衫', is_locked: true, reference_image_ids: ['x1', 'x1', '', 'x2'],
+  });
+  ok('创建角色返回实体', c1.status === 200 && c1.data.id && c1.data.name === '林岚', JSON.stringify(c1.data).slice(0, 100));
+  eq('参考图 id 数组去重去空（脏数据会让解绑统计出幽灵项）', JSON.stringify(c1.data.reference_image_ids), JSON.stringify(['x1', 'x2']));
+  eq('外貌锁定落库', c1.data.is_locked, true);
+
+  const c2 = await api('POST', '/api/characters', { project_id: PID, name: '老周', role: '配角' });
+  const lst = await api('GET', `/api/characters?project_id=${PID}`);
+  ok('按项目列出角色（裸数组）', Array.isArray(lst.data) && lst.data.length === 2, JSON.stringify(lst.data && lst.data.length));
+  const other = await api('GET', '/api/characters?project_id=__nope__');
+  eq('项目过滤生效（不串项目）', (other.data || []).length, 0);
+
+  // 改：空名字必须被拒（否则列表里出现无名卡，用户没法认）
+  const blank = await api('PUT', `/api/characters/${c1.data.id}`, { name: '' });
+  eq('改名成空 → 400', blank.status, 400);
+  const up = await api('PUT', `/api/characters/${c1.data.id}`, { appearance: '黑色长直发、丹凤眼、左眉尾有痣', is_locked: false });
+  ok('更新生效', up.status === 200 && up.data.appearance.includes('左眉尾') && up.data.is_locked === false);
+  const up404 = await api('PUT', '/api/characters/__nope__', { name: 'x' });
+  eq('更新不存在 → 404', up404.status, 404);
+
+  // 绑定：分镜行挂角色
+  const sb = await api('POST', '/api/storyboards', { project_id: PID, episode_number: 1, shot_number: 1, scene_description: '开场', character_ids: [c1.data.id, c2.data.id] });
+  eq('分镜创建即带角色绑定', JSON.stringify(sb.data.character_ids), JSON.stringify([c1.data.id, c2.data.id]));
+  const sbUp = await api('PUT', `/api/storyboards/${sb.data.id}`, { character_ids: [c2.data.id, c2.data.id] });
+  eq('分镜绑定去重', JSON.stringify(sbUp.data.character_ids), JSON.stringify([c2.data.id]));
+  const sbBad = await api('PUT', `/api/storyboards/${sb.data.id}`, { character_ids: 'not-an-array' });
+  eq('非数组绑定 → 清空而不是写进垃圾', JSON.stringify(sbBad.data.character_ids), '[]');
+  // 重新挂上，供下面的引用守卫验证（上一步故意清空了绑定）
+  await api('PUT', `/api/storyboards/${sb.data.id}`, { character_ids: [c2.data.id] });
+
+  // 引用守卫：删角色必须先解绑，否则留下悬空 id
+  const del = await api('DELETE', `/api/characters/${c2.data.id}`);
+  ok('删除返回解绑镜头数', del.status === 200 && del.data.ok === true && del.data.unlinked === 1, JSON.stringify(del.data));
+  const sbAfter = await api('GET', `/api/storyboards?project_id=${PID}`);
+  const row = (sbAfter.data || []).find((x) => x.id === sb.data.id);
+  eq('悬空 id 已被清掉（分镜不再指向不存在的角色）', JSON.stringify(row.character_ids), '[]');
+  const del404 = await api('DELETE', `/api/characters/${c2.data.id}`);
+  eq('重复删除 → 404', del404.status, 404);
+
+  // bootstrap 随包下发角色（分镜页/图片页都要用，避免每页重复请求）
+  const bs = await api('GET', '/api/bootstrap');
+  ok('bootstrap 含 characters', Array.isArray(bs.data.characters) && bs.data.characters.some((c) => c.id === c1.data.id));
+
+  // 级联删除必须带走角色（漏了就是跨项目孤儿）
+  const cas = await api('DELETE', `/api/projects/${PID}?cascade=1`);
+  ok('级联删除项目成功', cas.status === 200 && cas.data.ok === true);
+  const left = await api('GET', `/api/characters?project_id=${PID}`);
+  eq('级联删除了该项目的角色', (left.data || []).length, 0);
+}
+
 group('失败追踪码（R10：5xx 带码 + 码进运行日志 + 4xx 不发码）');
 {
   await api('PUT', '/api/settings', { agnes_api_base_url: MOCK_BASE, agnes_api_key: MOCK_KEY });

@@ -112,6 +112,10 @@ export const api = {
   updateTask: (id, t) => req('PUT', `/api/tasks/${id}`, t),
   deleteTask: (id) => req('DELETE', `/api/tasks/${id}`),
 
+  characters: (projectId) => req('GET', `/api/characters${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  createCharacter: (c) => req('POST', '/api/characters', c),
+  updateCharacter: (id, c) => req('PUT', `/api/characters/${id}`, c),
+  deleteCharacter: (id) => req('DELETE', `/api/characters/${id}`),
   templates: (type) => req('GET', `/api/templates${type ? `?template_type=${type}` : ''}`),
   createTemplate: (t) => req('POST', '/api/templates', t),
   updateTemplate: (id, t) => req('PUT', `/api/templates/${id}`, t),

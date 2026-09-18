@@ -49,7 +49,7 @@ group('入口文件');
 // ── 2. 模块文件齐全 ──────────────────────────────────────────
 group('模块完整性');
 {
-  const pages = ['dashboard', 'projects', 'scripts', 'storyboards', 'images', 'videos', 'tasks', 'assets', 'settings'];
+  const pages = ['dashboard', 'projects', 'scripts', 'storyboards', 'characters', 'images', 'videos', 'tasks', 'assets', 'settings'];
   for (const p of pages) {
     ok(`页面模块 ${p}.js 存在`, fs.existsSync(path.join(PUB, 'js', 'pages', `${p}.js`)));
   }
@@ -250,7 +250,8 @@ group('B4 画风分层');
   ok('4.1 LLM 链禁烘画风（拆镜+补提示词，均在 storyboards）', (sbSrc.match(/不要写整体画风/g) || []).length >= 2);
   ok('4.2 分镜提示词计算态预览', sbSrc.includes('artStylePhrase') && sbSrc.includes('+画风'));
   { // 1.6 防增量棘轮：字号地坪 11px 永不回退；裸 font-size 总量只减不增
-    const pageFiles = ['dashboard','projects','scripts','storyboards','images','videos','assets','tasks','settings']
+    // 新页也必须进棘轮：否则"新加的页面"天然是裸字号与微字号的免检区
+    const pageFiles = ['dashboard','projects','scripts','storyboards','characters','images','videos','assets','tasks','settings']
       .map((n) => read(path.join(PUB, 'js', 'pages', n + '.js')));
     const all = pageFiles.join('');
     ok('1.6 字号地坪 ≥11px（JS 页）', !/font-size:(?:[1-9]|10(?:\.5)?)px/.test(all));
@@ -577,6 +578,44 @@ group('共享符号使用必须先导入（防白屏）');
   ok('页面调用共享函数前必须导入（否则整页白屏）', bad.length === 0, bad.join(' | '));
   ok('共享导出清单已解析（自证非空跑）', shared.length >= 30, `shared=${shared.length}`);
   ok('灵敏度对照：未导入的调用会被检出', /(?<![.\w$])skeleton\s*\(/.test('el.innerHTML = `${skeleton(1)}`'));
+}
+
+group('角色库（R14：档案 + 绑定 + 引用守卫）');
+{
+  const chars = read(path.join(PUB, 'js', 'pages', 'characters.js'));
+  const app = read(path.join(PUB, 'js', 'app.js'));
+  const apiSrc = read(path.join(PUB, 'js', 'api.js'));
+  const sbs = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const consts = read(path.join(PUB, 'js', 'consts.js'));
+
+  ok('导航注册了角色库页（图标存在，否则静默退化成 info 图标）',
+    /id: 'characters', label: '角色库', icon: 'users'/.test(app) && /users: '<path/.test(consts));
+  ok('角色库页面模块默认导出函数', /export default async function characters/.test(chars));
+  ok('api.js 暴露角色 CRUD 四个端点',
+    ['characters:', 'createCharacter:', 'updateCharacter:', 'deleteCharacter:'].every((k) => apiSrc.includes(k)));
+  ok('角色定位枚举存在（且非空）', /export const CHARACTER_ROLES = \['主角'/.test(consts));
+
+  // 外貌与服装必须独立成字段：注入时要能只取这两段，把性格/小传留在档案里
+  ok('外貌/服装是独立字段（不是塞进自由文本备注）',
+    /id="c-appear"/.test(chars) && /id="c-outfit"/.test(chars) && /appearance: root.querySelector\('#c-appear'\)/.test(chars));
+  // 参考图必须来自本项目素材，不能让用户填公网 URL（本地优先下外链抓不到）
+  ok('参考图从本项目图片里挑（不要求填 URL）',
+    /api\.images\(projectId\)/.test(chars) && /reference_image_ids/.test(chars) && !/placeholder="https?:\/\//.test(chars));
+  ok('参考图上限与后端一致（12 张）', /idList\(b\.reference_image_ids, 12\)/.test(read(path.join(ROOT, 'lib', 'routes.js'))));
+  // 搜索走 URL（与 tasks 同款），刷新/分享可还原
+  ok('角色库搜索词进 URL', /syncViewParams\(\{ project: projectId, q: search \}\)/.test(chars));
+  ok('角色库空态带一键出口（两种空态各有一个）',
+    /empty\('这个项目还没有角色'/.test(chars) && /act: 'new'/.test(chars) && /go: '#\/projects'/.test(chars));
+  ok('删除走就地两段确认（删除有引用后果，不该一键完成）', /twoClick\(b, async \(\) => \{/.test(chars));
+
+  // 分镜侧绑定
+  ok('分镜编辑弹窗提供角色多选芯片', /id="s-char-pick"/.test(sbs) && /data-char=/.test(sbs));
+  ok('分镜保存提交 character_ids', /character_ids: \[\.\.\.pickedChars\]/.test(sbs));
+  ok('分镜行展示绑定角色与失效引用（悬空 id 要看得见）',
+    /function charCell\(/.test(sbs) && /绑定的角色已被删除/.test(sbs));
+  ok('分镜行保留自由文本人物（老数据不丢信息）', /s\.characters/.test(sbs) && /人物（自由文本）/.test(sbs));
+  // 灵敏度对照：把"绑定"删掉，行渲染守卫必须能发现
+  ok('灵敏度对照：charCell 缺失会被检出', !/function charCell\(/.test('const x = 1;'));
 }
 
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);

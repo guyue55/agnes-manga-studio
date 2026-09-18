@@ -188,7 +188,7 @@ try {
 
     group('页面切换');
     const pages = [
-      ['projects', '项目管理'], ['scripts', '故事脚本'], ['storyboards', '分镜制作'],
+      ['projects', '项目管理'], ['scripts', '故事脚本'], ['storyboards', '分镜制作'], ['characters', '角色库'],
       ['images', '图片生成'], ['videos', '视频生成'], ['tasks', '镜头任务'],
       ['assets', '素材库'], ['settings', '设置'],
     ];
@@ -342,7 +342,7 @@ try {
           url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }),
       })).json();
       ok('alt 扫描 fixture 已建（自证非空跑）', !!altFix.id, JSON.stringify(altFix).slice(0, 60));
-      const pages3 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/images', '#/videos', '#/tasks', '#/assets'];
+      const pages3 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/characters', '#/images', '#/videos', '#/tasks', '#/assets'];
       const noAlt = [];
       let imgTotal = 0;
       for (const h of pages3) {
@@ -467,7 +467,7 @@ try {
         const t = el.getAttribute('title'); if (t && t.trim()) return t.trim();
         return (el.textContent || '').trim();
       }`;
-      const pages2 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/images', '#/videos', '#/tasks', '#/assets', '#/settings'];
+      const pages2 = ['#/dashboard', '#/projects', '#/scripts', '#/storyboards', '#/characters', '#/images', '#/videos', '#/tasks', '#/assets', '#/settings'];
       const unnamed = [];
       let total = 0;
       for (const h of pages2) {
@@ -1159,7 +1159,76 @@ try {
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 
-    group('页面挂载矩阵（9 页真机冒烟）');
+    group('角色库契约（R14：真机建档 → 入库 → 卡片渲染 → 分镜行可见 → 删除解绑）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      await cdp.eval(`location.hash = '#/characters?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#new-char')`), '角色库页就绪', 10000);
+      // 走完整表单链路（而不是直接调 API）：表单字段与保存逻辑才在覆盖范围内
+      await cdp.eval(`document.querySelector('#new-char').click(); return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#c-name')`), '角色表单弹出', 8000);
+      await cdp.eval(`document.querySelector('#c-name').value = '浏览器角色';
+        document.querySelector('#c-appear').value = '银色短发、右眼角有疤';
+        document.querySelector('#c-outfit').value = '黑色皮夹克';
+        document.querySelector('#c-lock').checked = true;
+        document.querySelector('[data-yes]').click(); return true;`);
+      const okCreate = await waitFor(async () => (await J(`/api/characters?project_id=${pid}`)).some((c) => c.name === '浏览器角色'), '角色入库', 10000)
+        .then(() => true).catch(() => false);
+      ok('真机建档 → 入库', okCreate);
+      const c = (await J(`/api/characters?project_id=${pid}`)).find((x) => x.name === '浏览器角色') || {};
+      ok('外貌锁定随表单提交落库', c.is_locked === true, JSON.stringify({ lock: c.is_locked }));
+      ok('外貌/服装分别落库（注入时只需这两段）', c.appearance === '银色短发、右眼角有疤' && c.outfit === '黑色皮夹克', JSON.stringify({ a: c.appearance, o: c.outfit }));
+      // 卡片是真的渲染了（不是只有数据）：锁标 + 外貌文本。
+      // 必须先等卡片出现——入库完成 ≠ 页面重渲染完成（load() 是异步的，中间还有骨架屏）
+      const cardShown = await waitFor(() => cdp.eval(`!!document.querySelector('.char-card[data-id="${c.id}"]')`), '角色卡出现', 8000)
+        .then(() => true).catch(() => false);
+      const card = await cdp.eval(`const el = document.querySelector('.char-card[data-id="${c.id}"]'); return el ? { txt: el.innerText, lock: !!el.querySelector('.flag') } : null;`);
+      ok('角色卡渲染外貌与锁定标记', cardShown && !!card && card.txt.includes('银色短发') && card.lock === true, JSON.stringify(card));
+      // 参考图路径：卡片封面必须真的渲染成 <img>（只存 id 不渲染 = 没接上）
+      const refImg = await J('/api/images', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: pid, name: '角色参考图探针', usage_type: 'character', generation_prompt: 'probe',
+          url: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+        }),
+      });
+      await J(`/api/characters/${c.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference_image_ids: [refImg.id] }),
+      });
+      // 同 hash 再赋值不会触发 hashchange → 必须先离开再回来，否则页面不重渲染（测了个旧 DOM）
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      await cdp.eval(`location.hash = '#/characters?project=${pid}'; return true;`);
+      const coverShown = await waitFor(() => cdp.eval(`!!document.querySelector('.char-card[data-id="${c.id}"] .char-thumb img')`), '参考图封面', 8000)
+        .then(() => true).catch(() => false);
+      const cover = await cdp.eval(`const el = document.querySelector('.char-card[data-id="${c.id}"] .char-thumb img'); return el ? { alt: el.getAttribute('alt'), w: el.naturalWidth } : null;`);
+      ok('参考图渲染为卡片封面且带 alt（真加载成功，不是坏链占位）',
+        coverShown && !!cover && String(cover.alt).includes('浏览器角色') && cover.w > 0, JSON.stringify(cover));
+      await fetch(`http://127.0.0.1:${port}/api/images/${refImg.id}`, { method: 'DELETE' }).catch(() => {});
+
+      // 绑定到分镜 → 行内芯片可见
+      const sb = await J('/api/storyboards', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: pid, episode_number: 1, shot_number: 99, scene_description: '角色绑定探针', character_ids: [c.id] }),
+      });
+      await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#table tbody tr')`), '分镜表就绪', 12000);
+      const rowTxt = await cdp.eval(`const row = Array.from(document.querySelectorAll('#table tbody tr')).find((tr) => tr.innerText.includes('角色绑定探针')); return row ? row.innerText : '';`);
+      ok('分镜行显示绑定的角色名（结构化绑定在真机可见）', String(rowTxt).includes('浏览器角色'), String(rowTxt).slice(0, 90));
+      // 删除角色 → 引用守卫解绑，分镜行不再显示"失效"
+      const del = await J(`/api/characters/${c.id}`, { method: 'DELETE' });
+      ok('删除角色同时解绑镜头（不留悬空 id）', del.ok === true && del.unlinked >= 1, JSON.stringify(del));
+      await cdp.eval(`location.hash = '#/characters?project=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#new-char')`), '回到角色库', 8000);
+      const gone = await cdp.eval(`!document.querySelector('.char-card[data-id="${c.id}"]')`);
+      ok('删除后卡片从界面消失', gone === true);
+      await fetch(`http://127.0.0.1:${port}/api/storyboards/${sb.id}`, { method: 'DELETE' });
+      const left = (await J(`/api/storyboards?project_id=${pid}&episode=1`)).filter((x) => x.scene_description === '角色绑定探针').length;
+      ok('探针分镜已清理', left === 0, `left=${left}`);
+    }
+
+    group('页面挂载矩阵（10 页真机冒烟）');
     {
       // 覆盖空洞：browser-test 历史上只走 7 条路由，#/images 与 #/videos 从未真机挂载
       const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
@@ -1169,6 +1238,7 @@ try {
         ['项目管理', '#/projects', '#list'],
         ['剧本', '#/scripts', '#fields'],
         ['分镜', '#/storyboards', '#table'],
+        ['角色库', '#/characters', '#grid'],
         ['图片生成', '#/images', '#model'],
         ['视频生成', '#/videos', '#model'],
         ['任务', '#/tasks', '#tabs'],
@@ -1186,7 +1256,7 @@ try {
         const n = await cdp.eval(`return (window.__uiErrors || []).length;`);
         if (n > 0) errs.push(`${name}×${n}`);
       }
-      ok('9 页挂载全程无未捕获异常', errs.length === 0, errs.join(',') || 'clean');
+      ok('10 页挂载全程无未捕获异常', errs.length === 0, errs.join(',') || 'clean');
       // 两页补强：控件必须真的渲染出来（此前无任何真机断言）
       for (const [name, route] of [['图片生成', '#/images'], ['视频生成', '#/videos']]) {
         await cdp.eval(`location.hash = '${route}?project=${pid}'; return true;`);

@@ -15,6 +15,8 @@ export default async function storyboards(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
   let episode = Number(params.episode || 1);
   const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
+  // R14：本项目的角色档案（bootstrap 随 state 下发，不再单独请求）
+  const charsOf = () => (state.characters || []).filter((c) => c.project_id === projectId);
   let rows = [];
   const selected = new Set();
   let job = null;
@@ -150,7 +152,7 @@ export default async function storyboards(container, params) {
         <th style="width:52px">镜头</th>
         <th style="width:76px">景别</th>
         <th style="min-width:190px">画面描述</th>
-        <th style="width:96px">人物</th>
+        <th style="width:150px">人物 / 角色</th>
         <th style="min-width:130px">台词</th>
         <th style="width:54px">时长</th>
         <th style="min-width:200px">图片提示词</th>
@@ -166,7 +168,7 @@ export default async function storyboards(container, params) {
             <td style="font-family:var(--mono);color:var(--text)">#${esc(s.shot_number)}</td>
             <td><span class="badge gray">${esc(s.shot_type)}</span></td>
             <td><div class="cell-ellipsis" style="max-width:260px" title="${esc(s.scene_description)}">${esc(s.scene_description || '—')}</div></td>
-            <td><div class="cell-ellipsis" style="max-width:96px" title="${esc(s.characters)}">${esc(s.characters || '—')}</div></td>
+            <td>${charCell(s)}</td>
             <td><div class="cell-ellipsis" style="max-width:150px;color:var(--text-3)" title="${esc(s.dialogue)}">${esc(s.dialogue || '—')}</div></td>
             <td>${esc(s.duration_seconds)}s</td>
             <td>${promptCell(s.image_prompt)}</td>
@@ -207,6 +209,26 @@ export default async function storyboards(container, params) {
     el.querySelectorAll('[data-copy-prompt]').forEach((b) => {
       b.onclick = () => copyText(b.getAttribute('data-copy-prompt')).then(() => toast.ok('已复制提示词'));
     });
+  }
+
+  /**
+   * 人物单元格（R14）：结构化角色绑定优先展示，自由文本作为补充。
+   * 两者都显示而不是二选一——老分镜只有文本，新分镜才有 id；只显示其中一种会让另一半"看起来丢了"。
+   */
+  function charCell(s) {
+    const ids = Array.isArray(s.character_ids) ? s.character_ids : [];
+    const bound = ids.map((id) => charsOf().find((c) => c.id === id)).filter(Boolean);
+    const text = String(s.characters || '').trim();
+    const title = [bound.map((c) => c.name).join('、'), text].filter(Boolean).join('\n') || '未指定人物';
+    if (!bound.length && !text) return '<span style="color:var(--text-4)">—</span>';
+    return `<div class="cell-ellipsis" style="max-width:150px" title="${esc(title)}">
+      <div class="row" style="gap:4px;flex-wrap:wrap">
+        ${bound.slice(0, 2).map((c) => `<span class="badge gray" title="${esc(c.name)}${c.is_locked ? '（外貌已锁定）' : ''}">${c.is_locked ? icon('lock', 9) : ''}${esc(c.name)}</span>`).join('')}
+        ${bound.length > 2 ? `<span class="badge gray">+${bound.length - 2}</span>` : ''}
+        ${text ? `<span style="color:var(--text-3)">${esc(text)}</span>` : ''}
+        ${ids.length > bound.length ? `<span class="badge red" title="绑定的角色已被删除，点编辑可清理">失效 ${ids.length - bound.length}</span>` : ''}
+      </div>
+    </div>`;
   }
 
   function promptCell(text) {
@@ -488,6 +510,7 @@ ${text}`,
       scene: '', action: '', dialogue: '', narration: '', sound_effect: '', duration_seconds: 3,
       image_prompt: '', video_prompt: '', negative_prompt: 'low quality, blurry, distorted face',
     };
+    const pickedChars = new Set(Array.isArray(s.character_ids) ? s.character_ids : []);
     modal({
       title: isNew ? '添加镜头' : `编辑镜头 #${s.shot_number}`,
       wide: true,
@@ -496,7 +519,13 @@ ${text}`,
           <div class="field"><label for="s-num">镜头编号</label><input class="input" id="s-num" type="number" value="${esc(s.shot_number)}" /></div>
           <div class="field"><label for="s-type">景别</label><select class="select" id="s-type">${options(SHOT_TYPES, 'v', 'v', s.shot_type)}</select></div>
           <div class="field" style="grid-column:1/-1"><label for="s-desc">画面描述</label><textarea class="textarea" id="s-desc" rows="2">${esc(s.scene_description)}</textarea></div>
-          <div class="field"><label for="s-chars">人物</label><input class="input" id="s-chars" value="${esc(s.characters)}" /></div>
+          <div class="field"><label for="s-chars">人物（自由文本）</label><input class="input" id="s-chars" value="${esc(s.characters)}" placeholder="例：林岚、老周（不想建档案时随手写）" /></div>
+          <div class="field" style="grid-column:1/-1">
+            <label>出场角色（角色库）<span style="color:var(--text-4);font-weight:400">（选中的角色会以档案里的长相/服装保持跨镜头一致）</span></label>
+            ${charsOf().length
+    ? `<div class="chips" id="s-char-pick">${charsOf().map((c) => `<button type="button" class="chip${(s.character_ids || []).includes(c.id) ? ' on' : ''}" data-char="${esc(c.id)}" title="${esc(c.appearance || '未填外貌')}">${c.is_locked ? icon('lock', 11) : ''}${esc(c.name)}</button>`).join('')}</div>`
+    : '<div class="note">本项目还没有角色档案 —— 去「角色库」建一个主角，之后每个镜头挂上它，出图就不会换脸。</div>'}
+          </div>
           <div class="field"><label for="s-scene">场景</label><input class="input" id="s-scene" value="${esc(s.scene)}" /></div>
           <div class="field" style="grid-column:1/-1"><label for="s-action">动作</label><input class="input" id="s-action" value="${esc(s.action)}" /></div>
           <div class="field"><label for="s-dlg">台词</label><textarea class="textarea" id="s-dlg" rows="2">${esc(s.dialogue)}</textarea></div>
@@ -512,12 +541,21 @@ ${text}`,
         <button class="btn btn-primary" data-yes>${isNew ? '添加' : '保存'}</button>`,
       onMount(root, close) {
         root.querySelector('[data-no]').onclick = close;
+        // R14：角色芯片切换。用 Set 存选中态而不是读 DOM class——保存时不必再解析一遍 DOM
+        root.querySelectorAll('#s-char-pick [data-char]').forEach((b) => {
+          b.onclick = () => {
+            const id = b.getAttribute('data-char');
+            if (pickedChars.has(id)) pickedChars.delete(id); else pickedChars.add(id);
+            b.classList.toggle('on', pickedChars.has(id));
+          };
+        });
         root.querySelector('[data-yes]').onclick = async () => {
           const payload = {
             shot_number: Math.max(1, Number(root.querySelector('#s-num').value) || 1),
             shot_type: root.querySelector('#s-type').value,
             scene_description: root.querySelector('#s-desc').value,
             characters: root.querySelector('#s-chars').value,
+            character_ids: [...pickedChars],
             scene: root.querySelector('#s-scene').value,
             action: root.querySelector('#s-action').value,
             dialogue: root.querySelector('#s-dlg').value,

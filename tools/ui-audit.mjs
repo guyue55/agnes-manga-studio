@@ -178,11 +178,21 @@ try {
       }),
     });
   }
+  // 角色卡必须"有内容"才被量到：空态下卡片样式（截断/对比度/可点目标）根本没被渲染出来
+  for (const [nm, app, outfit, lock] of [
+    ['审计角色·超长外貌占位', '黑色长直发垂至腰间，丹凤眼，左眉尾有一颗小痣，皮肤偏冷白，唇色偏深，颈侧有一道细长的旧疤，惯常微微侧头看人', '白色衬衫外搭深蓝西装外套，袖口卷起两折，腰间系一条细银链', true],
+    ['审计角色乙', '银灰色寸头，右眼下方有一道横向伤疤', '黑色高领毛衣', false],
+  ]) {
+    await fetch(`http://127.0.0.1:${port}/api/characters`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projReq.id, name: nm, role: '主角', appearance: app, outfit, is_locked: lock }),
+    });
+  }
   const pid = projReq.id;
   const pages = [
     ['dashboard', '#/dashboard'], ['projects', '#/projects'], ['storyboards', `#/storyboards?project=${pid}`],
     ['assets', '#/assets'], ['images', `#/images?project=${pid}`], ['videos', `#/videos?project=${pid}`],
-    ['tasks', '#/tasks'], ['scripts', `#/scripts?project=${pid}`], ['settings', '#/settings'],
+    ['tasks', '#/tasks'], ['scripts', `#/scripts?project=${pid}`], ['characters', `#/characters?project=${pid}`], ['settings', '#/settings'],
   ];
   const viewports = [[1440, 900], [1280, 800], [1024, 768], [900, 700]];
   for (const [w, h] of viewports) {

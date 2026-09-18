@@ -9,6 +9,7 @@ import dashboard from './pages/dashboard.js';
 import projects from './pages/projects.js';
 import scripts from './pages/scripts.js';
 import storyboards from './pages/storyboards.js';
+import characters from './pages/characters.js';
 import images from './pages/images.js';
 import videos from './pages/videos.js';
 import tasks from './pages/tasks.js';
@@ -20,6 +21,8 @@ const NAV = [
   { id: 'projects', label: '项目管理', icon: 'folder', page: projects },
   { id: 'scripts', label: '故事脚本', icon: 'script', page: scripts },
   { id: 'storyboards', label: '分镜制作', icon: 'film', page: storyboards },
+  // R14：角色库紧跟分镜制作——分镜是角色的使用现场，两者来回切换最频繁
+  { id: 'characters', label: '角色库', icon: 'users', page: characters },
   { id: 'images', label: '图片生成', icon: 'image', page: images },
   { id: 'videos', label: '视频生成', icon: 'video', page: videos },
   { id: 'tasks', label: '镜头任务', icon: 'tasks', page: tasks },
@@ -32,6 +35,7 @@ export const state = {
   projects: [],
   stats: {},
   templates: [],
+  characters: [],
   models: { models: [], updated_at: null, source: 'fallback', error: '' },
   home: '',
   version: '',
@@ -149,6 +153,7 @@ export async function refreshState() {
     state.projects = r.data.projects || [];
     state.stats = r.data.stats || {};
     state.templates = r.data.templates || [];
+    state.characters = r.data.characters || [];
     state.models = r.data.models || state.models;
     renderSidebar();
   }
