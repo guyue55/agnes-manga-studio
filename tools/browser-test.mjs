@@ -699,6 +699,59 @@ try {
       await cdp.eval(`location.hash = '#/dashboard'; return true;`);
     }
 
+    group('批量条互斥契约（E2：补提示词占用期间不被 SSE 覆盖）');
+    {
+      // 慢 mock：每条补提示词要 900ms，从而稳定制造 promptBusy 窗口
+      const mock = http.createServer((req, res) => {
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          setTimeout(() => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ choices: [{ message: { content: 'e2-probe english prompt' } }] }));
+          }, 900);
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const e2Port = mock.address().port;
+      let ppid = null;
+      try {
+        const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${e2Port}/v1`, agnes_api_key: 'e2-mutex-key' }) });
+        const proj = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'E2 互斥探针剧' }) });
+        ppid = proj.id;
+        await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [
+          { project_id: ppid, episode_number: 1, shot_number: 1, shot_type: '特写', scene_description: '探针镜一', sort_order: 0 },
+          { project_id: ppid, episode_number: 1, shot_number: 2, shot_type: '全景', scene_description: '探针镜二', sort_order: 1 },
+        ] }) });
+        await cdp.eval(`localStorage.removeItem('agnes.batch.last'); location.hash = '#/storyboards?project=${ppid}&episode=1'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#table tbody tr').length >= 2`), '探针分镜两行就绪');
+        await sleep(400);
+        await cdp.eval(`document.querySelector('#gen-img-prompts').click(); return true;`);
+        await sleep(350); // 仍在 900ms×2 的窗口内
+        const during0 = await cdp.eval(`return (document.querySelector('#batch-bar') || {}).innerText || '';`);
+        ok('E2 前置自证：补提示词真的占用了 #batch-bar', during0.includes('生成图片提示词'), JSON.stringify(during0).slice(0, 80));
+        // 核心：进行中收到批量 SSE 事件 → 不得覆盖（bar 仍归补提示词所有）
+        const fireBatch = `const es = (window.__esRefs || [])[0]; if (!es) return -1; es.dispatchEvent(new MessageEvent('batch', { data: JSON.stringify({ id: 'probe-e2', type: 'images', status: 'running', done: 42, total: 42, ok: 42, fail: 0 }) })); return 1;`;
+        const fired = await cdp.eval(`return (() => { ${fireBatch} })();`);
+        ok('E2 已向应用合成批量进度事件', fired === 1, `fired=${fired}`);
+        await sleep(300);
+        const during = await cdp.eval(`return (document.querySelector('#batch-bar') || {}).innerText || '';`);
+        ok('E2 补提示词进行中：批量事件未覆盖 bar', !during.includes('批量生成图片') && !during.includes('42 / 42'), JSON.stringify(during).slice(0, 90));
+        ok('E2 且 bar 仍显示补提示词进度', during.includes('生成图片提示词'), JSON.stringify(during).slice(0, 90));
+        // 等这次批量补提示词跑完（2 镜 × 900ms）
+        await waitFor(() => cdp.eval(`return ((document.querySelector('#batch-bar') || {}).innerText || '').includes('已为 2 个镜头补充');`), '补提示词完成汇总', 15000);
+        // 灵敏度对照：结束后同一事件必须能正常渲染 bar（守卫是作用域内的，不是永久屏蔽）
+        await cdp.eval(`return (() => { ${fireBatch} })();`);
+        await sleep(400);
+        const after = await cdp.eval(`return (document.querySelector('#batch-bar') || {}).innerText || '';`);
+        ok('E2 灵敏度对照：结束后同一事件正常渲染批量条', after.includes('批量生成图片') && after.includes('42 / 42'), JSON.stringify(after).slice(0, 90));
+      } finally {
+        mock.close();
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_key: '' }) });
+        if (ppid) await fetch(`http://127.0.0.1:${port}/api/projects/${ppid}?cascade=1`, { method: 'DELETE' });
+        await cdp.eval(`localStorage.removeItem('agnes.batch.last'); location.hash = '#/dashboard'; return true;`);
+      }
+    }
+
     group('防连点契约（R6：双击不得重复创建）');
     {
       const Jget = (u) => fetch(`http://127.0.0.1:${port}${u}`).then((x) => x.json());
