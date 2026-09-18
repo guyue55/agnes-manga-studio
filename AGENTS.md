@@ -9,7 +9,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 - 后端链路：`server.js` → `lib/routes.js`（全部 /api 端点）→ `lib/agnes.js`（Agnes 云 API 客户端）→ 外部 API；异步任务链 `lib/jobs.js` + `lib/poller.js`（后台轮询 + SSE 推送）；持久化基石 `lib/store.js`
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（10 个页面模块）；共享设施 `api.js` / `ui.js` / `consts.js` / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 135 / apitest 240 / uitest 452 / browser-test 125），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁
+- 测试：`tools/` 下四套断言脚本（selftest 135 / apitest 261 / uitest 452 / browser-test 125），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁
 
 ---
 
@@ -168,5 +168,5 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
 4. **两套"知识图谱"，不要混淆**：
    - `.understand-anything/knowledge-graph.json` — 本文档描述的**工具生成全图**（196 节点），机器消费、可增量更新；
    - `docs/knowledge-graph/` — **手工维护的架构讲解图**（73 节点，提交入库，供人浏览），配套 `viewer.html` 双击可开。**修改 `docs/knowledge-graph/knowledge-graph.json` 后必须跑 `node tools/build-graph-data.mjs`** 重新生成 `graph.data.js`（该脚本会做引用完整性/孤立节点校验，失败即退出非零）。其边 schema 是 `from`/`to`，与工具图谱的 `source`/`target` 不同。
-5. **API 响应不做统一信封**：`server.js` 把 handler 的返回值**原样** `sendJson`（`server.js:350`）——`GET /api/storyboards` 返回**裸数组**，`POST /api/storyboards` 返回裸 `{inserted}`；只有部分 handler 自己返回 `{ok, data}`（如 `/api/health`、`/api/settings/test`）。写断言前先确认形状，别默认 `res.data.*`；另注意查询参数名以 handler 读取的为准（分镜列表是 `episode`，写 `episode_number` 会被**静默忽略**）。
+5. **API 响应不做统一信封**：`server.js` 把 handler 的返回值**原样** `sendJson`（`server.js:350`）——`GET /api/storyboards` 返回**裸数组**，`POST /api/storyboards` 返回裸 `{inserted}`；只有部分 handler 自己返回 `{ok, data}`（如 `/api/health`、`/api/settings/test`）。**同族端点的形状也可能不同**：`GET /api/videos` 是裸数组，而 `POST /api/videos` 是 `{ok, asset, timed_out}`——id 在 `data.asset.id` 而非顶层（第 58 轮写下载契约时即栽在此，404 全因取错字段）。写断言前先确认形状，别默认 `res.data.*`；另注意查询参数名以 handler 读取的为准（分镜列表是 `episode`，写 `episode_number` 会被**静默忽略**）。
 6. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。

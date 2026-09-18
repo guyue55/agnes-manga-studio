@@ -45,7 +45,8 @@ let lastVideoCreate = null;
 let lastImageCreate = null; // B4.1：验证画风只在使用点注入、且注入的是映射短语
 let chatFormats = [];
 // T5b 事故路径控制面：query 返回的下载地址可切换；deny 端点带 Key 命中次数必须恒 0
-let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0; // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
+let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0;
+let imagesDelayMs = 0; // 批量取消契约：把出图放慢，稳定制造「运行中」窗口（测试专用） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
 // 按提示词标记统计 /v1/videos 实际到达次数：验证「限流后重试」与「4xx 不重试」
@@ -68,7 +69,9 @@ const mock = http.createServer((req, res) => {
   if (u.pathname === '/__mock') {
     const cmd = u.searchParams.get('set');
     if (cmd) { queryTarget = cmd; return send(200, { ok: true }); }
-    return send(200, { queryTarget, flakyHits, denyHitsWithKey });
+    const si = u.searchParams.get('slowimg');
+    if (si !== null) { imagesDelayMs = Number(si) || 0; return send(200, { ok: true, imagesDelayMs }); }
+    return send(200, { queryTarget, flakyHits, denyHitsWithKey, imagesDelayMs });
   }
   if (auth !== `Bearer ${MOCK_KEY}`) {
     // 审核加强：值精确匹配注入 Key——只校格式的话任何假 token 都放行，错 Key 链路回归测不出
@@ -117,6 +120,10 @@ const mock = http.createServer((req, res) => {
     }
     if (u.pathname === '/v1/images/generations') {
       try { lastImageCreate = JSON.parse(body); } catch { lastImageCreate = { bad_json: body }; }
+      if (imagesDelayMs) {
+        const payload = lastImageCreate && lastImageCreate.model === 'mock-img-url-ok' ? { data: [{ url: `${MOCK_BASE}/pixel.png` }] } : { data: [{ b64_json: PNG_1PX }] };
+        return setTimeout(() => send(200, payload), imagesDelayMs);
+      }
       if (lastImageCreate.model === 'mock-img-url-ok') return send(200, { data: [{ url: `${MOCK_BASE}/pixel.png` }] });
       if (lastImageCreate.model === 'mock-img-url-dead') return send(200, { data: [{ url: 'http://127.0.0.1:1/nope.png' }] });
       return send(200, { data: [{ b64_json: PNG_1PX }] });
@@ -1071,6 +1078,81 @@ group('写失败上报');
   const logsAfter = (await api('GET', '/api/logs')).data.filter((l) => l.level === 'error' && String(l.msg).includes('保存失败')).length;
   ok('恢复可写后写入重新生效', modelOk, JSON.stringify(st && st.default_text_model));
   ok('恢复后无新增写失败日志', logsAfter <= 1, `失败日志数=${logsAfter}`);
+}
+
+// ── 任务 CRUD 与批量取消契约（三个被 UI 真实使用、却零覆盖的端点） ──
+group('任务 CRUD 与批量取消');
+{
+  // PUT/DELETE /api/tasks/:id —— 任务页「收藏」与「删除」按钮（tasks.js:247 / :330）走的路径
+  const mk = await api('POST', '/api/tasks', { task_type: 'image', project_id: PROJECT_ID, notes: '原始备注', status: 'pending' });
+  const tid = mk.data && mk.data.id;
+  ok('任务探针已建', !!tid, JSON.stringify(mk.data).slice(0, 80));
+  const up1 = await api('PUT', `/api/tasks/${tid}`, { is_favorited: true });
+  eq('PUT 任务：收藏置位生效', up1.data.is_favorited, true);
+  eq('PUT 任务：未提供的字段不被清空（局部补丁语义）', up1.data.notes, '原始备注');
+  const up2 = await api('PUT', `/api/tasks/${tid}`, { notes: '改后备注' });
+  ok('PUT 任务：notes 可改且收藏保持', up2.data.notes === '改后备注' && up2.data.is_favorited === true, JSON.stringify({ n: up2.data.notes, f: up2.data.is_favorited }));
+  const up404 = await api('PUT', '/api/tasks/__nope__', { notes: 'x' });
+  eq('PUT 未知任务 → 404', up404.status, 404);
+  const del1 = await api('DELETE', `/api/tasks/${tid}`);
+  eq('DELETE 任务成功', del1.data.ok, true);
+  const stillThere = (await api('GET', '/api/tasks')).data.some((t) => t.id === tid);
+  eq('删除后任务确实消失', stillThere, false);
+  const del404 = await api('DELETE', `/api/tasks/${tid}`);
+  eq('重复删除 → 404', del404.status, 404);
+
+  // POST /api/batch/:id/cancel —— 批量条「取消」按钮（storyboards.js:90）：必须真能停住，不只是置个标记
+  await fetch(`${MOCK_BASE}/__mock?slowimg=250`);
+  const items = Array.from({ length: 6 }, (_, i) => ({ prompt: `cancel probe ${i}`, project_id: PROJECT_ID, size: '1024x1024' }));
+  const pending = api('POST', '/api/batch/images', { items, concurrency: 2 }); // 故意不 await：运行中才有 id 可取消
+  let runningId = null;
+  for (let i = 0; i < 60 && !runningId; i++) {
+    await new Promise((r) => setTimeout(r, 25));
+    const list = (await api('GET', '/api/batch')).data || [];
+    const run = list.find((j) => j.status === 'running');
+    if (run) runningId = run.id;
+  }
+  ok('捕获到运行中的批量任务（取消才有意义）', !!runningId, `id=${runningId}`);
+  const cxl = await api('POST', `/api/batch/${runningId}/cancel`);
+  eq('取消运行中批量任务 → 200 ok', cxl.data.ok, true);
+  const created = await pending; // 创建请求在整批跑完（或被取消）后才返回
+  eq('创建请求本身仍正常返回', created.status, 200);
+  let fin = null;
+  for (let i = 0; i < 40; i++) {
+    const list = (await api('GET', '/api/batch')).data || [];
+    fin = list.find((j) => j.id === runningId);
+    if (fin && fin.status !== 'running') break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  eq('取消后终态为 cancelled（真停住，而非跑完）', fin && fin.status, 'cancelled');
+  ok('取消确实中断了剩余项（done < total）', fin && fin.done < fin.total, JSON.stringify(fin && { d: fin.done, t: fin.total, s: fin.status }));
+  const cxl404 = await api('POST', '/api/batch/__nope__/cancel');
+  eq('取消未知批量任务 → 404', cxl404.status, 404);
+  await fetch(`${MOCK_BASE}/__mock?slowimg=0`); // 复位，避免影响后续
+
+  // POST /api/videos/:id/download —— UI「保存到本地」（assets.js:209 / tasks.js:275）走的路径
+  const d404 = await api('POST', '/api/videos/__nope__/download');
+  eq('下载未知视频 → 404', d404.status, 404);
+  const nv = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: '下载探针（无地址）', project_id: PROJECT_ID });
+  const nvId = nv.data.asset && nv.data.asset.id; // 注意：POST /api/videos 返回 {ok, asset}，id 不在顶层
+  const d400 = await api('POST', `/api/videos/${nvId}/download`);
+  eq('无视频地址时下载 → 400', d400.status, 400);
+  await api('DELETE', `/api/videos/${nvId}`);
+  // 同主地址（= 配置的 API Base 主机）→ 携带 Key 下载成功并落盘。
+  // 必须显式设定 Base/Key：前面若干组改过设置，残留值会让本组变成"跨主"而 401（首版即栽在此）。
+  await api('PUT', '/api/settings', { agnes_api_base_url: `${MOCK_BASE}/v1`, agnes_api_key: MOCK_KEY });
+  const dv = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: '下载探针（可下载）', project_id: PROJECT_ID });
+  const dvId = dv.data.asset && dv.data.asset.id;
+  await api('PUT', `/api/videos/${dvId}`, { video_url: `${MOCK_BASE}/video.mp4` });
+  const dl = await api('POST', `/api/videos/${dvId}/download`);
+  eq('同主地址下载成功', dl.data.ok, true);
+  ok('返回真实字节数（MOCKMP4DATA=11B）', dl.data.bytes === 11, `bytes=${dl.data.bytes}`);
+  const lf = dl.data.asset && dl.data.asset.local_file;
+  ok('local_file 已写回资产记录', !!lf, JSON.stringify(dl.data).slice(0, 100));
+  ok('文件确实落到磁盘', !!lf && fs.existsSync(lf), String(lf));
+  const persisted = (await api('GET', '/api/videos')).data.find((v) => v.id === dvId);
+  ok('local_file 已持久化（刷新后「已存本地」状态仍在）', !!(persisted && persisted.local_file), String(persisted && persisted.local_file).slice(0, 70));
+  await api('DELETE', `/api/videos/${dvId}`);
 }
 
 // ── 收尾 ─────────────────────────────────────────────────────
