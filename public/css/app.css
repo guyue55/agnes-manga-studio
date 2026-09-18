@@ -2,7 +2,9 @@
    Agnes 漫剧工坊 · 本地版 — 设计系统
    定位：高端 Mac 创作软件风格（Final Cut Pro / Logic Pro）
         专业创作工作台 · 黑金 · 不是普通 SaaS 后台
-   色板与尺寸严格按 PRD 4.2 / 4.4 / 4.5 / 4.6 / 4.8
+   色板与尺寸原按 PRD 4.2 / 4.4 / 4.5 / 4.6 / 4.8；
+   2026-09-18 B1 批（docs/research/ui-optimization-plan.md）：中性字阶掺暖、状态色柔化、
+   圆角收敛三档（24/16/12）、新增金色交互/发光 token。金色主色相与 260 侧栏不变。
    ========================================================================== */
 
 :root {
@@ -20,23 +22,35 @@
   --gold-dim: rgba(214, 181, 109, 0.18);
   --gold-grad: linear-gradient(135deg, #F5D58A 0%, #C5974C 45%, #7A5828 100%);
   --gold-soft: linear-gradient(135deg, #F5D58A 0%, #B88A44 45%, #6E4F24 100%);
+  /* B1.2/B1.3：金色交互语言——hover/激活描边、双层发光、键盘焦点环、弱底 */
+  --gold-border-hover: rgba(214, 181, 109, 0.42);
+  --gold-border-active: rgba(214, 181, 109, 0.60);
+  --gold-glow: 0 10px 36px rgba(214, 181, 109, 0.15), 0 0 0 1px rgba(214, 181, 109, 0.28);
+  --focus-ring: 0 0 0 3px rgba(245, 213, 138, 0.24);
+  --gold-tint: rgba(214, 181, 109, 0.10);
 
-  /* 状态 */
-  --ok: #30D158;
-  --err: #FF453A;
-  --warn: #FFD60A;
-  --info: #64D2FF;
+  /* 状态（B1.4：柔化为低饱和专业色，与金色同色系协调；每支配 12% 软底） */
+  --ok: #4FBE8B;
+  --ok-soft: rgba(79, 190, 139, 0.12);
+  --err: #F0616B;
+  --err-soft: rgba(240, 97, 107, 0.12);
+  --warn: #E8A23C;
+  --warn-soft: rgba(232, 162, 60, 0.12);
+  --info: #6FBEEA;
+  --info-soft: rgba(111, 190, 234, 0.12);
 
-  /* 文本（灰阶整体提亮，11〜13px 次要文字也要过 WCAG AA 4.5） */
-  --text: #F5F5F7;
-  --text-2: #B4B6BE;
-  --text-3: #8A92A1;
-  --text-4: #767E8C; /* 版本号/路径/时间戳等次要内容，仍低于 text-3 保持层级，但过 WCAG AA 4.5 */
+  /* 文本（B1.1：灰阶掺暖金味——标题暖白、正文暖灰；全部仍过 WCAG AA 4.5） */
+  --text: #F4F1EA;
+  --text-2: #CFCABF;
+  --text-3: #A8A396;
+  --text-4: #8B867A;
 
-  /* 尺寸 */
-  --radius-card: 20px;
-  --radius-btn: 14px;
-  --radius-input: 14px;
+  /* 尺寸（B1.6 收敛：容器 24 / 控件 16 / 输入 12 三档，消除散落 18/20/24 打架；
+     专业工具保留圆角矩形手感，不做 SaaS 胶囊按钮） */
+  --radius-card: 24px;
+  --radius-btn: 16px;
+  --radius-input: 12px;
+  --radius-sm: 8px;
   --sidebar-w: 260px;
 
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC",
@@ -444,13 +458,13 @@ select.select option { background: #12141C; color: var(--text); }
   white-space: nowrap;
   border: 1px solid transparent;
 }
-.badge.gray { background: rgba(110, 118, 129, 0.18); border-color: rgba(110, 118, 129, 0.26); color: var(--text-2); }
+.badge.gray { background: rgba(139, 134, 122, 0.16); border-color: rgba(139, 134, 122, 0.26); color: var(--text-2); }
 .badge.gold { background: rgba(214, 181, 109, 0.14); border-color: rgba(245, 213, 138, 0.28); color: var(--gold-light); }
-.badge.green { background: rgba(48, 209, 88, 0.14); border-color: rgba(48, 209, 88, 0.28); color: var(--ok); }
-.badge.red { background: rgba(255, 69, 58, 0.13); border-color: rgba(255, 69, 58, 0.24); color: var(--err); }
-.badge.orange { background: rgba(255, 159, 10, 0.13); border-color: rgba(255, 159, 10, 0.24); color: #FF9F0A; }
-.badge.yellow { background: rgba(255, 214, 10, 0.11); border-color: rgba(255, 214, 10, 0.22); color: var(--warn); }
-.badge.blue { background: rgba(90, 150, 255, 0.13); border-color: rgba(90, 150, 255, 0.25); color: #7EB6FF; }
+.badge.green { background: var(--ok-soft); border-color: rgba(79, 190, 139, 0.28); color: var(--ok); }
+.badge.red { background: var(--err-soft); border-color: rgba(240, 97, 107, 0.26); color: var(--err); }
+.badge.orange { background: rgba(232, 150, 60, 0.13); border-color: rgba(232, 150, 60, 0.26); color: #E8A05C; }
+.badge.yellow { background: var(--warn-soft); border-color: rgba(232, 162, 60, 0.24); color: var(--warn); }
+.badge.blue { background: var(--info-soft); border-color: rgba(111, 190, 234, 0.25); color: var(--info); }
 .badge .dot {
   width: 5px; height: 5px; border-radius: 50%;
   background: currentColor;
@@ -899,4 +913,54 @@ pre.json-out {
   .nav-item .badge { display: none; }
   .page { padding: 20px 16px 50px; }
   .g3, .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ══ B1 设计语言升级（对照托管版：层级交给 alpha、交互交给金）══════════
+   级联原则：以下选择器与前文同特异度、后来者生效；只改语言不改结构 */
+
+/* B1.7 氛围背景层：顶部金辉 + 左下深蓝夜色，纯 alpha 不遮内容 */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(1200px 520px at 72% -12%, rgba(214, 181, 109, 0.055), transparent 62%),
+    radial-gradient(900px 620px at -6% 106%, rgba(18, 26, 48, 0.5), transparent 66%);
+}
+
+/* B1.2 金色交互语言：可点表面的 hover 从"背景微亮"升为"描边转金"（静止卡片不受影响） */
+.nav-item:hover { border-color: rgba(214, 181, 109, 0.24); }
+.btn:hover:not(:disabled) { border-color: var(--gold-border-hover); }
+.chip:hover { border-color: var(--gold-border-hover); }
+.card.hoverable:hover { border-color: var(--gold-border-hover); }
+.quick-item:hover { border-color: var(--gold-border-hover); }
+.asset-card:hover { border-color: var(--gold-border-active); box-shadow: var(--gold-glow); }
+.task-row:hover { border-color: rgba(214, 181, 109, 0.34); }
+.tabs > button:hover:not(.on) { color: var(--text); }
+.tabs > button.on { border-color: rgba(245, 213, 138, 0.34); }
+.icon-btn.danger:hover { background: rgba(240, 97, 107, 0.55); }
+
+/* B1.3 焦点即发光：3px 金色光晕 + 保留 outline 兜底（高对比模式仍可见） */
+.btn:focus-visible, .icon-btn:focus-visible, .mini-btn:focus-visible, .chip:focus-visible,
+.tabs > button:focus-visible, .segmented > button:focus-visible,
+.nav-item:focus-visible, .quick-item:focus-visible, .switch:focus-visible, a:focus-visible {
+  outline: 1px solid rgba(245, 213, 138, 0.72);
+  box-shadow: var(--focus-ring);
+}
+
+/* B1.5 入场级联：网格前 8 张卡按 45ms 步进现身（长列表不级联防抖动） */
+@keyframes revealIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.grid > *:nth-child(-n+8) { animation: revealIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.grid > *:nth-child(2) { animation-delay: 45ms; }
+.grid > *:nth-child(3) { animation-delay: 90ms; }
+.grid > *:nth-child(4) { animation-delay: 135ms; }
+.grid > *:nth-child(5) { animation-delay: 180ms; }
+.grid > *:nth-child(6) { animation-delay: 225ms; }
+.grid > *:nth-child(7) { animation-delay: 270ms; }
+.grid > *:nth-child(8) { animation-delay: 315ms; }
+
+/* B1.6 标题精修：暗色大标题用 600 而非 700 更"贵"（托管版/N2S 编辑部同理） */
+.page-title { font-weight: 600; letter-spacing: -0.01em; }
+
+/* B1.5 减动效兜底：级联延迟一并归零（时长的归零由前文全局规则保证） */
+@media (prefers-reduced-motion: reduce) {
+  .grid > *:nth-child(n) { animation-delay: 0ms !important; }
 }
