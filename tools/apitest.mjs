@@ -43,6 +43,7 @@ const VIDEO_ID = 'vid_mock_001';
 // 捕获最近一次 /v1/videos 创建请求体，供 2.5 协议断言
 let lastVideoCreate = null;
 let lastImageCreate = null; // B4.1：验证画风只在使用点注入、且注入的是映射短语
+let chatFormats = []; // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
 // 按提示词标记统计 /v1/videos 实际到达次数：验证「限流后重试」与「4xx 不重试」
@@ -80,6 +81,10 @@ const mock = http.createServer((req, res) => {
   req.on('data', (c) => { body += c; });
   req.on('end', () => {
     if (u.pathname === '/v1/chat/completions') {
+      let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+      chatFormats.push(!!cb.response_format);
+      if (cb.model === 'mock-reject-json' && cb.response_format) return send(400, { error: { message: 'response_format not supported by this gateway' } });
+      if (cb.model === 'mock-deny-key' && cb.response_format) return send(401, { error: { message: 'bad key' } });
       return send(200, { choices: [{ message: { role: 'assistant', content: '```json\n[{"shot_number":1,"shot_type":"特写","image_prompt":"a hero face"}]\n```' } }] });
     }
     if (u.pathname === '/v1/images/generations') {
@@ -98,6 +103,8 @@ const mock = http.createServer((req, res) => {
     }
     if (u.pathname === '/v1/videos') {
       try { lastVideoCreate = JSON.parse(body); } catch { lastVideoCreate = { bad_json: body }; }
+      if (lastVideoCreate.model === 'mock-embed-err') return send(200, { error: { message: 'embedded boom in 200' } });
+      if (lastVideoCreate.model === 'mock-slow') { setTimeout(() => { try { send(200, { id: 'vid_slow_1', status: 'queued' }); } catch { /* 客户端已断开 */ } }, 11500); return; }
       const p = String(lastVideoCreate.prompt || '');
       const mm = /__retry(\d+)__/.exec(p);            // 前 N 次返回 503（排队满），之后成功
       const key = mm ? `r${mm[1]}` : /__bad400__/.test(p) ? 'bad' : 'plain';
@@ -739,6 +746,34 @@ group('SSE');
 }
 
 // ── 16. 清理 ─────────────────────────────────────────────────
+group('T4/T5 事故级路径');
+{
+  chatFormats.length = 0;
+  const t = await api('POST', '/api/agnes/text', { messages: [{ role: 'user', content: 'hi' }], json_mode: true, model: 'mock-reject-json' });
+  eq('4xx 格式降级后仍 200', t.status, 200);
+  ok('首发带 format、重试不带', chatFormats.length === 2 && chatFormats[0] === true && chatFormats[1] === false, JSON.stringify(chatFormats));
+  const t2 = await api('POST', '/api/agnes/text', { messages: [{ role: 'user', content: 'hi' }], json_mode: true, model: 'mock-deny-key' });
+  ok('401 不降级（不掩盖钥匙问题）', t2.data && t2.data.ok === false && chatFormats.length === 3 && chatFormats[2] === true, JSON.stringify({ st: t2.status, d: t2.data && t2.data.ok }));
+
+  // HTTP 200 内嵌 error：必须识别为失败并落一条可复盘的坏记录
+  const bad = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'boom probe', project_id: PROJECT_ID, model: 'mock-embed-err' });
+  ok('内嵌 error 报信封级失败', bad.data && bad.data.ok === false, `status=${bad.status} data=${JSON.stringify(bad.data && bad.data.error)}`);
+  const vlist = await api('GET', `/api/videos?project_id=${PROJECT_ID}`);
+  const rec = (vlist.data || []).find((x) => String(x.video_prompt).includes('boom probe'));
+  ok('内嵌 error 落库可复盘', !!rec && String(rec.error_message).includes('embedded boom') && rec.local_status === 'submit_failed', JSON.stringify(rec && rec.local_status));
+
+  // 提交超时：10s 超时阈值 + mock 11.5s —— 走"结果未知"三态而非谎报失败
+  await api('PUT', '/api/settings', { request_timeout_ms: 10000 });
+  const slow = await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'slow probe', project_id: PROJECT_ID, model: 'mock-slow' });
+  ok('超时提交返回可接受（未知态）', slow.status < 500, `status=${slow.status}`);
+  const vlist2 = await api('GET', `/api/videos?project_id=${PROJECT_ID}`);
+  const rec2 = (vlist2.data || []).find((x) => String(x.video_prompt).includes('slow probe'));
+  ok('超时记为提交超时未知（非 submit_failed）', !!rec2 && rec2.local_status === 'submit_timeout_unknown', JSON.stringify(rec2 && { s: rec2.status, l: rec2.local_status }));
+  const cleanupIds = [rec, rec2].filter(Boolean).map((r) => api('DELETE', `/api/videos/${r.id}`));
+  await Promise.all(cleanupIds);
+  await api('PUT', '/api/settings', { request_timeout_ms: 150000 });
+}
+
 group('B4.1 画风分层注入');
 {
   const proj = await api('POST', '/api/projects', { name: '画风分层测试', art_style: '日漫厚涂', aspect_ratio: '9:16 竖屏' });
