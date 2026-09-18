@@ -1045,7 +1045,9 @@ body.sb-collapsed .sb-toggle .lbl { display: none; }
 }
 .char-card:hover { transform: translateY(-2px); border-color: rgba(214, 181, 109, 0.32); }
 .char-thumb { position: relative; width: 100%; aspect-ratio: 1 / 1; background: var(--bg-2); }
-.char-thumb img, .char-thumb .img-fallback { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 绝对定位而不是 height:100%：流内子元素会把 aspect-ratio 的方框反撑高（实测 1118×1135），
+   封面就不再是正方形。绝对定位后缩略图尺寸只由 aspect-ratio 决定。 */
+.char-thumb img, .char-thumb .img-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 /* 没有参考图时的首字占位：比"空白灰块"更能一眼分辨是谁 */
 .char-ph {
   width: 100%; height: 100%;

@@ -43,7 +43,7 @@ export default async function characters(container, params) {
         ${icon('info', 12)} 「外貌锁定」的角色，生成时会以其档案中的长相与服装为准，避免同一角色在多个镜头里换脸。
       </div>
     </div>
-    <div id="grid">${skeleton('asset', 8)}</div>`;
+    <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill,minmax(212px,1fr))">${skeleton('asset', 8)}</div>`;
 
   const picker = container.querySelector('#p-picker');
   const qInput = container.querySelector('#q');

@@ -211,7 +211,9 @@ try {
       return d.some((p) => p.name === '浏览器验收剧');
     }, '项目落盘');
     ok('创建项目后接口可读回', true);
-    ok('创建后弹窗关闭', await cdp.eval(`!document.querySelector('.modal')`));
+    // 竞态修复：上面的"落盘"只证明服务端已写入，客户端的 closeModal() 是同一轮异步里后跑的。
+    // 直接立刻读 .modal 会偶发假红（本轮真的红过一次）。改成有界等待——断言"会关"而不是"此刻已关"。
+    ok('创建后弹窗关闭', await waitFor(() => cdp.eval(`!document.querySelector('.modal')`), '创建后弹窗关闭', 4000).then(() => true).catch(() => false));
 
     group('设置页');
     await cdp.eval(`location.hash = '#/settings'`);
@@ -1236,6 +1238,21 @@ try {
       const cover = await cdp.eval(`const el = document.querySelector('.char-card[data-id="${c.id}"] .char-thumb img'); return el ? { alt: el.getAttribute('alt'), w: el.naturalWidth } : null;`);
       ok('参考图渲染为卡片封面且带 alt（真加载成功，不是坏链占位）',
         coverShown && !!cover && String(cover.alt).includes('浏览器角色') && cover.w > 0, JSON.stringify(cover));
+      // 布局几何：卡片网格必须真的多列、封面必须真的是正方形。
+      // 事故：角色库页写 <div id="grid"> 漏了 class="grid" → 整页塌成一列 1120px 宽的巨大卡片；
+      // 四套断言与 ui-audit 全绿（元素都在、不溢出、字号对比度都合规，只是布局根本没生效）。
+      // 教训：只断言"元素存在"永远测不出布局塌陷，得断言几何。
+      const geo = await cdp.eval(`const g = document.querySelector('#grid');
+        if (!g) return null;
+        const cs = getComputedStyle(g);
+        const cards = Array.from(document.querySelectorAll('.char-card'));
+        const thumbs = cards.map((c) => { const r = c.querySelector('.char-thumb').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
+        return { display: cs.display, cols: cs.gridTemplateColumns.split(' ').filter((x) => x !== 'none').length,
+          cardW: cards.map((c) => Math.round(c.getBoundingClientRect().width)), thumbs };`);
+      ok('角色卡片是真正的多列网格（不是塌成一列的巨卡）',
+        !!geo && geo.display === 'grid' && geo.cols >= 2 && geo.cardW.every((w) => w < 420), JSON.stringify(geo && { display: geo.display, cols: geo.cols, cardW: geo.cardW }));
+      ok('卡片封面是正方形（流内图片不得把 aspect-ratio 方框撑高）',
+        !!geo && geo.thumbs.length > 0 && geo.thumbs.every(([w, h]) => Math.abs(w - h) <= 2), JSON.stringify(geo && geo.thumbs));
       await fetch(`http://127.0.0.1:${port}/api/images/${refImg.id}`, { method: 'DELETE' }).catch(() => {});
 
       // 绑定到分镜 → 行内芯片可见

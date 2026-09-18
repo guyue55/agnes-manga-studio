@@ -366,6 +366,27 @@ console.log(`\n${'═'.repeat(52)}`);
 // 检查器自身也曾误报（首版 3 条全是假阳性）：①扫到自己注释里的示例文本
 // ②#p-picker 是动态 id（页面传 {id:'p-picker'}，源码写 id="${id}"）。
 // 教训：会喊狼来了的检查器比没有更糟——故此处剥注释 + 对动态值给出明确解析规则。
+group('布局类名不得静默塌陷（id 有、class 漏）');
+{
+  // 事故：角色库页写 `<div id="grid">` 而漏了 `class="grid"` —— 元素全在、断言全绿、audit 零发现，
+  // 但整页塌成一列 1120px 宽的巨大卡片。只查"元素存在"的检查永远抓不到这类问题。
+  const files = listJs(path.join(PUB, 'js', 'pages'));
+  const bad = [];
+  let seen = 0;
+  for (const f of files) {
+    const src = read(f);
+    for (const m of src.matchAll(/id="grid"/g)) {
+      const lt = src.lastIndexOf('<', m.index);
+      const gt = src.indexOf('>', m.index);
+      const tag = src.slice(lt, gt + 1);
+      seen++;
+      if (!/class="[^"]*\bgrid\b/.test(tag)) bad.push(`${path.basename(f)}: ${tag.slice(0, 70)}`);
+    }
+  }
+  ok('确实扫到了 id="grid" 容器（自证非空跑）', seen > 0, `扫到 ${seen} 处`);
+  ok('带 id="grid" 的容器必须同时带 class="grid"', bad.length === 0, bad.join(' | '));
+}
+
 group('ui-audit 采样选择器必须真实存在（防"死采样"）');
 {
   // 事故：ui-audit 的对比度采样清单里 .note.muted / .muted / .seg-btn / .sub / .prompt-cell 五个
