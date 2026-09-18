@@ -737,6 +737,22 @@ group('SSE');
 }
 
 // ── 16. 清理 ─────────────────────────────────────────────────
+group('B3.5 引用守卫删除');
+{
+  // 删图/删视频不再是"悬挂引用制造机"：全量解关联并回传镜头号，状态同步回退
+  const img = await api('POST', '/api/agnes/image', { prompt: 'ref guard probe', size: '1024x1024', project_id: PROJECT_ID });
+  const IID = img.data.asset.id;
+  const sb1 = await api('POST', '/api/storyboards', { project_id: PROJECT_ID, shot_number: 701 });
+  const SB1 = sb1.data.id;
+  await api('PUT', '/api/storyboards/' + SB1, { linked_image_id: IID, status: 'image_ready' });
+  const del1 = await api('DELETE', '/api/images/' + IID);
+  eq('删图回传解关联数', del1.data && del1.data.unlinked, 1);
+  const list1 = await api('GET', `/api/storyboards?project_id=${PROJECT_ID}`);
+  const row1 = (list1.data || []).find((x) => x.id === SB1);
+  ok('镜头 linked_image_id 已清空', row1 && !row1.linked_image_id, JSON.stringify(row1 && row1.linked_image_id));
+  eq('镜头状态回退 pending', row1 && row1.status, 'pending');
+}
+
 group('级联删除');
 {
   // 先记录本项目落盘的本地文件，级联删除后必须一起消失（防孤儿文件占盘）

@@ -170,9 +170,9 @@ export default async function assets(container, params) {
     });
     el.querySelectorAll('[data-del]').forEach((b) => b.onclick = async (e) => {
       e.stopPropagation();
-      if (!(await confirm({ text: '删除这张图片？本地文件也会删。', danger: true, okText: '删除' }))) return;
+      if (!(await confirm({ text: '删除这张图片？本地文件也会删；引用它的镜头会自动解除关联。', danger: true, okText: '删除' }))) return;
       const r = await api.deleteImage(b.getAttribute('data-del'));
-      if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
+      if (r.ok) { toast.ok(r.data.unlinked ? `已删除，并解除镜头 ${r.data.shots.map((n) => '#' + n).join('、')} 的关联` : '已删除'); load(); } else toast.err(r.error);
     });
     el.querySelectorAll('[data-zoom],[data-id]').forEach((c) => {
       c.onclick = (e) => {
@@ -214,9 +214,9 @@ export default async function assets(container, params) {
     });
     el.querySelectorAll('[data-delv]').forEach((b) => b.onclick = async (e) => {
       e.stopPropagation();
-      if (!(await confirm({ text: '删除这个视频？本地文件会一起删。', danger: true, okText: '删除' }))) return;
+      if (!(await confirm({ text: '删除这个视频？本地文件会一起删；引用它的镜头会自动解除关联。', danger: true, okText: '删除' }))) return;
       const r = await api.deleteVideo(b.getAttribute('data-delv'));
-      if (r.ok) { toast.ok('已删除'); load(); } else toast.err(r.error);
+      if (r.ok) { toast.ok(r.data.unlinked ? `已删除，并解除镜头 ${r.data.shots.map((n) => '#' + n).join('、')} 的关联` : '已删除'); load(); } else toast.err(r.error);
     });
     el.querySelectorAll('[data-open],[data-vid]').forEach((c) => {
       c.onclick = (e) => {
