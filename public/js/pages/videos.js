@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, DURATION_PRESETS, VIDEO_RESOLUTIONS, VIDEO_MODES,
-  IMAGE_ROLES, statusBadge, relTime, modelChoices,
+  IMAGE_ROLES, statusBadge, relTime, modelChoices, sizeForAspect,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, prompt as promptDlg, setBusy } from '../ui.js';
@@ -14,13 +14,15 @@ import { state, navigate } from '../app.js';
 
 export default async function videos(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
+  const res0 = (() => { const v0 = sizeForAspect(aspectOf(), 'video'); const i = VIDEO_RESOLUTIONS.findIndex((r) => r.w === v0.w && r.h === v0.h); return i < 0 ? 0 : i; })();
   let mode = 't2v';
   let submitting = false;
   let recent = [];
   let images = [];
 
   const S = {
-    t2v: { prompt: '', neg: 'low quality, blurry, distorted face, flickering, unstable motion', frames: 1, fps: 24, seed: '', res: 0 },
+    t2v: { prompt: '', neg: 'low quality, blurry, distorted face, flickering, unstable motion', frames: 1, fps: 24, seed: '', res: res0 },
     i2v: {
       image: params.image_url || '',
       prompt: 'Animate the image with subtle natural motion, slight hair movement, slow camera push in, keep character stable',
@@ -273,7 +275,7 @@ export default async function videos(container, params) {
       if (!S.i2v.prompt.trim()) { toast.err('请输入运动描述'); return; }
       Object.assign(payload, {
         mode: 'image_to_video', prompt: S.i2v.prompt, negative_prompt: S.i2v.neg,
-        image: S.i2v.image, width: 1152, height: 768,
+        image: S.i2v.image, ...sizeForAspect(aspectOf(), 'video'),
         num_frames: DURATION_PRESETS[S.i2v.frames].frames, frame_rate: S.i2v.fps, seed: S.i2v.seed || undefined,
       });
     } else if (mode === 'multi') {
@@ -283,7 +285,7 @@ export default async function videos(container, params) {
       if (!S.multi.prompt.trim()) { toast.err('请输入视频提示词'); return; }
       Object.assign(payload, {
         mode: 'multi_image', prompt: S.multi.prompt, source_images: valid,
-        width: 1152, height: 768, num_frames: DURATION_PRESETS[S.multi.frames].frames,
+        ...sizeForAspect(aspectOf(), 'video'), num_frames: DURATION_PRESETS[S.multi.frames].frames,
         frame_rate: S.multi.fps, seed: S.multi.seed || undefined,
       });
     } else {
@@ -292,7 +294,7 @@ export default async function videos(container, params) {
       if (S.kf.middle.trim()) frames.splice(1, 0, { url: S.kf.middle, role: '中间帧' });
       Object.assign(payload, {
         mode: 'keyframe', prompt: S.kf.prompt, source_images: frames, mode_flag: 'keyframes',
-        width: 1152, height: 768, num_frames: DURATION_PRESETS[S.kf.frames].frames,
+        ...sizeForAspect(aspectOf(), 'video'), num_frames: DURATION_PRESETS[S.kf.frames].frames,
         frame_rate: S.kf.fps, seed: S.kf.seed || undefined,
       });
     }

@@ -85,6 +85,15 @@ export const DURATION_PRESETS = [
   { label: '约 10 秒', frames: 241 },
   { label: '约 18 秒', frames: 441 },
 ];
+// T-1：项目画幅 aspect_ratio → 合法产出尺寸映射。Agnes 图片侧支持 IMAGE_SIZES 各档，
+// 视频侧只有三档固定宽高，取"同比例最接近"档；未知/缺省回落 9:16 竖屏（与后端默认一致）。
+export function sizeForAspect(aspect, kind = 'image') {
+  const key = String(aspect || '').slice(0, 4); // '9:16 竖屏' → '9:16'
+  const img = { '9:16': '720x1280', '16:9': '1280x720', '1:1': '1024x1024', '3:4': '768x1024', '4:3': '1024x768' };
+  const vid = { '9:16': { w: 768, h: 1152 }, '16:9': { w: 1152, h: 768 }, '1:1': { w: 1024, h: 1024 }, '3:4': { w: 768, h: 1152 }, '4:3': { w: 1152, h: 768 } };
+  if (kind === 'video') return vid[key] || vid['9:16'];
+  return img[key] || img['9:16'];
+}
 // R4：分镜 duration_seconds 折算为 Agnes num_frames。Agnes 要求帧数 = 8n+1、上限 441、默认 24fps。
 // 给定秒数取最接近的合法值并钳进 [81, 441]，让"时长"这一列真正影响产出而不是被 121 写死覆盖。
 export function secondsToFrames(sec, fps = 24) {

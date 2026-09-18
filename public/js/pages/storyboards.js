@@ -4,7 +4,7 @@
  * 支持批量补提示词、批量出图、批量出视频（带队列进度）。
  */
 import {
-  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames,
+  icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect,
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
@@ -14,6 +14,7 @@ import { state, onEvent } from '../app.js';
 export default async function storyboards(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
   let episode = Number(params.episode || 1);
+  const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   let rows = [];
   const selected = new Set();
   let job = null;
@@ -321,7 +322,7 @@ ${text}`,
         storyboard_id: s.id,
         project_id: projectId,
         prompt: s.image_prompt,
-        size: '1024x1024',
+        size: sizeForAspect(aspectOf(), 'image'),
         usage_type: 'storyboard',
       })),
       concurrency: 3,
@@ -356,8 +357,7 @@ ${text}`,
         negative_prompt: s.negative_prompt,
         num_frames: secondsToFrames(s.duration_seconds),
         frame_rate: 24,
-        width: 1152,
-        height: 768,
+        ...sizeForAspect(aspectOf(), 'video'),
       };
     });
     if (downgraded) {
@@ -378,7 +378,7 @@ ${text}`,
         project_id: projectId,
         storyboard_id: s.id,
         prompt: s.image_prompt,
-        size: '1024x1024',
+        size: sizeForAspect(aspectOf(), 'image'),
         usage_type: 'storyboard',
       });
       if (r.ok) { toast.ok('图片已生成并关联到分镜'); load(); } else toast.err(r.error);
@@ -402,8 +402,7 @@ ${text}`,
         negative_prompt: s.negative_prompt,
         num_frames: secondsToFrames(s.duration_seconds),
         frame_rate: 24,
-        width: 1152,
-        height: 768,
+        ...sizeForAspect(aspectOf(), 'video'),
       });
       if (r.ok) { toast.ok('视频任务已提交，去「镜头任务」看进度'); location.hash = '#/tasks'; }
       else toast.err(r.error);

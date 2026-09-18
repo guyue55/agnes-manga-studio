@@ -2,7 +2,7 @@
  * images.js — 图片生成
  * 文生图 / 图生图。生成结果直接落盘到本地素材库（不再依赖公网图床）。
  */
-import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices } from '../consts.js';
+import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, confirm, options, setBusy } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
@@ -10,6 +10,7 @@ import { state, navigate } from '../app.js';
 
 export default async function images(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   let storyboardId = params.storyboard || '';
   let mode = 't2i';
   let items = [];
@@ -43,7 +44,7 @@ export default async function images(container, params) {
               <textarea class="textarea mono" id="t2i-prompt" rows="6" placeholder="描述画面，支持中英文&#10;例：cinematic anime style, a young woman in red dress, golden hour, detailed background"></textarea>
             </div>
             <div class="grid g2" style="gap:0 12px">
-              <div class="field"><label>尺寸</label><select class="select" id="t2i-size">${options(IMAGE_SIZES, 'value', 'label', '1024x1024')}</select></div>
+              <div class="field"><label>尺寸</label><select class="select" id="t2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
               <div class="field"><label>用途</label><select class="select" id="t2i-usage">${options(IMAGE_USAGES, 'value', 'label', 'storyboard')}</select></div>
             </div>
           </div>
@@ -60,7 +61,7 @@ export default async function images(container, params) {
               <textarea class="textarea" id="i2i-prompt" rows="5" placeholder="描述想怎么改这张图…"></textarea>
             </div>
             <div class="grid g2" style="gap:0 12px">
-              <div class="field"><label>输出尺寸</label><select class="select" id="i2i-size">${options(IMAGE_SIZES, 'value', 'label', '1024x1024')}</select></div>
+              <div class="field"><label>输出尺寸</label><select class="select" id="i2i-size">${options(IMAGE_SIZES, 'value', 'label', sizeForAspect(aspectOf(), 'image'))}</select></div>
               <div class="field">
                 <label>保留原构图</label>
                 <div class="row"><button type="button" role="switch" class="switch on" id="i2i-keep" aria-checked="true"></button><span style="font-size:12px;color:var(--text-3)">开启后追加 preserve composition</span></div>
