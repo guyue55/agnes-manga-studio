@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
-  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS, characterRoster,
+  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS, characterRoster, negativePhrase,
   effectiveVideoSeconds, VIDEO_DURATION_RANGE,
   CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
@@ -421,7 +421,10 @@ export default async function storyboards(container, params) {
     // 图片是静帧：运镜只认机位/视角类；视频列全量（见 consts.js cameraMovePhrase 的 forStill）
     const cam = cameraMovePhrase(s.camera_move, field === 'image_prompt');
     const withCam = cam && !withChars.toLowerCase().includes(cam.toLowerCase()) ? `${withChars}, ${cam}` : withChars;
-    const final = artStylePhrase(withCam, style);
+    // 图片是**并入正向提示词**发出去的（网关不接受单发 negative_prompt 字段，见 consts.js 注释）；
+    // 视频走各自的模型协议（2.0 单发字段 / 2.5 并入），所以这里只对图片列算这一句
+    const withNeg = field === 'image_prompt' ? negativePhrase(artStylePhrase(withCam, style), s.negative_prompt) : artStylePhrase(withCam, style);
+    const final = withNeg;
     const injected = chars.filter((c) => withChars.includes(c.name));
     // data-prompt 给测试与后续就地编辑一个稳定锚点（列内还有别的 .cell-ellipsis，靠选择器顺序取会取错）
     return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
@@ -429,7 +432,8 @@ export default async function storyboards(container, params) {
       ${withCards !== text ? `<span class="prompt-tag" title="原著场景道具由系统统一注入：${esc(cards.filter((c) => withCards.includes(c.name)).map((c) => c.name).join('、'))}">+场景</span>` : ''}
       ${withChars !== withCards ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
       ${withCam !== withChars ? `<span class="prompt-tag" title="运镜由系统统一注入：${esc(cam)}">+运镜</span>` : ''}
-      ${style && final !== withCam ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
+      ${style && withNeg !== withCam ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
+      ${field === 'image_prompt' && String(s.negative_prompt || '').trim() && withNeg !== artStylePhrase(withCam, style) ? `<span class="prompt-tag" title="负面提示词并入正向提示词一起发出：${esc(s.negative_prompt)}">+负面</span>` : ''}
       <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的原著场景道具、角色与画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }

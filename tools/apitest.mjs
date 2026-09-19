@@ -171,6 +171,14 @@ const mock = http.createServer((req, res) => {
       try { lastImageCreate = JSON.parse(body); } catch { lastImageCreate = { bad_json: body }; }
       // R10 探针：200 + HTML → 后端解析失败 → 502（这是唯一能确定性触发 5xx 的真实路径）
       if (badJsonUpstream) { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<html>502 Bad Gateway</html>'); }
+      // 网关对**未知字段是硬拒**（实测报过 `negative_prompt is not an allowed request field`）。
+      // mock 必须同样严格：否则"单发了一个网关不认的字段"这类错误在测试里永远看不见
+      // —— 批 8 补 14 的对照 AU 一开始就是这么静默通过的。
+      if (lastImageCreate && lastImageCreate.bad_json === undefined) {
+        const ALLOWED = ['model', 'prompt', 'size', 'image'];
+        const unknown = Object.keys(lastImageCreate).filter((k) => !ALLOWED.includes(k));
+        if (unknown.length) return send(400, { error: { message: `${unknown[0]} is not an allowed request field`, type: 'invalid_request_error' } });
+      }
       if (imagesDelayMs) {
         const payload = lastImageCreate && lastImageCreate.model === 'mock-img-url-ok' ? { data: [{ url: `${MOCK_BASE}/pixel.png` }] } : { data: [{ b64_json: PNG_1PX }] };
         return setTimeout(() => send(200, payload), imagesDelayMs);
@@ -211,6 +219,19 @@ const mock = http.createServer((req, res) => {
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 批 8 补 14：分镜行自带默认负面词，图片链现在会把它并入正向提示词一起发出。
+// 组合类断言（内容 → 卡片 → 角色 → 运镜 → 画风）只关心前缀那一段，负面词另有专门的钉子，
+// 所以这里统一剥掉**已知的**默认后缀再比对。
+// 注意：只认这一个后缀 —— 出现别的尾巴就原样返回、让断言红出来，绝不"顺手洗白"。
+const DEFAULT_NEG = 'low quality, blurry, distorted face';
+const NEG_TAG = '。避免出现：';
+const negless = (v) => {
+  const t = String(v == null ? '' : v);
+  const i = t.lastIndexOf(NEG_TAG);
+  if (i < 0) return t;
+  return t.slice(i + NEG_TAG.length) === DEFAULT_NEG ? t.slice(0, i) : t;
+};
 // T9：随机端口可能撞 mock/srv 互相或撞外部占用 → 服务端起不来被误报成断言失败。
 // 实测两端口都空闲才返回，且强制 srv 与 mock 相距 ≥2。
 const portBusy = (p) => new Promise((res) => {
@@ -535,7 +556,14 @@ group('视频任务');
   ok('首片完成回写镜头状态 video_ready', !!linked && linked.status === 'video_ready' && linked.linked_video_id === asset.id, JSON.stringify(linked && { s: linked.status, v: linked.linked_video_id }));
   ok('存了原始状态响应', !!asset.raw_status_response);
 
-  // 开了自动保存，应该已经落盘
+  // 开了自动保存，应该已经落盘。
+  // 注意：status 变 completed 与"下载落盘完成"不是同一时刻 —— 轮询把状态推进到 completed 之后
+  // 才去下载，所以这里必须**等落盘**，不能拿循环退出时那一份快照断言（否则偶发红，第 96 轮门禁踩到）
+  for (let i = 0; i < 30 && !asset.local_file; i++) {
+    await sleep(400);
+    const v = await api('GET', `/api/videos?project_id=${PROJECT_ID}`);
+    asset = v.data[0];
+  }
   ok('视频已自动保存到本机', !!asset.local_file, String(asset.local_file));
   if (asset.local_file) {
     ok('本地视频文件存在', fs.existsSync(asset.local_file), asset.local_file);
@@ -1177,12 +1205,12 @@ group('R15 角色注入（使用点 / 锁定语义 / 去重 / 视频口径 / 导
   ok('锁定角色即使提示词提到名字也照注入（一致性的来源）', String(lastImageCreate.prompt).includes('林岚：黑色长直发、丹凤眼，身着白色衬衫'), String(lastImageCreate.prompt));
   await api('POST', '/api/agnes/image', { prompt: '老周点点头', project_id: PID, storyboard_id: sbZhou.data.id, size: '1024x1024' });
   eq('未锁定角色在提示词已提名字时不重复注入（尊重用户自己写的）',
-    String(lastImageCreate.prompt), '老周点点头, japanese anime style, thick painterly shading');
+    negless(lastImageCreate.prompt), '老周点点头, japanese anime style, thick painterly shading');
 
   // ③ 去重：提示词里已经有同样的长相描述 → 不追加
   await api('POST', '/api/agnes/image', { prompt: '黑色长直发、丹凤眼，身着白色衬衫的女孩', project_id: PID, storyboard_id: sbLin.data.id, size: '1024x1024' });
   eq('同样的长相描述已在提示词里 → 不重复追加',
-    String(lastImageCreate.prompt), '黑色长直发、丹凤眼，身着白色衬衫的女孩, japanese anime style, thick painterly shading');
+    negless(lastImageCreate.prompt), '黑色长直发、丹凤眼，身着白色衬衫的女孩, japanese anime style, thick painterly shading');
 
   // ④ 无绑定 → 不注入（角色库不能变成"到处都在注入"）
   await api('POST', '/api/agnes/image', { prompt: 'empty street', project_id: PID, size: '1024x1024' });
@@ -1242,7 +1270,7 @@ group('R19 运镜字段与注入口径（白名单 / 静帧闸门 / 导出列）
   ok('i2v 也注入运镜（长相由参考图决定，运动必须靠文字）',
     String(lastVideoCreate.prompt).includes('orbiting camera circling the subject'), String(lastVideoCreate.prompt));
   await api('POST', '/api/agnes/image', { prompt: 'a boy on a bridge', project_id: PID2, storyboard_id: badRow.id });
-  eq('图片侧：运动类运镜被跳过（静帧图表达不了运动）', String(lastImageCreate.prompt), 'a boy on a bridge');
+  eq('图片侧：运动类运镜被跳过（静帧图表达不了运动）', negless(lastImageCreate.prompt), 'a boy on a bridge');
   await api('PUT', `/api/storyboards/${badRow.id}`, { camera_move: '俯视' });
   await api('POST', '/api/agnes/image', { prompt: 'a boy', project_id: PID2, storyboard_id: badRow.id });
   ok('图片侧：机位类运镜照常注入',
@@ -1833,6 +1861,67 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('负面提示词进出图提示词（批 8 补 14：此前图片链完全没读它）');
+{
+  const pj = await api('POST', '/api/projects', { name: '负面词测试剧' });
+  const PID = pj.data.id;
+  const sb = await api('POST', '/api/storyboards', { rows: [{
+    project_id: PID, episode_number: 1, shot_number: 1, scene_description: '甲',
+    image_prompt: 'a girl standing', negative_prompt: 'low quality, blurry',
+  }] });
+  const SB1 = sb.data.rows[0].id;
+  ok('分镜行本来就有负面提示词（此前只有视频用它）', sb.data.rows[0].negative_prompt === 'low quality, blurry');
+
+  // ① 出图时并入正向提示词 —— 不单发字段（网关对未知字段硬拒，单发会让出图 400）
+  lastImageCreate = null;
+  const r1 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: SB1, prompt: 'a girl standing' });
+  eq('出图 200', r1.status, 200);
+  const sentPrompt = String((lastImageCreate && lastImageCreate.prompt) || '');
+  ok('负面词真的进了发出去的提示词', sentPrompt.includes('避免出现：low quality, blurry'), sentPrompt);
+  ok('**不单发** negative_prompt 字段（单发会被网关判成不允许的字段 → 整条出图 400）',
+    !(lastImageCreate && 'negative_prompt' in lastImageCreate), JSON.stringify(Object.keys(lastImageCreate || {})));
+  ok('入库的提示词与发出的一致（溯源不能说一套做一套）',
+    String(r1.data.asset.generation_prompt).includes('避免出现：low quality, blurry'), r1.data.asset.generation_prompt);
+  eq('返回体如实给出用到的负面词', r1.data.negative_prompt, 'low quality, blurry');
+
+  // ② 溯源里负面词单独留一份（查得出来"这句是谁加的"）
+  // 注意：/api/tasks 只按 task_type 过滤、**不认 project_id**，且默认只回最近 300 条
+  // （created_at 是秒级，同一秒内插入的会被稳定排序截掉尾巴）—— 所以要按类型收窄再自己找
+  const task = (await api('GET', '/api/tasks?task_type=image')).data.find((t) => t.storyboard_id === SB1) || {};
+  eq('生成任务里负面词单独记一份', task.input_content.negative_prompt, 'low quality, blurry');
+  eq('任务里存的 prompt 是并入后的完整提示词', String(task.input_content.prompt).includes('避免出现：'), true);
+
+  // ③ 显式传的优先于行上的（同一口径：显式 → 行）
+  lastImageCreate = null;
+  await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: SB1, prompt: 'a girl standing', negative_prompt: 'extra fingers' });
+  const sent2 = String((lastImageCreate && lastImageCreate.prompt) || '');
+  ok('显式传的负面词优先', sent2.includes('避免出现：extra fingers') && !sent2.includes('low quality'), sent2);
+
+  // ④ 没显式填负面词的分镜行会**自带默认负面词** —— 以前它只被视频用，图片链静默丢掉；
+  // 现在图片链也认它（这正是本轮要修的那一半）。所以这里如实断言默认词被并入了。
+  const sb2 = await api('POST', '/api/storyboards', { rows: [{ project_id: PID, episode_number: 1, shot_number: 2, scene_description: '乙', image_prompt: 'a cat' }] });
+  const SB2 = sb2.data.rows[0].id;
+  eq('没填时行上有默认负面词（分镜表历来如此）', sb2.data.rows[0].negative_prompt, DEFAULT_NEG);
+  lastImageCreate = null;
+  await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: SB2, prompt: 'a cat' });
+  eq('图片链也认默认负面词（此前只有视频认它）',
+    String((lastImageCreate && lastImageCreate.prompt) || ''), `a cat${NEG_TAG}${DEFAULT_NEG}`);
+
+  // ⑤ 显式传空白 = "没说" → 回落到行上的默认词，而不是拼出一个空的"避免出现："
+  lastImageCreate = null;
+  await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: SB2, prompt: 'a cat', negative_prompt: '   ' });
+  eq('空白负面词回落到行上的默认词（不拼出空尾巴）',
+    String((lastImageCreate && lastImageCreate.prompt) || ''), `a cat${NEG_TAG}${DEFAULT_NEG}`);
+
+  // ⑥ 批量出图同一条路：只带 storyboard_id 也要生效（服务端从行上取）
+  lastImageCreate = null;
+  const bj = await api('POST', '/api/batch/images', { items: [{ project_id: PID, storyboard_id: SB1, prompt: 'a girl standing', size: '1024x1024' }], concurrency: 1 });
+  for (let i = 0; i < 40; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${bj.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  ok('批量出图也并入了负面词（同一份使用点逻辑，不是两条路）',
+    String((lastImageCreate && lastImageCreate.prompt) || '').includes('避免出现：low quality, blurry'), String((lastImageCreate && lastImageCreate.prompt) || ''));
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('角色参考图进出图输入（批 8 补 13：传了参考图就该真的用上）');
 {
   const pj = await api('POST', '/api/projects', { name: '参考图测试剧' });
@@ -1860,7 +1949,7 @@ group('角色参考图进出图输入（批 8 补 13：传了参考图就该真�
   ok('上报是哪几个角色的参考图（用户知道是谁的脸在起作用）',
     (r1.data.reference_images.characters || []).includes('参考图角色'), JSON.stringify(r1.data.reference_images.characters));
   ok('入库的提示词仍只存镜头内容（参考图是在使用点注入的，不写进 image_prompt）',
-    !String(r1.data.asset.generation_prompt).includes('example.com') && r1.data.asset.generation_prompt === 'a girl, 出场角色——参考图角色：长发及腰',
+    !String(r1.data.asset.generation_prompt).includes('example.com') && negless(r1.data.asset.generation_prompt) === 'a girl, 出场角色——参考图角色：长发及腰',
     r1.data.asset.generation_prompt);
 
   // ② 溯源要记**实际发出**的输入（记 body.image 的话，自动带上的参考图就查不到了）
@@ -2315,9 +2404,9 @@ group('原著卡片注入（批 8 补 2：使用点 / 只注入看得见的两�
 
   // ③ 没绑定 → 不注入（原著卡片不能变成"到处都在注入"）
   await api('POST', '/api/agnes/image', { prompt: 'empty street', project_id: PID, storyboard_id: sbNone.id, size: '1024x1024' });
-  eq('镜头未绑定原著卡片 → 不注入', String(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
+  eq('镜头未绑定原著卡片 → 不注入', negless(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
   await api('POST', '/api/agnes/image', { prompt: 'empty street', project_id: PID, storyboard_id: sbBogus.id, size: '1024x1024' });
-  eq('失效 id（卡片已删）→ 静默不注入，不报错也不产出空壳', String(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
+  eq('失效 id（卡片已删）→ 静默不注入，不报错也不产出空壳', negless(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
 
   // ④ 去重：描述已在提示词里 → 不追加
   await api('POST', '/api/agnes/image', { prompt: '喧闹潮湿的临江茶馆', project_id: PID, storyboard_id: sbCards.id, size: '1024x1024' });

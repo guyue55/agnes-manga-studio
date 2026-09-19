@@ -503,6 +503,17 @@ export const ART_STYLE_MAP = {
   '黑白漫画': 'black and white manga, screentone shading',
   '3D渲染': '3d render, cinematic lighting',
 };
+/**
+ * R15 前端镜像：与 lib/story.js 的 negativePhrase **逐字同构**（uitest 有文本比对钉）。
+ * 负面提示词是**并入正向提示词**发出的（网关对未知字段硬拒，单发会 400），
+ * 所以"实际发出"预览必须把它算进去 —— 否则预览里看不到的那半句，用户永远不知道它在起作用。
+ */
+export function negativePhrase(prompt, neg) {
+  const n = String(neg || '').trim();
+  if (!n) return prompt;
+  return `${prompt}。避免出现：${n}`;
+}
+
 export function artStylePhrase(prompt, style) {
   const st = String(style || '').trim();
   if (!st) return prompt;

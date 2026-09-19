@@ -551,6 +551,17 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('负面提示词并入正向提示词（批 8 补 14：一份措辞，三处同源）');
+{
+  const { negativePhrase } = require('./lib/story.js');
+  eq('有负面词时并入正向提示词（与视频 2.5 系同一措辞）', negativePhrase('一只猫', 'low quality'), '一只猫。避免出现：low quality');
+  eq('没填就不拼出空尾巴', negativePhrase('一只猫', ''), '一只猫');
+  eq('只有空白也算没填（否则会发出一个空的"避免出现："）', negativePhrase('一只猫', '   '), '一只猫');
+  eq('undefined / null 同样当没填', negativePhrase('一只猫') + '/' + negativePhrase('一只猫', null), '一只猫/一只猫');
+  eq('负面词两端的空白会被去掉', negativePhrase('一只猫', '  blurry  '), '一只猫。避免出现：blurry');
+  eq('并入是**追加**，不改动用户写的正向提示词', negativePhrase('一只猫, watercolor', 'blurry').startsWith('一只猫, watercolor。'), true);
+}
+
 group('剧本/分镜的过期体检（批 8 补 12：输入变了、产物没重生成）');
 {
   const { planEpisodes, episodeInputDigest, digestText, auditStaleness } = require('./lib/story.js');

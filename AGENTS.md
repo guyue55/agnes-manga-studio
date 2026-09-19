@@ -75,10 +75,17 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   用不上几张**如实上报**（`reference_images.local_skipped`），批量入口在**花钱之前**预检告知；
   上限 4 张（多了互相打架也拖慢生成），且 `used` 必须等于**实际发出**的张数；
   `generation_tasks` 记的是**实际发出**的输入（记 `body.image` 就查不到自动带上的参考图）
+- 负面提示词进出图提示词（批 8 补 14）：分镜行一直带 `negative_prompt`（默认 `low quality, blurry, distorted face`），
+  **视频用了它、图片链却完全没读** —— 界面看得见、出图时被静默丢掉。措辞收敛成**一份实现**
+  `story.negativePhrase`（图片链 / 视频 2.5 系 `v25Body` / 前端"实际发出"预览三处同源，uitest 有同构钉）；
+  图片链从**分镜行**取（显式传的优先，与运镜/角色/卡片同一口径）并入正向提示词发出，
+  **绝不单发 `negative_prompt` 字段** —— 网关对未知字段硬拒（实测 `negative_prompt is not an allowed request field`，
+  单发会让整条出图链 400）；空/空白/undefined 一律视为没填（否则会发出空尾巴"避免出现："）。
+  apitest 的 mock 网关也**同样严格拒未知字段**（此前照单全收，导致"单发不合法字段"这类错误在测试里看不见）
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 571 / apitest 740 / uitest 983 / browser-test 425），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 577 / apitest 753 / uitest 989 / browser-test 428），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

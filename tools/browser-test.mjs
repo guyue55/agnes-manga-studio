@@ -1845,6 +1845,61 @@ try {
       }
     }
 
+    group('负面提示词契约（批 8 补 14：图片链此前完全没读它）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before14 = await J('/api/settings');
+      const pj14 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '负面词验收剧' }) });
+      const pid = pj14.id;
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      let sentPrompt = null;
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        if (u.pathname === '/pixel.png') { res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': PNG.length }); return res.end(PNG); }
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (u.pathname === '/v1/images/generations') {
+            let b = {}; try { b = JSON.parse(body); } catch { /* 原样通过 */ }
+            sentPrompt = b.prompt || '';
+            return send(200, { data: [{ url: `http://127.0.0.1:${mock.address().port}/pixel.png` }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'neg-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: [{ project_id: pid, episode_number: 1, shot_number: 1, scene_description: '甲',
+            image_prompt: 'a girl standing', negative_prompt: 'low quality, blurry', duration_seconds: 3 }] }) });
+
+        await cdp.eval(`localStorage.removeItem('agnes.cost.skipUntil'); location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-prompt="image_prompt"] .prompt-tag');`), '图片列注入标签', 12000);
+        const tags = await cdp.eval(`return Array.from(document.querySelectorAll('[data-prompt="image_prompt"] .prompt-tag')).map((x) => x.textContent.trim());`);
+        ok('图片列显示 +负面 标签（不然用户不知道负面词在起作用）',
+          (tags || []).includes('+负面'), JSON.stringify(tags));
+        const tip = await cdp.eval(`return document.querySelector('[data-prompt="image_prompt"] .inline-target').title || '';`);
+        ok('悬停"实际发出"里能看到负面词被并入（预览与后端同一套算法）',
+          /避免出现：low quality, blurry/.test(tip), tip.replace(/\s+/g, ' ').slice(0, 200));
+
+        await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('.modal-foot [data-yes]');`), '出图计费确认', 8000);
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /图片已生成/.test(document.body.innerText);`), '出图完成', 20000).catch(() => false);
+        ok('真正发出去的提示词里含负面词，且**没有**单发 negative_prompt 字段（网关会 400）',
+          /避免出现：low quality, blurry/.test(String(sentPrompt)), String(sentPrompt).slice(0, 200));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before14) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('角色参考图进出图输入（批 8 补 13：传了参考图就该真的用上）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

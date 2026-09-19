@@ -1239,12 +1239,31 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('参考图有上限（多了互相打架也拖慢生成）',
     /num\(opts\.max, 4\)/.test(routesSrc) && /\.slice\(0, 4\)/.test(routesSrc));
   ok('溯源记的是**实际发出**的输入（记 body.image 就查不到自动带上的参考图）',
-    /input_content: \{ prompt, size, image: inputImages\[0\] \|\| null, reference_images: ref\.urls \}/.test(routesSrc)
+    /input_content: \{ prompt, size, image: inputImages\[0\] \|\| null, reference_images: ref\.urls, negative_prompt: neg \}/.test(routesSrc)
     && /input_images: inputImages,/.test(routesSrc));
   ok('前端如实报"带上了几张参考图、是谁的"，本地文件用不上时明确警告',
     /已带上 \$\{ri\.used\} 张角色参考图/.test(boardsSrc) && /ri\.local_skipped/.test(boardsSrc));
   ok('批量出图在**花钱之前**预检参考图（先说清哪几张会真的进到出图输入）',
     /async function imageRefPrecheck\(shots\)/.test(boardsSrc) && /其中 \$\{refPre\.used\} 张角色参考图会作为出图输入/.test(boardsSrc));
+
+  // ── 负面提示词并入出图提示词（批 8 补 14）──
+  // 本组不在批 7 那个块里，agnes.js 的源码要自己读一份（同名变量在别的块里）
+  const agnes14 = read(path.join(ROOT, 'lib', 'agnes.js'));
+  const consts14 = read(path.join(PUB, 'js', 'consts.js'));
+  ok('负面提示词的措辞只有一份实现（图片链 / 视频 2.5 系 / 前端预览三处同源）',
+    /function negativePhrase\(prompt, neg\)/.test(storySrc)
+    && /const prompt = story\.negativePhrase\(finalPrompt\(body\.prompt, \{/.test(routesSrc)
+    && /body\.prompt = story\.negativePhrase\(params\.prompt, params\.negative_prompt\);/.test(agnes14));
+  ok('图片链从**分镜行**取负面提示词（前端只带 storyboard_id 也要生效）',
+    /const neg = str\(body\.negative_prompt\)\.trim\(\) \|\| str\(sbRow0\.negative_prompt\)\.trim\(\);/.test(routesSrc));
+  ok('不单发 negative_prompt 字段（网关对未知字段硬拒，单发会让出图 400）——理由写在注释里',
+    /not an allowed request field/.test(storySrc) && !/body\.negative_prompt = /.test(routesSrc));
+  ok('前端镜像与后端逐字同构（预览不能说一套、发出去是另一套）',
+    /export function negativePhrase\(prompt, neg\)/.test(consts14)
+    && /if \(!n\) return prompt;/.test(consts14) && /return `\$\{prompt\}。避免出现：\$\{n\}`;/.test(consts14));
+  ok('分镜表对图片列显示 +负面 标签（不然用户不知道它在起作用）',
+    /negativePhrase\(artStylePhrase\(withCam, style\), s\.negative_prompt\)/.test(boardsSrc)
+    && /\+负面<\/span>/.test(boardsSrc));
 
   // ── 剧本/分镜过期体检（批 8 补 12）──
   ok('过期体检是纯本地端点、并返回逐集状态与计数',
