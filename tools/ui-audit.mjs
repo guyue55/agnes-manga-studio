@@ -201,6 +201,8 @@ try {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
   });
   await putShot(sbIds[0], { characters: '审计角色乙' });                                       // 提到却没绑 → 要处理
+  // 画风写死（批 8 补 7）：体检面板里的"画风"行同样要有真实数据，否则那行布局是盲区
+  await putShot(sbIds[3], { image_prompt: 'cinematic close-up of a girl holding an umbrella, oil painting style, visible brush strokes, neon reflections across puddles' });
   await putShot(sbIds[1], { characters: '审计角色乙', character_ids: [charIds[1]], image_prompt: '审计角色乙站在雨里' }); // 绑了但没锁定 → 可优化
   // 素材/任务页此前是**空态**在受检——空态没有卡片，卡片的截断/对比度/可点目标全都没被量到
   // （与"角色卡必须有内容"同一个坑）。用 /api/import 塞一条图片与一条已完成视频，

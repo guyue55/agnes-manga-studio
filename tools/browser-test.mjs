@@ -1955,6 +1955,7 @@ try {
       let sawRoster = null;
       let sawSystem = '';
       let sawLookRule = false;
+      let lastUser = '';
       const mock = http.createServer((req, res) => {
         let body = '';
         req.on('data', (c) => { body += c; });
@@ -1967,10 +1968,16 @@ try {
           sawSystem = String((msgs.find((m) => m.role === 'system') || {}).content || '');
           sawLookRule = sawSystem.includes('不要写人物长相');
           const user = String((msgs.find((m) => m.role === 'user') || {}).content || '');
+          lastUser = user;
           const hit = user.match(/【本剧角色名册】[\s\S]*?\n- ([^\n（|]+)/);
           sawRoster = hit ? hit[1].trim() : null;
           const name = sawRoster || '未知名册';
           res.writeHead(200, { 'Content-Type': 'application/json' });
+          // 补提示词那条链（系统提示里带"分镜图提示词工程师"）回一段普通提示词，别回 JSON
+          if (sawSystem.includes('分镜图提示词工程师')) {
+            res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'a woman stands in the rain, medium shot' } }] }));
+            return;
+          }
           res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '```json\n' + JSON.stringify([
             { shot_number: 1, shot_type: '中景', characters: name, scene_description: '名册验收：她走进门', action: '走进门', image_prompt: 'a woman walks in', video_prompt: 'slow dolly in' },
             { shot_number: 2, shot_type: '特写', characters: `${name}、少女`, scene_description: '名册验收：她回头', action: '回头', image_prompt: 'close up', video_prompt: 'static' },
@@ -2014,6 +2021,25 @@ try {
         ok('体检点出"名字在角色库里找不到"的代称（名册的验收环）',
           unk.some((x) => x.target_name === '少女'), JSON.stringify(unk.map((x) => x.target_name)));
         ok('体检不误报名册里的本名', !unk.some((x) => x.target_name === '名册验收角色'), JSON.stringify(unk.map((x) => x.target_name)));
+
+        // 补提示词那条链（批 8 补 7）：同一套注入边界，且"人物"来自绑定
+        await post('/api/storyboards', {
+          project_id: pid, episode_number: 7, shot_number: 3, shot_type: '全景',
+          characters: '', character_ids: [cid], image_prompt: '', video_prompt: '',
+          scene_description: '名册验收：她站在雨中',
+        });
+        // 必须**重新加载**：页面本来就停在 #/storyboards（同页同参），再设一次同样的 hash 不会触发路由，
+        // 页面会拿着旧的 rows 继续用 —— 新加的镜头不在表里，后面点补提示词只会得到"没有需要补充的镜头"
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return /名册验收：她站在雨中/.test(document.body.innerText);`), '分镜页回访且行已渲染', 12000);
+        await cdp.eval(`document.querySelector('#gen-img-prompts').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /stands in the rain/.test(document.body.innerText) || Array.from(document.querySelectorAll('textarea,input')).some((t) => /stands in the rain/.test(t.value || ''));`), '图片提示词补完', 15000);
+        await sleep(400);
+        ok('补提示词的链也禁写死画风', sawSystem.includes('不要写整体画风或媒介词'), sawSystem.slice(0, 80));
+        ok('补提示词的链也禁写长相（提示词只写这一镜发生了什么）', sawSystem.includes('不要写人物长相'), sawSystem.slice(0, 120));
+        ok('补提示词的链也禁写中文人名（名字进提示词会让外貌注入被跳过）', sawSystem.includes('不要写中文人名'));
+        ok('「出场人物」空着时，人物来自已绑角色（不是空着让模型瞎猜）',
+          lastUser.includes('人物:名册验收角色'), lastUser.slice(0, 120));
       } finally {
         await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: before.agnes_api_base_url || '', agnes_api_key: before.agnes_api_key || '' }) });
         mock.close();
@@ -2080,6 +2106,25 @@ try {
         await waitFor(() => cdp.eval(`return !/绑定验收角色丙/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '修复后该条消失', 10000);
         const s3 = (await J(`/api/storyboards?project_id=${pid}&episode=1`)).find((x) => x.shot_number === 3);
         ok('修复真的写进了后端', (s3.character_ids || []).includes(cC), JSON.stringify(s3.character_ids));
+
+        // 画风写死（批 8 补 7）：提示词里写死画风词 → 体检报出 → 一键删掉（画风回到项目设置）
+        const stShot = (await post('/api/storyboards', {
+          project_id: pid, episode_number: 1, shot_number: 4, shot_type: '中景',
+          image_prompt: 'a girl, pixel art style, holding a sword', video_prompt: 'pan left',
+          scene_description: '画风验收',
+        })).id;
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /写死了画风词/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '体检报出画风写死', 10000);
+        const styleClicked = await cdp.eval(`const b=Array.from(document.querySelectorAll('#nov-audit-box [data-audit-fix]')).find(x=>x.getAttribute('data-audit-fix')==='strip_style_word' && x.closest('.row') && x.closest('.row').innerText.includes('pixel art')); if(!b) return false; b.click(); return true;`);
+        ok('画风写死项给了"删掉写死的画风词"的修复按钮', styleClicked === true);
+        const c3m = await waitFor(() => cdp.eval(`const m=document.querySelector('.modal'); return m ? m.innerText : '';`), '画风确认弹窗', 6000).catch(() => '');
+        ok('确认文案讲清"画风由项目设置统一注入"', String(c3m).includes('项目设置'), String(c3m).replace(/\n/g, ' ').slice(0, 140));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !/写死了画风词/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '画风项消失', 10000);
+        const stAfter = (await J(`/api/storyboards?project_id=${pid}&episode=1`)).find((x) => x.id === stShot);
+        ok('提示词里的画风词被删掉，画面描述其余内容一字不动',
+          stAfter.image_prompt === 'a girl, holding a sword', JSON.stringify(stAfter.image_prompt));
+        ok('视频提示词没有被牵连', stAfter.video_prompt === 'pan left', JSON.stringify(stAfter.video_prompt));
       } finally {
         for (const id of ids) await fetch(`http://127.0.0.1:${port}/api/storyboards/${id}`, { method: 'DELETE' });
         await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=${pid}&episode=1`, { method: 'DELETE' });

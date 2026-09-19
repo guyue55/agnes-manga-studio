@@ -17,11 +17,18 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   体检项的 `fixable` 是布尔、**修复动作码另在 `fix_code`**（问题码 ≠ 动作码，界面必须发 `fix_code`）。
   另有 `shot_char_unknown`（批 8 补 6）：「出场人物」里角色库中没有的名字 —— 这类镜头一定没有外貌注入，
   是角色名册的验收环（名册生效后应一直为空）。
+  以及 `shot_style_baked`（批 8 补 7）：提示词里**写死的画风词**（词表 `STYLE_WORDS` 与 `ART_STYLE_MAP` 的值同源，
+  selftest 有跨文件棘轮）—— 画风是使用点统一注入的，写死会让"改画风"静默失效；一键删词（只删词，画面描述不动）。
+  **返回体既有分组字段（`card_issues`/`shot_issues`/`style_issues`）又有合并后的 `issues`，面板渲染的是 `issues`**
+  —— 断言要落在界面真正消费的字段上（对照 AC 的教训）。
 - 反向驱动（批 8 补）：卡片 → **资产库**（人物卡幂等入 `characters`，拿到参考图与分镜注入能力）、→ **故事脚本模板变量**（原著页「带入剧本」跳 `#/scripts?...&bible=<id>&kinds=...`，`pickBibleVar` 按变量名落位、提示条可见可撤销）、→ **剪贴板**（任意类别一键复制回注文本）
 - 镜头绑定自动匹配（批 8 补 5）：`POST /api/storyboards/auto-bind` —— 把模型写在自由文本里的"谁出场/在哪儿"
   变成结构化绑定（`character_ids` / `story_card_ids`），**纯本地匹配、不调模型**。两档置信度：
   名字出现在「出场人物」里=强（可自动绑），只在提示词/画面描述里出现=弱（只报给人看）；名字长度 <2 不匹配。
   生成分镜后自动跑一次（`strong_only`），分镜页「自动匹配绑定」先干跑弹确认再落库；绑定是**并集**（不抹人工绑定）
+- 提示词注入边界（批 8 补 6/补 7）：**由系统在使用点注入的东西一律不写进提示词** —— 画风（`artStylePhrase`）、
+  人物长相（`characterPhrase`）、中文人名（名字进提示词会让未锁定角色被跳过）。三条禁令同时写在"分镜生成"与
+  "补图片/视频提示词"两条 LLM 链里；检测侧分别由 `shot_style_baked` 与 `shot_char_unlocked` 兜底
 - 角色名册（批 8 补 6）：生成剧本/分镜时把项目角色名册（`consts.js` 的 `characterRoster`：本名 + 别名 + 一行长相）
   写进**请求体**，并要求"用本名、不要自己另起名字"——模型不知道项目里有哪些角色，否则"女主/少女/本名"混着写，
   绑定全落空、谁都没有外貌注入。**长相不进提示词**（使用点会注入一次，写两遍会打架；且名字出现在提示词里会让
@@ -33,7 +40,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 470 / apitest 628 / uitest 930 / browser-test 374），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 499 / apitest 645 / uitest 936 / browser-test 382），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
@@ -229,4 +236,8 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
    各踩一次。uitest 已有通用棘轮逐页比对"每个 `dataOf` 读的名字都被渲染过"；新增 `data-*` 交互一律写**连字符原名**。
    同类陷阱：`on(root, sel, type, fn)` 是 `querySelectorAll` 逐个绑定（**不是事件委托**），
    在 `innerHTML` 替换**之前**绑的监听会随旧节点一起消失——先渲染、后 `on`。
-8. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。
+8. **测试里"重新导航"必须真的重来**：页面已经停在 `#/storyboards?project=X&episode=7` 时，**再设一次同样的 hash
+   不会触发路由**（浏览器不发 `hashchange`），页面继续用旧的 `rows` —— 新建的镜头不在表里，后续点击空转。
+   要 `cdp.send('Page.reload', {})` 再等**数据行**出现。同理：静态按钮（如 `#gen-img-prompts`）先于数据渲染，
+   等待条件要等"行/数据"而不是等按钮，否则点下去只会得到"没有需要补充的镜头"（第 89 轮两处都踩到）。
+9. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。

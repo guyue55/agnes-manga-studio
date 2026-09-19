@@ -551,7 +551,67 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
-group('角色名册与「出场人物」拆分（批 8 补 6：名字对齐是绑定命中的前提）');
+group('画风写死体检（批 8 补 7：提示词里不该写死系统要注入的东西）');
+{
+  const { styleWordHits, auditPromptStyle, stripStyleWord, STYLE_WORDS } = require('./lib/story.js');
+  const routes = require('./lib/routes.js');
+
+  // ① 词表与项目画风同源：每一种项目画风词都必须认得（画风表改了这里要跟着改）
+  {
+    const map = routes.ART_STYLE_MAP || {};
+    const miss = Object.values(map).filter((ph) => styleWordHits(ph).length === 0);
+    eq('每一种项目画风短语都认得（跨文件棘轮：ART_STYLE_MAP 的值）', miss.join(' | '), '');
+    eq('词表非空', STYLE_WORDS.length > 10, true);
+  }
+
+  // ② 命中：媒介/画风词要抓，画面质量词不要抓（后者是镜头内容的一部分）
+  eq('整条画风短语优先命中（删得干净）',
+    styleWordHits('japanese anime style, thick painterly shading').map((x) => x.word).join('|'),
+    'japanese anime style, thick painterly shading');
+  eq('只写了半条也认得', styleWordHits('japanese anime style, a girl').map((x) => x.word).join('|'), 'japanese anime style');
+  eq('英文词按词边界匹配（comical 不该命中 comic）', styleWordHits('a comical face').length, 0);
+  eq('中文画风词也能抓（用户可能粘中文提示词）', styleWordHits('水彩风格的少女').map((x) => x.word).join('|'), '水彩');
+  eq('重叠命中只留最长的一条（不刷屏）',
+    styleWordHits('a manga panel, black and white manga, screentone shading').map((x) => x.word).join('|'),
+    'manga|black and white manga, screentone shading');  // 按出现位置排；重叠的才合并
+  eq('画面质量词不报（cinematic / detailed 是镜头内容）', styleWordHits('cinematic lighting, ultra detailed, 8k').length, 0);
+  eq('没有画风词的提示词不报', styleWordHits('a girl walks into a teahouse, rain outside').length, 0);
+  eq('空输入安全', styleWordHits('').length + styleWordHits(null).length, 0);
+
+  // ③ 体检：按词聚合、两档（与当前画风冲突 = warn / 一致但写死了 = info）
+  {
+    const shots = [
+      { id: 's1', shot_number: 1, episode_number: 1, image_prompt: 'a girl, oil painting style, visible brush strokes', video_prompt: 'slow dolly in' },
+      { id: 's2', shot_number: 2, episode_number: 1, image_prompt: 'anime girl', video_prompt: 'pan left, manga' },
+      { id: 's3', shot_number: 3, episode_number: 2, image_prompt: 'a girl in the rain' },
+    ];
+    const r = auditPromptStyle(shots, { style: '日漫厚涂', stylePhrase: 'japanese anime style, thick painterly shading' });
+    const byWord = (w) => r.issues.find((x) => x.word === w);
+    eq('扫到的镜头数如实上报', r.scanned, 3);
+    eq('与当前画风冲突的算"要处理"', byWord('oil painting style, visible brush strokes').level, 'warn');
+    eq('与当前画风一致的算"可优化"（今天不出错，但换画风会失效）', byWord('anime').level, 'info');
+    eq('按词聚合：同一个词跨镜头只报一条', r.issues.filter((x) => x.word === 'manga').length, 1);
+    eq('一条里带上全部相关镜头', byWord('manga').shot_ids.join(','), 's2');
+    ok('镜头明细带上是哪个字段（图片/视频）', byWord('manga').shots[0].field === 'video_prompt', JSON.stringify(byWord('manga').shots));
+    eq('修复动作码是"删掉写死的画风词"', byWord('manga').fix_code, 'strip_style_word');
+    eq('可修复数如实统计', r.counts.fixable, r.issues.length);
+    ok('详情讲清后果（改画风不会生效）', byWord('manga').detail.includes('改项目画风也不会生效'), byWord('manga').detail);
+    ok('一致的那档也讲清"以后改画风不会跟着变"', byWord('anime').detail.includes('不会跟着变'), byWord('anime').detail);
+    eq('没写画风的镜头不报', r.issues.some((x) => x.shot_ids.includes('s3')), false);
+    eq('空输入安全', auditPromptStyle(undefined, {}).issues.length, 0);
+  }
+
+  // ④ 机械修复：只删那个词，别的地方一个字不动
+  eq('删整条短语', stripStyleWord('japanese anime style, thick painterly shading, a girl walks in', 'japanese anime style, thick painterly shading'), 'a girl walks in');
+  eq('删半条不留孤零零的 style', stripStyleWord('japanese anime style, a girl walks in', 'japanese anime style'), 'a girl walks in');
+  eq('英文词按词边界删（不动 comical）', stripStyleWord('a comical face', 'comic'), 'a comical face');
+  eq('中文词直接删', stripStyleWord('水彩风格，少女在雨中', '水彩'), '风格，少女在雨中');
+  eq('删完收拾多余的逗号', stripStyleWord('a girl, anime, holding a sword', 'anime'), 'a girl, holding a sword');
+  eq('要删的词不在里面就原样返回（幂等）', stripStyleWord('a girl walks in', 'manga'), 'a girl walks in');
+  eq('空输入安全', stripStyleWord('', 'manga'), '');
+}
+
+
 {
   const { characterRoster } = await import(pathToFileURL(path.join(ROOT, 'public/js/consts.js')).href);
   const { splitShotCharacters, auditShotBindings } = require('./lib/story.js');

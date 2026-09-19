@@ -1230,6 +1230,23 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 画风写死（批 8 补 7）──
+  ok('体检三源合一（卡片 / 镜头绑定 / 提示词画风），不再开第二个入口',
+    /style_counts/.test(routesSrc) && /style_issues/.test(routesSrc) && /auditPromptStyle/.test(routesSrc)
+    && /style_counts/.test(novel) === false && /style_issues/.test(novel) === false);
+  ok('画风词表与 ART_STYLE_MAP 同源（值都在词表里，selftest 另有跨文件棘轮）',
+    /STYLE_WORDS/.test(storySrc) && /japanese anime style, thick painterly shading/.test(storySrc));
+  ok('修复端点支持删掉写死的画风词，并如实回报改前/改后',
+    /code === 'strip_style_word'/.test(routesSrc) && /before, after/.test(routesSrc));
+  ok('原著页给画风问题配了修复按钮与确认文案',
+    /strip_style_word: '删掉写死的画风词'/.test(novel) && /画风由<b>项目设置<\/b>在使用点统一注入/.test(novel));
+  ok('批量补提示词同样禁止写死画风与长相（提示词只写这一镜发生了什么）',
+    /不要写整体画风或媒介词/.test(boardsSrc) && /不要写人物长相\*\*（发色、瞳色、服装、面部特征/.test(boardsSrc)
+    && /不要写中文人名\*\*（写进英文提示词没有意义/.test(boardsSrc));
+  ok('批量补提示词的人物来自绑定（「出场人物」空着时用已绑角色名兜底）',
+    /const who = flat\(s\.characters\) \|\| \(Array\.isArray\(s\.character_ids\)/.test(boardsSrc)
+    && /人物:\$\{who\}/.test(boardsSrc));
+
   // ── 角色名册（批 8 补 6）──
   ok('consts.js 导出角色名册构造器（纯函数，两个生成入口共用同一份口径）',
     /export function characterRoster\(chars, opts = \{\}\)/.test(consts)

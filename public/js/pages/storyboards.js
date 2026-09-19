@@ -610,11 +610,17 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
     try {
       for (const s of targets) {
         bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + failed + 1} / ${targets.length}（每条约 5〜20s）</span></div></div>`;
+      // 批 8 补 7：提示词只写"这一镜发生了什么"，**由系统在使用点注入的东西一律不写** ——
+      // 画风、人物长相、中文人名。写死的后果各不相同但都静默：换画风全部作废 / 与注入的长相打架导致换脸 /
+      // 名字进提示词会让 characterPhrase 跳过外貌注入（未锁定的角色）。
       const sys = kind === 'image'
-        ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，细节丰富。只写镜头内容（主体、动作、表情、景别构图、局部光效），**不要写整体画风或媒介词**（如 anime style、oil painting、watercolor——画风由系统在使用点统一注入，写死会导致换画风全部作废）。只输出提示词，不要解释。'
-        : '你是专业的AI视频提示词工程师。请用英文输出，只描述画面运动与镜头运动，不要重复静态外观。';
+        ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，细节丰富。只写镜头内容（主体、动作、表情、景别构图、局部光效），并且**不要写整体画风或媒介词**（anime style、oil painting、watercolor 等——画风由系统在使用点统一注入，写死会导致换画风全部作废）；**不要写人物长相**（发色、瞳色、服装、面部特征——长相由系统按角色档案注入，写两遍会打架）；**不要写中文人名**（写进英文提示词没有意义，还会让系统跳过这个角色的外貌注入）。只输出提示词，不要解释。'
+        : '你是专业的AI视频提示词工程师。请用英文输出，只描述画面运动与镜头运动，不要重复静态外观，也不要写画风/媒介词（由系统在使用点统一注入）。';
+      // 人物只给"有谁"，不给长相：模型据此安排画面，长相仍由注入决定
+      const who = flat(s.characters) || (Array.isArray(s.character_ids) ? s.character_ids
+        .map((id) => (charsOf().find((c) => c.id === id) || {}).name).filter(Boolean).join('、') : '');
       const user = kind === 'image'
-        ? `为以下分镜生成英文图片提示词：景别:${s.shot_type}，画面:${s.scene_description}，人物:${s.characters}，动作:${s.action}`
+        ? `为以下分镜生成英文图片提示词：景别:${s.shot_type}，画面:${s.scene_description}，人物:${who}，动作:${s.action}`
         : `为以下分镜生成英文视频运动提示词：画面:${s.scene_description}，动作:${s.action}，台词:${s.dialogue}`;
         const r = await api.genText({ messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], project_id: projectId });
         if (r.ok) {

@@ -411,6 +411,7 @@ export default async function novel(container, params = {}) {
     char_not_in_asset: '一键入资产库',
     bind_shot_target: '绑到这些镜头',
     lock_shot_char: '锁定该角色',
+    strip_style_word: '删掉写死的画风词',
   };
 
   const BASIS_LABEL = {
@@ -509,7 +510,7 @@ export default async function novel(container, params = {}) {
         <div class="row wrap" style="row-gap:6px;align-items:flex-start">
           <div style="flex:1;min-width:200px">
             <b>一致性体检：${issues.length} 项</b>（要处理 ${counts.warn} · 可优化 ${counts.info}，其中 ${counts.fixable} 项可一键修复）
-            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>的 ${total} 张卡片 + ${shots} 个镜头（同名卡常常来自不同原著，只看当前这份就看不见；镜头漏绑绑定不会有任何报错，只会在出图时少一段外貌/场景描述）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
+            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>的 ${total} 张卡片 + ${shots} 个镜头（同名卡常常来自不同原著，只看当前这份就看不见；镜头漏绑绑定不会有任何报错，只会在出图时少一段外貌/场景描述；提示词里写死画风会让"换画风"静默失效）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
           </div>
           <button class="btn btn-xs" data-audit-again>重新体检</button>
           <button class="btn btn-xs" data-audit-close>收起</button>
@@ -555,6 +556,16 @@ export default async function novel(container, params = {}) {
         });
         if (!okGo) return;
       }
+      if (code === 'strip_style_word') {
+        const okGo = await confirm({
+          title: '删掉写死的画风词',
+          text: `会从 <b>${(issue.shot_ids || []).length}</b> 个镜头的提示词里删掉「${esc(issue.word || issue.target_name)}」。`
+            + '<br><br>画风由<b>项目设置</b>在使用点统一注入，写死在提示词里会让「换画风」失效（改了设置图也不会变），或者两套风格打架。'
+            + '<br>删掉之后这些镜头的画风就跟着项目设置走了（只改提示词，不动画面描述）。',
+          okText: '删掉',
+        });
+        if (!okGo) return;
+      }
       if (code === 'lock_shot_char') {
         const okGo = await confirm({
           title: '锁定角色',
@@ -566,7 +577,7 @@ export default async function novel(container, params = {}) {
       setBusy(btn, true);
       const r = await api.storyAuditFix({
         project_id: projectId, code, card_ids: issue.card_ids || [],
-        target_id: issue.target_id, shot_ids: issue.shot_ids || [],
+        target_id: issue.target_id, shot_ids: issue.shot_ids || [], word: issue.word,
       });
       setBusy(btn, false);
       if (!r.ok) { toast.err(r.error); return; }
@@ -575,6 +586,7 @@ export default async function novel(container, params = {}) {
       else if (code === 'alias_collision') toast.ok(`已清理 ${d.fixed_cards} 张卡的撞名别名`);
       else if (code === 'bind_shot_target') toast.ok(`已把「${d.target_name}」绑到 ${d.bound_shots} 个镜头上`);
       else if (code === 'lock_shot_char') toast.ok(`已锁定「${d.target_name}」，这些镜头会逐字注入它的外貌`);
+      else if (code === 'strip_style_word') toast.ok(`已从 ${d.fixed_shots} 个镜头的提示词里删掉「${d.word}」，画风回到项目设置`);
       else toast.ok(`已把 ${d.created_count} 张人物卡写进资产库${d.skipped_count ? `（${d.skipped_count} 张已在库里）` : ''}`);
       await loadCards();
       await runAudit();

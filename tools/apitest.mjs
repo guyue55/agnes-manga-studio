@@ -1693,7 +1693,57 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   ok('错误文案列出了新支持的修复项',
     /bind_shot_target/.test((await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'nope' })).data.error || ''));
 
-  // ⑩ 名字在角色库里找不到：这类镜头一定没有外貌注入，而且不报错（名册就是为它而生的）
+  // ⑩ 画风写死：提示词里写了画风词 → 换画风会静默失效（纯本地判定，不花钱）
+  {
+    const before = await api('GET', `/api/story/audit?project_id=${PID}`);
+    ok('体检报告里同时有画风侧的一组（三源各自计数）',
+      !!before.data.style_counts && !!before.data.card_counts && !!before.data.shot_counts,
+      JSON.stringify(Object.keys(before.data)));
+    eq('总数 = 卡片侧 + 镜头侧 + 画风侧',
+      before.data.counts.warn, before.data.card_counts.warn + before.data.shot_counts.warn + before.data.style_counts.warn);
+    const st = (await api('POST', '/api/storyboards', {
+      project_id: PID, episode_number: 3, shot_number: 91,
+      image_prompt: 'a girl, oil painting style, visible brush strokes, holding a sword',
+      video_prompt: 'slow dolly in',
+    })).data;
+    const a2 = await api('GET', `/api/story/audit?project_id=${PID}`);
+    // 界面渲染的是合并后的 issues，不是那几个分组的字段：只把问题塞进 style_issues / shot_issues
+    // 而忘了并进 issues，面板上一条都不显示，而按分组字段写的断言**全绿**（对照 AC 抓到的覆盖盲区）。
+    // 注意这条必须放在"确实存在画风问题"之后 —— 早放的话 style_issues 是空的，等式恒成立、钉不住东西
+    ok('镜头侧与画风侧的问题都并进 issues（面板渲染的是 issues）',
+      a2.data.issues.some((x) => x.code === 'shot_style_baked')
+      && a2.data.issues.length === a2.data.card_issues.length + a2.data.shot_issues.length + a2.data.style_issues.length,
+      JSON.stringify({ issues: a2.data.issues.length, card: a2.data.card_issues.length, shot: a2.data.shot_issues.length, style: a2.data.style_issues.length }));
+    const baked = a2.data.style_issues.filter((x) => x.word === 'oil painting style, visible brush strokes');
+    eq('报出提示词里写死的画风词（按词聚合）', baked.length, 1);
+    eq('聚合里带上是哪个镜头', baked[0].shot_ids.includes(st.id), true);
+    eq('与当前项目画风不同 → 算"要处理"', baked[0].level, 'warn');
+    eq('修复动作码是"删掉写死的画风词"', baked[0].fix_code, 'strip_style_word');
+    eq('画风设置如实回报（界面要说清"当前项目画风"）', typeof a2.data.art_style, 'string');
+    const fx = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'strip_style_word', word: baked[0].word, shot_ids: baked[0].shot_ids });
+    eq('修复 200', fx.status, 200);
+    eq('修复的镜头数如实上报', fx.data.fixed_shots, 1);
+    ok('改前/改后如实回报（用户能看见到底删了什么）',
+      fx.data.detail[0].before.includes('oil painting') && !fx.data.detail[0].after.includes('oil painting'),
+      JSON.stringify(fx.data.detail[0]));
+    const after = (await api('GET', `/api/storyboards?project_id=${PID}&episode=3`)).data.find((x) => x.id === st.id);
+    eq('删词后画面描述一个字不动', after.image_prompt, 'a girl, holding a sword');
+    const a3 = await api('GET', `/api/story/audit?project_id=${PID}`);
+    eq('修复后这一条消失（体检随数据变化）',
+      a3.data.style_issues.filter((x) => x.word === baked[0].word).length, 0);
+    const fx2 = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'strip_style_word', word: baked[0].word, shot_ids: [st.id] });
+    eq('再修一次不再改（幂等）', fx2.data.fixed_shots, 0);
+    eq('缺 word → 400', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'strip_style_word', shot_ids: [st.id] })).status, 400);
+    eq('缺 shot_ids → 400', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'strip_style_word', word: 'manga' })).status, 400);
+    const calls0 = storyChatCalls;
+    await api('GET', `/api/story/audit?project_id=${PID}`);
+    await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'strip_style_word', word: 'manga', shot_ids: [st.id] });
+    await sleep(300);
+    eq('画风体检与修复都不调模型（同一条纪律）', storyChatCalls, calls0);
+    await api('DELETE', `/api/storyboards/${st.id}`);
+  }
+
+  // ⑪ 名字在角色库里找不到：这类镜头一定没有外貌注入，而且不报错（名册就是为它而生的）
   const unkShot = (await api('POST', '/api/storyboards', {
     project_id: PID, episode_number: 2, shot_number: 90, characters: '未登记少女、两人', image_prompt: 'x',
   })).data;
@@ -1713,7 +1763,7 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     audit4.data.shot_issues.some((x) => x.code === 'shot_char_unbound' && x.target_id === c9.id && x.shot_ids.includes(unkShot.id)),
     JSON.stringify(audit4.data.shot_issues.map((x) => [x.code, x.target_name])));
 
-  // ⑪ 修复也不花钱（同一条纪律的回归）
+  // ⑫ 修复也不花钱（同一条纪律的回归）
   const callsBefore2 = storyChatCalls;
   await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: [s1.id] });
   await sleep(300);
