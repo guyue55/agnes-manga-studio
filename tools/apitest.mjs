@@ -1553,6 +1553,121 @@ group('任务 CRUD 与批量取消');
 }
 
 // ── 批 8：原著解析（分块 map + 全局 reduce + 卡片反向驱动）────────
+group('一致性体检（批 8 补 3：同名卡 / 别名撞名 / 一键修复 / 绑定改指 / 不花钱）');
+{
+  const pj = await api('POST', '/api/projects', { name: '体检测试剧' });
+  const PID = pj.data.id;
+  ok('自建测试项目', !!PID);
+  const NOVEL = Array.from({ length: 5 }, (_, k) => [
+    `第${k + 1}幕。林晚推开临江茶馆的门，白衣上沾着夜雨。`.repeat(2),
+    '顾寒坐在角落，青铜钥匙在灯下泛着冷光。'.repeat(2),
+    '两人对峙，林晚拔剑，顾寒却把钥匙推了过来。'.repeat(2),
+  ].join('\n')).join('\n');
+  const analyze = async (title) => {
+    const an = await api('POST', '/api/story/analyze', { project_id: PID, title, text: NOVEL, max_chars: 200 });
+    let j = null;
+    for (let i = 0; i < 60; i++) { await sleep(150); j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+    return an.data.source && an.data.source.id;
+  };
+  const s1 = await analyze('体检原著一');
+  const s2 = await analyze('体检原著二'); // 第二次解析 → 跨来源同名卡，这正是体检要抓的真实场景
+  ok('两次解析各建了一份来源', !!s1 && !!s2 && s1 !== s2);
+
+  // ① 体检是纯本地的：一条模型调用都不该发生
+  const callsBefore = storyChatCalls;
+  const au = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('体检 200', au.status, 200);
+  await sleep(400); // 与干跑同一条纪律：等一拍再数，否则只能证明"没有同步调用"
+  eq('体检**一次模型都没调**（花钱才能查一致性的工具，用户会不敢点）', storyChatCalls, callsBefore);
+  ok('体检报出同名卡（两次解析出的同名卡必须收敛）',
+    au.data.issues.some((i) => i.code === 'dup_name' && i.card_ids.length >= 2),
+    JSON.stringify(au.data.counts));
+  ok('体检如实给出卡片总数', au.data.total_cards > 0, String(au.data.total_cards));
+  const dupIssue = au.data.issues.find((i) => i.code === 'dup_name');
+  ok('同名卡可一键修复', dupIssue.fixable === true);
+  ok('体检报出"人物卡还没进资产库"', au.data.issues.some((i) => i.code === 'char_not_in_asset'));
+  ok('体检报出"可注入类卡片缺描述"（如果 mock 没给全字段）', Array.isArray(au.data.issues));
+
+  // ② 别名撞名：把顾寒的别名改成林晚
+  const cardsAll = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  const gu = cardsAll.find((c) => c.kind === 'character' && c.name === '顾寒');
+  const lin = cardsAll.find((c) => c.kind === 'character' && c.name === '林晚');
+  await api('PUT', `/api/story/cards/${gu.id}`, { aliases: ['林晚'] });
+  const au2 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const colIssue = au2.data.issues.find((i) => i.code === 'alias_collision');
+  ok('别名撞名被抓出来', !!colIssue && colIssue.alias === '林晚', JSON.stringify(au2.data.issues.map((i) => i.code)));
+  const fixCol = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'alias_collision', card_ids: colIssue.card_ids });
+  eq('别名修复 200', fixCol.status, 200);
+  ok('别名修复只动撞名的那个', fixCol.data.fixed_cards >= 1, JSON.stringify(fixCol.data.detail));
+  // 变更须知：本项目**没有** GET /api/story/cards/:id 这个端点，写单卡查询只会拿到 404，
+  // 断言就会变成"永远为真"的盲钉（本条第一版就是这么假绿的）。一律走列表再 find。
+  const guAfter = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((c) => c.id === gu.id);
+  ok('修复后卡片仍在（只删别名不删卡）', !!guAfter);
+  ok('撞名别名已被删掉', !((guAfter || {}).aliases || []).includes('林晚'), JSON.stringify((guAfter || {}).aliases));
+  ok('修复动作标记为"人工改过"（edited=true，免得下次解析又被模型覆盖）', (guAfter || {}).edited === true);
+  const au3 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  ok('修复后再体检，这条不再出现（体检不是"永远报同样的话"）',
+    !au3.data.issues.some((i) => i.code === 'alias_collision'));
+
+  // ③ 人物卡入资产库（一键修复）
+  const fixAsset = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'char_not_in_asset' });
+  ok('一键入资产库真的建了角色', fixAsset.data.created_count >= 1, JSON.stringify(fixAsset.data.created));
+  const au4 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  ok('入库后这条不再出现', !au4.data.issues.some((i) => i.code === 'char_not_in_asset'));
+  const fixAsset2 = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'char_not_in_asset' });
+  eq('重复点不会重复建角色（幂等）', fixAsset2.data.created_count, 0);
+  ok('重复点如实回报"已在库里"', fixAsset2.data.skipped_count >= 1, JSON.stringify(fixAsset2.data.skipped));
+
+  // ④ 合并同名卡：分镜上的绑定必须改指到存活卡，否则镜头会静默失去注入
+  // 改指这条必须挑**可注入类别**（地点/道具）的同名组：人物卡的绑定会被写入白名单过滤掉，
+  // 拿人物组来测等于测了个"绑不上"，第一版就是这么红的
+  const allCards2 = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  const kindOf = (id) => ((allCards2.find((c) => c.id === id) || {}).kind);
+  const dup2 = (await api('GET', `/api/story/audit?project_id=${PID}`)).data.issues
+    .find((i) => i.code === 'dup_name' && i.card_ids.some((id) => ['location', 'prop'].includes(kindOf(id))));
+  ok('仍有可注入类别的同名卡待合并（改指测试的前提）', !!dup2 && dup2.card_ids.length >= 2);
+  // 注意这两个是 **id 字符串**（不是卡片对象）—— 第一版写成 victim.id 结果绑了个 undefined
+  const sortedIds = dup2.card_ids.slice().sort();
+  const keeperId = sortedIds[0];
+  const victimId = sortedIds.slice(1).find((id) => ['location', 'prop'].includes(kindOf(id)));
+  ok('挑到了可注入的受害者卡', !!victimId && !!keeperId && victimId !== keeperId, JSON.stringify({ keeperId, victimId, kind: kindOf(victimId) }));
+  const sb = await api('POST', '/api/storyboards', {
+    project_id: PID, shot_number: 1, image_prompt: 'x', story_card_ids: [victimId],
+  });
+  ok('先把要合并掉的卡绑到一个镜头上', (sb.data.story_card_ids || []).includes(victimId), JSON.stringify(sb.data.story_card_ids));
+  const fixDup = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'dup_name', card_ids: dup2.card_ids });
+  ok('合并修复 200', fixDup.status === 200, JSON.stringify(fixDup.data).slice(0, 120));
+  ok('合并了至少一组', fixDup.data.merged_groups >= 1, JSON.stringify(fixDup.data.detail).slice(0, 160));
+  ok('删除的是被合并的那张', fixDup.data.removed_cards >= 1);
+  const sbAfter = (await api('GET', `/api/storyboards?project_id=${PID}`)).data.find((r) => r.id === sb.data.id);
+  ok('镜头绑定已改指存活卡（不是静默变成空绑定）',
+    (sbAfter.story_card_ids || []).includes(keeperId) && !(sbAfter.story_card_ids || []).includes(victimId),
+    JSON.stringify({ before: [victimId], after: sbAfter.story_card_ids, keeperId }));
+  ok('改指的镜头数如实上报', fixDup.data.repointed_shots >= 1, String(fixDup.data.repointed_shots));
+  const afterCards = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  ok('被合并的卡真的删了（不留悬空引用源）', !afterCards.some((c) => c.id === victimId));
+  ok('存活卡还在且带上了被合并卡的信息', afterCards.some((c) => c.id === keeperId));
+  const au5 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  ok('合并后再体检，**这一组**同名卡不再出现（别的组没动就仍该报）',
+    !au5.data.issues.some((i) => i.code === 'dup_name' && i.card_ids.includes(keeperId)),
+    JSON.stringify(au5.data.issues.filter((i) => i.code === 'dup_name').map((i) => i.card_ids)));
+
+  // ⑤ 修复仍然不花钱 + 参数校验
+  const callsBefore2 = storyChatCalls;
+  await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'dup_name' });
+  await sleep(400);
+  eq('修复也不调模型（纯本地收敛）', storyChatCalls, callsBefore2);
+  const bad = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'no_such_code' });
+  eq('不认识的体检项 400', bad.status, 400);
+  ok('错误文案列出支持项', /dup_name/.test(bad.data.error || ''), bad.data.error);
+  const noProj = await api('POST', '/api/story/audit/fix', { code: 'dup_name' });
+  eq('缺 project_id 400', noProj.status, 400);
+  const empty = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'dup_name' });
+  eq('没有可合并项时如实回报 0（不假装修了什么）', empty.data.merged_groups, 0);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('原著卡片注入（批 8 补 2：使用点 / 只注入看得见的两类 / 去重 / 导出）');
 {
   const pj = await api('POST', '/api/projects', { name: '原著注入测试剧', art_style: '日漫厚涂' });

@@ -9,11 +9,15 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 - 后端链路：`server.js` → `lib/routes.js`（全部 /api 端点）→ `lib/agnes.js`（Agnes 云 API 客户端）→ 外部 API；异步任务链 `lib/jobs.js` + `lib/poller.js`（后台轮询 + SSE 推送）；持久化基石 `lib/store.js`；原著解析纯函数层 `lib/story.js`（切块/卡片规范化/跨块去重合并/回注渲染，全部可离线断言）
 - 原著解析（批 8）：`docs/research/09-story-bible-plan.md` —— 长篇原文 → 六类卡片（信息卡/人物卡/地点卡/道具卡/剧情卡/时间线），分块 map + 全局 reduce，`/api/story/*` 提供干跑计费闸门、卡片 CRUD、回注渲染与"人物卡入资产库"反向驱动
+- 一致性体检（批 8 补 3）：`GET /api/story/audit` **纯本地判定**（同名卡 / 别名撞名 / 缺可注入字段 / 人物卡未入资产库 /
+  剧情卡无幕次 / 时间线无时间点），**一次模型都不调**所以随时可跑、不花钱；`POST /api/story/audit/fix` 一键收敛三件机械事
+  （合并同名卡 / 删撞名别名 / 人物卡入资产库），合并时**同步把分镜绑定改指到存活卡**（否则镜头会静默失去场景/道具注入）；
+  需要人拍板的（两处描述哪个对）只如实列出冲突值，不替用户决定。原著页卡片工作台有体检入口与报告面板。
 - 反向驱动（批 8 补）：卡片 → **资产库**（人物卡幂等入 `characters`，拿到参考图与分镜注入能力）、→ **故事脚本模板变量**（原著页「带入剧本」跳 `#/scripts?...&bible=<id>&kinds=...`，`pickBibleVar` 按变量名落位、提示条可见可撤销）、→ **剪贴板**（任意类别一键复制回注文本）
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 318 / apitest 509 / uitest 874 / browser-test 332），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 10 页，其中 7 页带**弹窗动作钩子**，弹窗内一并度量）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 363 / apitest 545 / uitest 893 / browser-test 344），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 11 页，其中 7 页带**弹窗动作钩子**、1 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
@@ -185,4 +189,9 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
    - `docs/knowledge-graph/` — **手工维护的架构讲解图**（73 节点，提交入库，供人浏览），配套 `viewer.html` 双击可开。**修改 `docs/knowledge-graph/knowledge-graph.json` 后必须跑 `node tools/build-graph-data.mjs`** 重新生成 `graph.data.js`（该脚本会做引用完整性/孤立节点校验，失败即退出非零）。其边 schema 是 `from`/`to`，与工具图谱的 `source`/`target` 不同。
 5. **API 响应不做统一信封**：`server.js` 把 handler 的返回值**原样** `sendJson`（`server.js:350`）——`GET /api/storyboards` 返回**裸数组**，`POST /api/storyboards` 返回裸 `{inserted}`；只有部分 handler 自己返回 `{ok, data}`（如 `/api/health`、`/api/settings/test`）。**同族端点的形状也可能不同**：`GET /api/videos` 是裸数组，而 `POST /api/videos` 是 `{ok, asset, timed_out}`——id 在 `data.asset.id` 而非顶层（第 58 轮写下载契约时即栽在此，404 全因取错字段）。写断言前先确认形状，别默认 `res.data.*`；另注意查询参数名以 handler 读取的为准（分镜列表是 `episode`，写 `episode_number` 会被**静默忽略**）。
 6. **`cdp.eval` 的求值规则（写测试必读）**：body **不含 `;`** 时自动包成 `return (body)`；含 `;` 时包成 `(async function(){body})()`。所以写显式 `return X` 的 body **必须带分号**，否则变成 `return (return X)` → SyntaxError；而 `waitFor` 会吞掉该异常，表现为**静默超时**（第 63 轮即栽在此：`return !!document.querySelector('.page')` 无分号，排查了一轮）。裸表达式写法（不带 `return`）最安全。
-7. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。
+7. **`ui.js` 的 `dataOf` 是字面取属性**（`el.getAttribute('data-' + name)`）：写 `dataOf(el, 'delCard')` 去读
+   `data-del-card` 会拿到 `null`，而且**不报错**，表现为"按钮点了没反应"。批 8 下的卡片删除与批 8 补 3 的体检修复
+   各踩一次。uitest 已有通用棘轮逐页比对"每个 `dataOf` 读的名字都被渲染过"；新增 `data-*` 交互一律写**连字符原名**。
+   同类陷阱：`on(root, sel, type, fn)` 是 `querySelectorAll` 逐个绑定（**不是事件委托**），
+   在 `innerHTML` 替换**之前**绑的监听会随旧节点一起消失——先渲染、后 `on`。
+8. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。

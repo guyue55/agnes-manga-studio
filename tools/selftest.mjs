@@ -551,6 +551,108 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('一致性体检纯函数（批 8 补 3：同名卡 / 别名撞名 / 缺字段 / 不误报）');
+{
+  // 本组在文件里排在 `const story = require(...)` 之前，所以就地取一次（不能引用后面才初始化的 const）
+  const { auditCards, mergeCardGroup, STORY_INJECT_KINDS, STORY_INJECT_FIELDS, STORY_FIELD_LABELS } = require('./lib/story.js');
+  const mk = (id, kind, name, extra) => Object.assign({ id, kind, name }, extra);
+  const codes = (cards, opts) => auditCards(cards, opts).issues.map((i) => i.code);
+
+  eq('空列表 → 没有问题', codes([]).length, 0);
+  eq('undefined 安全（项目里还没有卡片）', codes(undefined).length, 0);
+  ok('干净的一组卡 → 一条都不报（不制造噪音）',
+    codes([
+      mk('a', 'character', '林晚', { appearance: '白衣', aliases: ['晚晚'] }),
+      mk('b', 'location', '临江茶馆', { atmosphere: '喧闹潮湿' }),
+      mk('c', 'plot', '初见', { stage: '起' }),
+      mk('d', 'timeline', '三日后', { when: '第三天黄昏' }),
+      mk('e', 'prop', '青铜钥匙', { usage: '开密室' }),
+    ], { assetCardIds: ['a'] }).length === 0);
+
+  // ① 同名同类别
+  const dup = auditCards([mk('a', 'character', '林晚', { appearance: '白衣' }), mk('b', 'character', '林晚', { appearance: '白衣长剑' })], {});
+  ok('同名同类别 → 报 dup_name', dup.issues.map((i) => i.code).includes('dup_name'), dup.issues.map((i) => i.code).join(','));
+  eq('dup_name 可一键修复', dup.issues[0].fixable, true);
+  eq('dup_name 带上全部涉及卡 id（修复要用）', dup.issues[0].card_ids.join(','), 'a,b');
+  eq('冲突字段如实列出两个说法（不替用户决定）', dup.issues[0].conflicts.map((c) => c.field).join(','), 'appearance');
+  eq('冲突值都在报告里（合并前能核对）', dup.issues[0].conflicts[0].values.join('|'), '白衣|白衣长剑');
+  ok('同名但类别不同 → 不算重复（人物林晚 vs 地点林晚是两回事）',
+    !codes([mk('a', 'character', '林晚', { appearance: 'x' }), mk('b', 'location', '林晚', { atmosphere: 'y' })], { assetCardIds: ['a'] }).includes('dup_name'));
+  ok('名字大小写/空格差异也算同名（nameKey 归一化）',
+    codes([mk('a', 'character', 'Lin Wan', { appearance: 'x' }), mk('b', 'character', ' lin  wan ', { appearance: 'y' })], { assetCardIds: ['a'] }).includes('dup_name'));
+  eq('没有字段说法不同时不给空 conflicts（前端据此决定要不要提示核对）',
+    auditCards([mk('a', 'plot', '初见', { stage: '起' }), mk('b', 'plot', '初见', { stage: '起', conflict: '误会' })], {}).issues[0].conflicts.length, 0);
+  eq('幕次不同就是真冲突（合并只能留一个，必须让用户看见）',
+    auditCards([mk('a', 'plot', '初见', { stage: '起' }), mk('b', 'plot', '初见', { stage: '承' })], {}).issues[0].conflicts[0].values.join('|'), '起|承');
+
+  // ② 别名撞名
+  const col = auditCards([mk('a', 'character', '林晚', { appearance: 'x' }), mk('b', 'character', '顾寒', { appearance: 'y', aliases: ['林晚'] })], { assetCardIds: ['a', 'b'] });
+  ok('别名撞到另一张卡的名字 → 报 alias_collision', col.issues.map((i) => i.code).includes('alias_collision'), col.issues.map((i) => i.code).join(','));
+  ok('别名撞名可一键修复', col.issues[0].fixable === true && col.issues[0].alias === '林晚');
+  ok('自己就是自己的别名不算撞名（自我别名在规范化阶段已被清掉）',
+    !codes([mk('a', 'character', '林晚', { aliases: ['林晚'], appearance: 'x' })], { assetCardIds: ['a'] }).includes('alias_collision'));
+
+  // ③ 可注入类卡片没有可注入字段：绑到分镜也不生效
+  eq('地点卡没有氛围/地域/时段/特征 → 报 no_inject', codes([mk('a', 'location', '临江茶馆')]).join(','), 'no_inject');
+  ok('no_inject 不可自动修复（要人来补内容）', auditCards([mk('a', 'location', '空地点')], {}).issues[0].fixable === false);
+  ok('只填了任意一项就不报（字段白名单与注入表同源）',
+    !codes([mk('a', 'location', '临江茶馆', { time_of_day: '夜晚' })]).includes('no_inject'));
+  ok('不可注入的类别不报 no_inject（人物卡/剧情卡不走这条路）',
+    !codes([mk('a', 'character', '林晚', { appearance: 'x' }), mk('b', 'world', '世界观')]).includes('no_inject'));
+  eq('注入类别表与注入字段表必须一致（新增类别要同时进两张表）',
+    STORY_INJECT_KINDS.slice().sort().join(','), Object.keys(STORY_INJECT_FIELDS).sort().join(','));
+  ok('每个可注入字段都有中文名（体检报告要说人话，不能把 atmosphere 丢给用户）',
+    STORY_INJECT_KINDS.every((k) => STORY_INJECT_FIELDS[k].every((f) => !!STORY_FIELD_LABELS[f])));
+  // 变更须知：注入用的表在 lib/routes.js（STORY_CARD_INJECT_FIELDS），体检用的表在 lib/story.js
+  // （STORY_INJECT_FIELDS）—— 两张表必须逐项一致，否则会出现"体检说这项能注入、实际不注入"的鬼话。
+  {
+    const R = require('./lib/routes.js');
+    eq('注入表与体检表逐项一致（两张表不能各说各话）',
+      JSON.stringify(R.STORY_CARD_INJECT_FIELDS), JSON.stringify(STORY_INJECT_FIELDS));
+    eq('注入类别表与体检类别表一致',
+      Object.keys(R.STORY_CARD_INJECT_FIELDS).sort().join(','), STORY_INJECT_KINDS.slice().sort().join(','));
+  }
+
+  // ④ 人物卡没有长相/服装
+  ok('人物卡无外貌与服装 → 报 char_no_look', codes([mk('a', 'character', '顾寒')], { assetCardIds: ['a'] }).includes('char_no_look'));
+  ok('只有服装也算有长相（不报）', !codes([mk('a', 'character', '顾寒', { outfit: '黑袍' })], { assetCardIds: ['a'] }).includes('char_no_look'));
+
+  // ⑤⑥ 剧情卡幕次 / 时间线时间点
+  eq('剧情卡无幕次 → 报 plot_no_stage', codes([mk('a', 'plot', '初见')]).join(','), 'plot_no_stage');
+  eq('时间线无时间点 → 报 timeline_no_when', codes([mk('a', 'timeline', '三日后')]).join(','), 'timeline_no_when');
+
+  // ⑦ 人物卡没进资产库
+  const pend = auditCards([mk('a', 'character', '林晚', { appearance: '白衣' }), mk('b', 'character', '顾寒', { appearance: '黑衣' })], { assetCardIds: ['a'] });
+  eq('只有没进库的那张被算进去', pend.issues.find((i) => i.code === 'char_not_in_asset').card_ids.join(','), 'b');
+  ok('char_not_in_asset 可一键修复', pend.issues.find((i) => i.code === 'char_not_in_asset').fixable === true);
+  ok('全部已入资产库 → 不报这条', !codes([mk('a', 'character', '林晚', { appearance: '白衣' })], { assetCardIds: ['a'] }).includes('char_not_in_asset'));
+
+  // counts 口径
+  const c = auditCards([mk('a', 'character', '林晚', { appearance: '白衣' }), mk('b', 'character', '林晚')], { assetCardIds: ['a'] });
+  eq('counts.warn 只数"要处理"', c.counts.warn, 1);
+  ok('counts.info 数"可优化"', c.counts.info >= 1);
+  // 这份数据里可一键修复的有两项：合并同名卡 + 把 b 写进资产库；
+  // char_no_look（b 没有外貌）**不该**被算进 fixable —— 那需要人补内容，不是一键能修的
+  eq('counts.fixable 只数"一键能修"的（缺字段不算）', c.counts.fixable, 2);
+  ok('缺外貌只算"可优化"，不算可修复', c.issues.some((i) => i.code === 'char_no_look' && i.fixable === false));
+
+  // mergeCardGroup：合并语义
+  const before = [mk('a', 'character', '林晚', { appearance: '白衣', aliases: ['晚晚'], mentions: 1 }), mk('b', 'character', '林晚', { appearance: '白衣长剑', personality: '冷静' }), mk('c', 'location', '临江茶馆', { atmosphere: '潮湿' })];
+  const m = mergeCardGroup(before, ['a', 'b']);
+  eq('合并保留 id 最小的那张（最早创建）', m.keep.id, 'a');
+  eq('待删除的是其余卡', m.removed.join(','), 'b');
+  eq('更详细的描述取胜', m.keep.appearance, '白衣长剑');
+  eq('空字段被补上', m.keep.personality, '冷静');
+  eq('别名合并去重', (m.keep.aliases || []).join(','), '晚晚');
+  eq('提及次数累加（"这个角色被提到几次"不能丢）', m.keep.mentions, 2);
+  eq('合并后列表里只剩一张林晚', m.cards.filter((x) => x.name === '林晚').length, 1);
+  eq('无关的卡片原样保留', m.cards.find((x) => x.id === 'c').atmosphere, '潮湿');
+  eq('不足两张 → 不动（幂等，重复点修复不会误删）', mergeCardGroup(before, ['a']).keep, null);
+  eq('不足两张时列表原样返回', mergeCardGroup(before, ['a']).cards.length, before.length);
+  ok('合并只保留原 id，不产生新 id（分镜上的绑定才不会变悬空）',
+    m.cards.some((x) => x.id === 'a') && !m.cards.some((x) => x.id === 'b'));
+}
+
 group('原著卡片注入纯函数（批 8 补 2：只注入看得见的两类 / 去重 / 空壳防护）');
 {
   const { storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS } = createRoutes;

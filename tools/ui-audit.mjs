@@ -205,6 +205,13 @@ try {
           usage_type: 'storyboard', generation_prompt: 'cinematic close-up of a girl holding a transparent umbrella on a rain-soaked rooftop at night, neon reflections shimmering across puddles, melancholic atmosphere',
           model_name: 'audit-model', created_at: new Date().toISOString(),
         }],
+        // 批 8 补 3：体检面板只有在**真有卡片**时才有内容可量。这三张卡刻意造出四种行：
+        // 同名地点卡（要处理 + 可一键修复）、缺描述的地点卡（要处理 + 不可修复）、没外貌的人物卡（可优化）。
+        story_cards: [
+          { id: 'audit_card_loc_1', project_id: projReq.id, kind: 'location', name: '审计茶馆·同名用于测量', atmosphere: '潮湿昏暗的江边茶馆', region: '江南水乡' },
+          { id: 'audit_card_loc_2', project_id: projReq.id, kind: 'location', name: '审计茶馆·同名用于测量', atmosphere: '白天明亮' },
+          { id: 'audit_card_char_1', project_id: projReq.id, kind: 'character', name: '审计角色·超长名字占位用于测量行内截断行为', identity: '茶馆掌柜' },
+        ],
         video_assets: [{
           id: 'audit_vid_1', project_id: projReq.id, storyboard_id: null, status: 'completed',
           video_prompt: 'camera slowly dollies in from wide shot to the girl face, rain streaks falling, subtle hair movement in wind, neon flicker reflections',
@@ -234,7 +241,9 @@ try {
     ['tasks', '#/tasks', `(document.querySelector('[data-detail]')||document.querySelector('[data-detailt]')||{}).click?.();`],
     ['scripts', `#/scripts?project=${pid}`],
     // 批 8：原著解析页（卡片工作台是新的栅格 + 长文本输入，最需要在 4 个视口下量一遍溢出）
-    ['novel', `#/novel?project_id=${pid}`],
+    // 批 8 补 3：加**内联动作**——点开一致性体检面板再量（`requireModal:false`：这个面板不是弹窗，
+    // 默认的"声明了动作就必须开弹窗"自检会把它误报成一条发现）
+    ['novel', `#/novel?project_id=${pid}`, `document.querySelector('#nov-audit')?.click();`, { requireModal: false }],
     ['characters', `#/characters?project=${pid}`, `document.querySelector('#new-char')?.click();`],
     ['settings', '#/settings?sec=templates', `document.querySelector('#t-new')?.click();`],
   ];
@@ -242,7 +251,8 @@ try {
   let modalRuns = 0;
   for (const [w, h] of viewports) {
     await cdp.viewport(w, h);
-    for (const [name, hash, action] of pages) {
+    for (const [name, hash, action, pageOpts] of pages) {
+      const requireModal = !(pageOpts && pageOpts.requireModal === false);
       await cdp.eval(`location.hash = '${hash}'; return true;`);
       await waitFor(() => cdp.eval(`!!document.querySelector('.page') && !document.querySelector('.spinner')`), `${name}@${w}`);
       await sleep(120);
@@ -250,8 +260,16 @@ try {
       if (action) {
         // 弹窗钩子：先开弹窗，再连同弹窗一起度量（PROBE 扫的是整篇文档，弹窗内容自然在内）
         await cdp.eval(`${action} return true;`);
-        modalOn = await waitFor(() => cdp.eval(`return !!document.querySelector('.modal');`), `${name} 弹窗@${w}`, 4000).then(() => true).catch(() => false);
-        if (!modalOn) lines.push(`弹窗未打开 ${w}px ${name}: 动作钩子声明了弹窗但没出现（选择器可能已改名）`);
+        if (requireModal) {
+          modalOn = await waitFor(() => cdp.eval(`return !!document.querySelector('.modal');`), `${name} 弹窗@${w}`, 4000).then(() => true).catch(() => false);
+          if (!modalOn) lines.push(`弹窗未打开 ${w}px ${name}: 动作钩子声明了弹窗但没出现（选择器可能已改名）`);
+        } else {
+          // 内联动作：不等弹窗，但要求**动作真的产出了内容**——否则钩子会随界面改名静默失效，
+          // 报表照样"零发现"（与弹窗自检同一个道理，只是判据换成"面板里有字"）
+          const box = pageOpts.box || '#nov-audit-box';
+          const filled = await waitFor(() => cdp.eval(`return ((document.querySelector('${box}')||{}).innerText||'').length > 20;`), `${name} 内联面板@${w}`, 4000).then(() => true).catch(() => false);
+          if (!filled) lines.push(`内联动作无产出 ${w}px ${name}: 钩子点了但面板没内容（选择器可能已改名）`);
+        }
         await sleep(180); // 入场动画
       }
       const res = JSON.parse(await cdp.eval(PROBE));

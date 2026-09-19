@@ -1204,6 +1204,66 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('带入作用域跟随分组筛选（选了人物卡就只带人物卡）', /function scopeKinds\(\) \{ return kindFilter \? \[kindFilter\] : \[\]; \}/.test(novel));
   // ui-audit 实测过：三个按钮 + 标题在 900~1024px 会把页面撑出横向滚动条，
   // 靠 .row.wrap 换行解决。ui-audit 不是门禁，所以这里钉住修法，防止"优化时又改回不换行"。
+  // 通用棘轮：ui.js 的 dataOf 是**字面**取属性（`data-` + name），驼峰写法只会拿到 null，
+  // 表现是"按钮点了没反应"，而且**不会报错**——批 8 下（卡片删除）与批 8 补 3（体检修复）
+  // 各犯过一次。这里按文件比对：每个 dataOf 读的名字都必须真的被渲染出来。
+  for (const file of listJs(path.join(PUB, 'js', 'pages')).concat([path.join(PUB, 'js', 'app.js')])) {
+    const src = read(file);
+    const used = [...src.matchAll(/dataOf\([^,]+, *'([A-Za-z-]+)'\)/g)].map((m) => m[1]);
+    if (!used.length) continue;
+    const have = new Set([...src.matchAll(/data-([A-Za-z-]+)/g)].map((m) => m[1]));
+    const missing = [...new Set(used)].filter((n) => !have.has(n));
+    ok(`${path.basename(file)} dataOf 读的属性名都被渲染过（驼峰会静默拿到 null）`,
+      missing.length === 0, `缺失：${missing.join(', ')}`);
+  }
+
+  // ui-audit 的钩子自检（弹窗 + 内联两种）：钩子会随界面改名慢慢烂掉，而报表依然"零发现"，
+  // 所以"声明了动作就必须有产出"必须留在工具里（正向对照 Q：改坏体检入口选择器 → 4 个视口各报一条）
+  {
+    const ua = read(path.join(ROOT, 'tools', 'ui-audit.mjs'));
+    ok('ui-audit 有内联动作自检（面板无产出即报一条发现）', /内联动作无产出/.test(ua) && /requireModal === false/.test(ua));
+    ok('原著页在 ui-audit 里带内联动作且声明不是弹窗',
+      /\['novel'.*#nov-audit.*requireModal: false/.test(ua));
+    ok('ui-audit 种子里有卡片（否则体检面板永远是空态，量了个寂寞）',
+      /story_cards: \[/.test(ua) && /audit_card_loc_1/.test(ua));
+  }
+
+  // ── 一致性体检（批 8 补 3）──
+  ok('原著页有体检入口与结果容器', /id="nov-audit"/.test(novel) && /id="nov-audit-box"/.test(novel));
+  ok('体检走 api.js 的两个方法（不自己拼 fetch）',
+    /storyAudit: \(opts = \{\}\)/.test(apiSrc) && /storyAuditFix: \(body\)/.test(apiSrc)
+    && /api\.storyAudit\(\{ projectId/.test(novel) && /api\.storyAuditFix\(\{ project_id: projectId, code/.test(novel));
+  ok('api.js 的体检端点路径正确',
+    /\/api\/story\/audit\?/.test(apiSrc) && /'\/api\/story\/audit\/fix'/.test(apiSrc));
+  ok('后端注册了体检与修复两个端点', /on\('GET', '\/api\/story\/audit'/.test(routesSrc) && /on\('POST', '\/api\/story\/audit\/fix'/.test(routesSrc));
+  // "体检不花钱"是这一批的核心承诺：源码级钉死它不碰模型（行为层另有 apitest 数调用次数）
+  {
+    // bodyOf 定义在 4.1 那个块里（块级作用域），本组要自己来一份
+    const bodyAt = (src, sig) => {
+      const i = src.indexOf(sig);
+      if (i < 0) return '';
+      let d = 0;
+      for (let j = i; j < src.length; j++) {
+        if (src[j] === '{') d++;
+        else if (src[j] === '}') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return '';
+    };
+    const body = bodyAt(routesSrc, "on('GET', '/api/story/audit'");
+    ok('体检端点不引用任何模型调用（纯本地判定）',
+      body.length > 80 && !/agnes\.|fetchInternal|agnesFetch/.test(body), body.slice(0, 60));
+    const fixBody = bodyAt(routesSrc, "on('POST', '/api/story/audit/fix'");
+    ok('修复端点也不引用模型调用（纯本地收敛）', fixBody.length > 200 && !/agnes\.|fetchInternal|agnesFetch/.test(fixBody));
+  }
+  ok('合并同名卡前必须确认（不可逆操作不能一点就干）',
+    /const okGo = await confirm\(\{/.test(novel) && /if \(!okGo\) return;/.test(novel));
+  ok('冲突字段会先告诉用户（合并只能留一个说法，不能静默丢信息）',
+    /conflicts \.length|conflicts\b/.test(novel) && /存在不同说法/.test(novel));
+  ok('修复后重新拉卡片并重跑体检（用户能立刻看到结果变化）',
+    /await loadCards\(\);\s*\n\s*await runAudit\(\);/.test(novel));
+  ok('修复按钮有防连点（setBusy 包住异步请求）', /setBusy\(btn, true\);/.test(novel) && /setBusy\(btn, false\);/.test(novel));
+  ok('体检报告区分"要处理"与"可优化"（不是一锅粥的警告）',
+    /LEVEL_LABEL = \{ warn: '要处理', info: '可优化' \}/.test(novel));
   ok('卡片工作台工具栏允许换行（否则窄视口横向溢出）',
     /<div class="row wrap" style="margin-bottom:10px;row-gap:6px">/.test(novel));
   ok('复制回注按钮真的渲染了（此前 data-copy 处理器是死代码）',

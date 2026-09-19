@@ -158,6 +158,15 @@ export const api = {
   storyImportCharacters: (payload) => req('POST', '/api/story/cards/import-characters', payload),
   storyReduce: (sourceId) => req('POST', '/api/story/reduce', { source_id: sourceId }, { timeoutMs: TIMEOUT.gen }),
 
+  // 一致性体检（批 8 补 3）：纯本地判定，随时可跑、不花钱
+  storyAudit: (opts = {}) => {
+    const q = new URLSearchParams();
+    if (opts.projectId) q.set('project_id', opts.projectId);
+    if (opts.sourceId) q.set('source_id', opts.sourceId);
+    return req('GET', `/api/story/audit?${q.toString()}`);
+  },
+  storyAuditFix: (body) => req('POST', '/api/story/audit/fix', body),
+
   importData: (data, mode) => req('POST', '/api/import', { data, mode }),
   logs: () => req('GET', '/api/logs'),
 };

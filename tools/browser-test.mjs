@@ -1819,7 +1819,7 @@ try {
         await cdp.eval(`document.querySelector('#s-card-pick [data-card]').click(); return true;`);
         ok('点选后 chip 进入选中态（可再点取消）',
           await cdp.eval(`return document.querySelector('#s-card-pick [data-card]').classList.contains('on');`));
-        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]')?.click(); return true;`);
         await waitFor(() => cdp.eval(`return !!document.querySelector('tr:has([data-edit="${sid}"]') && document.querySelector('tr:has([data-edit="${sid}"]').innerText.includes('注入验收茶馆');`), '绑定徽标出现', 8000);
         ok('保存后行内显示绑定的原著卡片徽标', true);
         const cellText = await cdp.eval(`return (document.querySelector('tr:has([data-edit="${sid}"]')||{}).innerText || '';`);
@@ -1842,6 +1842,109 @@ try {
           body: JSON.stringify({ agnes_api_key: before.agnes_api_key || '', agnes_api_base_url: before.agnes_api_base_url || '' }) });
         if (sb && sb.id) await fetch(`http://127.0.0.1:${port}/api/storyboards/${sb.id}`, { method: 'DELETE' });
         if (src) await fetch(`http://127.0.0.1:${port}/api/story/sources/${src}`, { method: 'DELETE' });
+      }
+    }
+
+    group('一致性体检契约（批 8 补 3：干净不报 / 同名必报 / 一键合并真生效）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const before = await J('/api/settings');
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'location', name: '体检验收茶馆', atmosphere: '潮湿', region: '江边' },
+              { kind: 'character', name: '体检验收角色', appearance: '青衫' },
+            ] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      const srcs = [];
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'audit-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const analyze = async (title) => {
+          const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: pid, title, text: '体检验收茶馆里，体检验收角色坐着。', reduce: false }) });
+          srcs.push(an.source && an.source.id);
+          for (let i = 0; i < 40; i++) { await sleep(250); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+          return an.source && an.source.id;
+        };
+        const s1 = await analyze('体检验收原著一');
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${s1}'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-audit');`), '原著页就绪', 12000);
+
+        // ① 干净数据不制造噪音（否则用户点两次就再也不点了）
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText !== '';`), '体检结果出现', 8000);
+        const clean = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText || '';`);
+        // 只有一份原著时不该报同名卡（"不硬凑警告"）；此刻唯一该报的是"人物卡还没进资产库"
+        ok('只解析一次时不报同名卡（不硬凑警告）', !clean.includes('有 2 张'), clean.replace(/\n/g, ' ').slice(0, 110));
+        ok('体检范围写明是整个项目（否则用户以为只看当前这份）', clean.includes('整个项目'));
+
+        // ② 再解析一次 → 跨来源同名卡 → 必须报出来
+        await analyze('体检验收原著二');
+        // 先收起旧报告再重跑：否则 waitFor 会**立刻**匹配到上一次的面板文本，
+        // 读到的是过期结论（第一版就是这么假绿的——等了半天，看的还是旧内容）
+        await cdp.eval(`document.querySelector('#nov-audit-box [data-audit-close]')?.click(); return true;`);
+        await sleep(150);
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /有 2 张/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '体检报出同名卡', 8000);
+        const report = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText || '';`);
+        ok('两次解析出的同名卡被抓出来', report.includes('有 2 张'), report.replace(/\n/g, ' ').slice(0, 140));
+        ok('报告里区分"要处理"与"可优化"', report.includes('要处理') && report.includes('可优化'));
+        ok('可一键修复的项给了修复按钮（不是只报不修）',
+          await cdp.eval(`return !!document.querySelector('#nov-audit-box [data-audit-fix]');`));
+
+        // ③ 点合并 → 必须先确认（不可逆操作）→ 确认后真的合并
+        const dupBefore = await cdp.eval(`const b=Array.from(document.querySelectorAll('#nov-audit-box [data-audit-fix]')).find(x=>(x.textContent||'').includes('合并同名卡')); if(!b) return false; b.click(); return true;`);
+        ok('点"合并同名卡"有反应', dupBefore === true);
+        const cText = await waitFor(() => cdp.eval(`const m=document.querySelector('.modal'); return m ? m.innerText : '';`), '合并确认弹窗', 6000).catch(() => '');
+        ok('合并前弹确认并说明影响面（会改指分镜绑定）',
+          String(cText).includes('并成一张') && String(cText).includes('绑定'), String(cText).replace(/\n/g, ' ').slice(0, 140));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        // 断言要盯**被合并的那一组**：项目里还有另一组同名卡（两个来源的人物卡），
+        // 用宽泛的 /有 2 张/ 会因为别组的同名卡而永远等不到（第一版就是这么超时的）
+        await waitFor(() => cdp.eval(`const t=(document.querySelector('#nov-audit-box')||{}).innerText||''; return /一致性体检：/.test(t) && !/体检验收茶馆」有 2 张/.test(t);`), '合并后报告刷新', 10000);
+        const after = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText || '';`);
+        ok('合并后重新体检，这一组同名卡消失（体检不是永远报同样的话）', !after.includes('体检验收茶馆」有 2 张'), after.replace(/\n/g, ' ').slice(0, 140));
+        const left = await J(`/api/story/cards?project_id=${pid}&kind=location`);
+        // 卡片删除按钮（批 8 下就存在的按钮，直到本轮加 dataOf 棘轮才发现它一直是坏的：
+        // 处理器读 'delCard'、属性写的是 data-del-card，于是点两次也删不掉，还不报错）
+        const delBefore = await J(`/api/story/cards?project_id=${pid}&kind=character`);
+        const target = (delBefore || [])[0];
+        const srcList = await J(`/api/story/sources?project_id=${pid}`);
+        const anySrc = (srcList || [])[0];
+        ok('删除契约的前提：还有人物卡与一份可打开的原著', !!target && !!anySrc,
+          JSON.stringify({ cards: (delBefore || []).length, sources: (srcList || []).length }));
+        // 卡片工作台只在**选中一份原著**时才加载（novel.js mount：`if (sourceId) await loadCards()`），
+        // 不带 source_id 进去只会看到"还没有选中原著"空态 —— 第一版就是这么等不到删除按钮的
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${anySrc.id}'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-del-card="${target.id}"]');`), '卡片删除按钮就绪', 12000);
+        await cdp.eval(`document.querySelector('[data-del-card="${target.id}"]').click(); return true;`);
+        await sleep(150);
+        ok('第一击只进入待确认态（不直接删）',
+          await cdp.eval(`return document.querySelector('[data-del-card="${target.id}"]').textContent.includes('再点一次');`));
+        await cdp.eval(`document.querySelector('[data-del-card="${target.id}"]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !document.querySelector('[data-del-card="${target.id}"]');`), '卡片删除后从列表消失', 8000);
+        const delAfter = await J(`/api/story/cards?project_id=${pid}&kind=character`);
+        ok('第二击真的删掉了（这个按钮此前是坏的，点了没反应也不报错）',
+          (delAfter || []).length === (delBefore || []).length - 1,
+          JSON.stringify({ before: (delBefore || []).length, after: (delAfter || []).length }));
+        ok('后端也真的只剩一张（不是只改了界面）',
+          (left || []).filter((c) => c.name === '体检验收茶馆').length === 1,
+          JSON.stringify((left || []).map((c) => c.name)));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: before.agnes_api_key || '', agnes_api_base_url: before.agnes_api_base_url || '' }) });
+        for (const sid of srcs.filter(Boolean)) await fetch(`http://127.0.0.1:${port}/api/story/sources/${sid}`, { method: 'DELETE' });
       }
     }
 

@@ -87,8 +87,10 @@ export default async function novel(container, params = {}) {
             <div class="spacer"></div>
             <button class="btn btn-xs" id="nov-copy" title="把卡片回注文本复制到剪贴板（粘进任意模板变量）">${icon('copy', 13)}复制回注</button>
             <button class="btn btn-xs btn-primary" id="nov-toscript" title="把卡片带入「故事脚本」的模板变量，不用手工复制粘贴">${icon('arrowRight', 13)}带入剧本</button>
+            <button class="btn btn-xs" id="nov-audit" title="查一遍同名卡、缺字段、别名撞名、没入资产库这些会毁掉一致性的问题（纯本地判定，不花钱）">${icon('check', 13)}一致性体检</button>
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
           </div>
+          <div id="nov-audit-box"></div>
           <div id="nov-kinds" class="chips wrap" style="margin-bottom:10px"></div>
           <div id="nov-cards">${skeleton('card', 2)}</div>
         </div>
@@ -367,7 +369,7 @@ export default async function novel(container, params = {}) {
     // 删一张卡不值得弹窗打断，但也不能一击就没
     on(box, '[data-del-card]', 'click', async (e) => {
       const el = e.currentTarget;
-      const id = dataOf(el, 'delCard');
+      const id = dataOf(el, 'del-card');
       if (armedDel !== id) {
         armedDel = id;
         el.classList.add('btn-danger', 'armed');
@@ -393,6 +395,81 @@ export default async function novel(container, params = {}) {
       loadCards();
     });
   }
+
+  // ── 一致性体检（批 8 补 3）────────────────────────────────
+  // 纯本地判定：同名卡、别名撞名、缺可注入字段、没进资产库… 这些是会悄悄毁掉一致性的机械问题。
+  // 刻意不调模型：花钱才能查一致性的工具，用户会不敢点；而且同一份数据两次结论不同就没人信了。
+  const LEVEL_LABEL = { warn: '要处理', info: '可优化' };
+
+  async function runAudit() {
+    const box = container.querySelector('#nov-audit-box');
+    // 体检**按项目**而不是按当前这份原著：同名卡最常见的就是"同一个角色从两份原著里各抽出一张"，
+    // 只看当前来源就永远看不见它。修复也是项目级的，报告范围与修复范围必须一致。
+    const r = await api.storyAudit({ projectId });
+    if (!r.ok) { toast.err(r.error); return; }
+    const { counts, issues, total_cards: total } = r.data;
+    if (!issues.length) {
+      box.innerHTML = `<div class="note" style="margin-bottom:10px">${icon('check', 13)} 一致性体检：${total} 张卡片，没发现问题。</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="note" style="margin-bottom:10px">
+        <div class="row wrap" style="row-gap:6px;align-items:flex-start">
+          <div style="flex:1;min-width:200px">
+            <b>一致性体检：${issues.length} 项</b>（要处理 ${counts.warn} · 可优化 ${counts.info}，其中 ${counts.fixable} 项可一键修复）
+            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>（同名卡常常来自不同原著，只看当前这份就看不见）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
+          </div>
+          <button class="btn btn-xs" data-audit-again>重新体检</button>
+          <button class="btn btn-xs" data-audit-close>收起</button>
+        </div>
+        <div class="divider" style="margin:8px 0"></div>
+        ${issues.map((it, i) => `
+          <div class="row" style="align-items:flex-start;gap:8px;padding:5px 0">
+            <span class="badge ${it.level === 'warn' ? 'gold' : 'gray'}" style="flex:0 0 auto">${LEVEL_LABEL[it.level] || it.level}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:550">${esc(it.title)}</div>
+              <div class="hint-xs" style="margin-top:2px">${esc(it.detail)}</div>
+            </div>
+            ${it.fixable ? `<button class="btn btn-xs" data-audit-fix="${esc(it.code)}" data-fix-idx="${i}" style="flex:0 0 auto">${it.code === 'char_not_in_asset' ? '一键入资产库' : it.code === 'dup_name' ? '合并同名卡' : '删掉撞名别名'}</button>` : ''}
+          </div>`).join('')}
+      </div>`;
+    // 修复项：只做机械且可解释的三件事，做完重新体检（用户能立刻看到结果变化）
+    on(box, '[data-audit-again]', 'click', () => runAudit());
+    on(box, '[data-audit-close]', 'click', () => { box.innerHTML = ''; });
+    on(box, '[data-audit-fix]', 'click', async (e) => {
+      const btn = e.currentTarget;
+      // 变更须知：ui.js 的 dataOf 是**字面**取属性（`el.getAttribute('data-' + name)`），
+      // 所以这里必须写 'audit-fix' 而不是 'auditFix' —— 写成驼峰只会拿到 null，
+      // 表现是"按钮点了没反应"（这个 bug 在批 8 下与批 8 补 3 各犯过一次，uitest 已加通用棘轮）。
+      const code = dataOf(btn, 'audit-fix');
+      const issue = issues[Number(dataOf(btn, 'fix-idx'))] || {};
+      if (code === 'dup_name') {
+        const conflicts = (issue.conflicts || []).length;
+        const okGo = await confirm({
+          title: '合并同名卡',
+          text: `这会把 ${issue.card_ids.length} 张同名卡并成一张（保留更详细的描述），并把分镜上指向被合并卡的绑定改指到存活卡上。`
+            + (conflicts ? `<br><br>注意：有 ${conflicts} 个字段存在不同说法，合并后只保留更详细的那个——原值会显示在体检详情里，建议先核对。` : ''),
+          okText: '合并',
+        });
+        if (!okGo) return;
+      }
+      setBusy(btn, true);
+      const r = await api.storyAuditFix({ project_id: projectId, code, card_ids: issue.card_ids || [] });
+      setBusy(btn, false);
+      if (!r.ok) { toast.err(r.error); return; }
+      const d = r.data;
+      if (code === 'dup_name') toast.ok(`已合并 ${d.merged_groups} 组同名卡，删除 ${d.removed_cards} 张，${d.repointed_shots} 个镜头的绑定已改指存活卡`);
+      else if (code === 'alias_collision') toast.ok(`已清理 ${d.fixed_cards} 张卡的撞名别名`);
+      else toast.ok(`已把 ${d.created_count} 张人物卡写进资产库${d.skipped_count ? `（${d.skipped_count} 张已在库里）` : ''}`);
+      await loadCards();
+      await runAudit();
+    });
+  }
+
+  container.querySelector('#nov-audit').onclick = () => {
+    if (!projectId) { toast.err('先在右上角选一个项目'); return; }
+    runAudit();
+  };
 
   /** 当前作用域：选了某个分组就只带这一类，否则带全部 */
   function scopeKinds() { return kindFilter ? [kindFilter] : []; }
