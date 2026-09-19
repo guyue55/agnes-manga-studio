@@ -1845,6 +1845,84 @@ try {
       }
     }
 
+    group('抽取覆盖契约（批 8 补 18：是"没信息"还是"模型没接住"）');
+    {
+      // 自建上游 mock：让三段原文得到三种不同结局（正常 / 明确无信息 / 条目被丢弃）
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              if (um.includes('__NOINFO__')) return send({ choices: [{ message: { content: JSON.stringify({ cards: [] }) } }] });
+              if (um.includes('__NPC__') && !globalThis.__covFixed) return send({ choices: [{ message: { content: JSON.stringify({ cards: [{ kind: 'npc', name: '类别不认识' }] }) } }] });
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [{ kind: 'character', name: '林晚', role: '主角', appearance: '白衣' }] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'cov-key' }) });
+        pid = (await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: '覆盖验收剧' }) })).id;
+        const seg = (mark, n) => `${mark} ` + '林晚在临江茶馆见到顾寒。'.repeat(n);
+        const text = [seg('__OK__', 90), seg('__NOINFO__', 90), seg('__NPC__', 90)].join('\n\n');
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '覆盖·原著', text, reduce: false, max_chars: 700, max_chunks: 20 }) });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-cover');`), '覆盖体检按钮', 15000);
+        await cdp.eval(`document.querySelector('#nov-cover').click(); return true;`);
+        // 注意：加载骨架外面也套了 .card，等 .card 会立刻通过、然后读到空面板 —— 等**正文**出现
+        await waitFor(() => cdp.eval(`return /抽取覆盖/.test((document.querySelector('#nov-cover-box')||{}).innerText||'');`), '覆盖面板出现', 12000);
+        const panel = await cdp.eval(`return (document.querySelector('#nov-cover-box')||{}).innerText||'';`);
+        ok('面板把"确认无信息"与"条目被丢弃"分开说（两者长得一样时，真丢数据永远看不见）',
+          /确认无信息/.test(panel) && /有条目被丢弃/.test(panel), JSON.stringify(panel.slice(0, 160)));
+        ok('面板说清被丢弃的段"模型给了几条、什么类别"（用户才知道怎么修）',
+          /模型给了 \d+ 条/.test(panel) && /npc/.test(panel), JSON.stringify(panel.slice(0, 220)));
+        ok('面板只列出要管的段（把几十段"已抽取"全铺开会把真正要看的淹掉）',
+          !/已抽取/.test(panel), JSON.stringify(panel.slice(0, 160)));
+        ok('面板带原文预览（只给"第 N 段"等于让用户自己去数）', /__NPC__/.test(panel), JSON.stringify(panel.slice(0, 220)));
+
+        // 补抽：花钱前先确认，确认后**真的再调一次模型**并修好那段
+        const retryBtn = await cdp.eval(`return !!document.querySelector('#nov-cover-retry');`);
+        ok('有待补抽的段时给出补抽按钮（只报告不给出口就是死胡同）', retryBtn);
+        globalThis.__covFixed = true;
+        // 前面的用例可能留了"成本确认免打扰"票据（有票就不弹窗），这里先清掉
+        await cdp.eval(`localStorage.removeItem('agnes.cost.skipUntil'); return true;`);
+        await cdp.eval(`document.querySelector('#nov-cover-retry').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('.modal-mask [data-yes]');`), '补抽成本确认弹窗', 10000);
+        const dlg = await cdp.eval(`return (document.querySelector('.modal-mask')||{}).innerText||'';`);
+        ok('确认弹窗说清"只补字段、id 不变"（用户敢点：补抽不会把改好的卡片冲掉）',
+          /已有卡片只补字段、id 不变/.test(dlg), JSON.stringify(dlg.slice(0, 200)));
+        await cdp.eval(`document.querySelector('.modal-mask [data-yes]').click(); return true;`);
+        await waitFor(async () => {
+          const src = (await J(`/api/story/sources?project_id=${pid}`))[0];
+          const c = await J(`/api/story/coverage?source_id=${src.id}`);
+          return (c.needs_retry || []).length === 0;
+        }, '补抽后不再有待补段', 25000);
+        const cov2 = await J(`/api/story/coverage?source_id=${(await J(`/api/story/sources?project_id=${pid}`))[0].id}`);
+        ok('补抽后那段从"被丢弃"变成"已抽取"（补抽真的修好了，不是只弹个提示）',
+          cov2.counts.dropped === 0 && cov2.counts.ok >= 2, JSON.stringify(cov2.counts));
+        ok('"确认无信息"的段没有被顺手重抽（不该动的绝不乱花钱）', cov2.counts.empty === 1, JSON.stringify(cov2.counts));
+        globalThis.__covFixed = false;
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('地点卡参考图契约（批 8 补 17：同一个场景每张图都不一样）');
     {
       // 自建上游 mock：既出卡片（解析那一步要），又**记录实际收到的 image 数组** ——

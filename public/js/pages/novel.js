@@ -92,10 +92,12 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs" id="nov-copy" title="把卡片回注文本复制到剪贴板（粘进任意模板变量）">${icon('copy', 13)}复制回注</button>
             <button class="btn btn-xs btn-primary" id="nov-toscript" title="把卡片带入「故事脚本」的模板变量，不用手工复制粘贴">${icon('arrowRight', 13)}带入剧本</button>
             <button class="btn btn-xs" id="nov-outline" title="把剧情卡按原文顺序排成拍子、按幕次收口切成集（纯本地判定，不花钱，可反复调）">${icon('grid', 13)}分集大纲</button>
+            <button class="btn btn-xs" id="nov-cover" title="查一遍这段原文哪些段落没抽出卡片：是「确实没信息」还是「模型没接住」（纯本地判定，不花钱）">${icon('search', 13)}抽取覆盖</button>
             <button class="btn btn-xs" id="nov-audit" title="查一遍同名卡、缺字段、别名撞名、没入资产库这些会毁掉一致性的问题（纯本地判定，不花钱）">${icon('check', 13)}一致性体检</button>
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
           </div>
           <div id="nov-outline-box"></div>
+          <div id="nov-cover-box"></div>
           <div id="nov-audit-box"></div>
           <div id="nov-kinds" class="chips wrap" style="margin-bottom:10px"></div>
           <div id="nov-cards">${skeleton('card', 2)}</div>
@@ -256,7 +258,12 @@ export default async function novel(container, params = {}) {
     localStorage.removeItem(JOB_KEY);
     loadSources();
     if (sourceId) loadCards();
-    if (j.status === 'done') toast.ok(`解析完成：成功 ${j.ok} 项${j.fail ? `，失败 ${j.fail} 项（可在卡片列表重试或手动补）` : ''}`);
+    // 批 8 补 18：以前这里写"可在卡片列表重试"，但卡片列表根本没有重试入口（假承诺）。
+    // 现在真有出口了：点名"哪几段要补抽"，并且**自动把覆盖面板打开**，不让用户自己找。
+    if (j.status === 'done') {
+      toast.ok(`解析完成：成功 ${j.ok} 项${j.fail ? `，${j.fail} 段需要补抽` : ''}`);
+      if (j.fail) runCoverage();
+    }
     else if (j.status === 'cancelled') toast('解析已取消——已抽出的卡片仍然保留', 'info');
   }
 
@@ -667,6 +674,75 @@ export default async function novel(container, params = {}) {
       await runAudit();
     });
   }
+
+  /**
+   * 抽取覆盖体检（批 8 补 18）。
+   *
+   * 为什么要单独一块面板：分块抽取跑几十段，模型对每段的回答有三种完全不同的结局 ——
+   * 「抽到了」「模型明确说这段没信息」「模型返回了条目却被我们丢掉」。此前它们被压成同一个"失败"，
+   * 于是"部分失败 8 段"常年挂着，用户很快就学会无视它；而真正丢数据的那种最隐蔽，
+   * 在界面上跟"这段确实没信息"长得一模一样。这里把三者分开，并给出**能点的下一步**。
+   */
+  async function runCoverage() {
+    const box = container.querySelector('#nov-cover-box');
+    if (!sourceId) { box.innerHTML = ''; toast.err('先在左侧选中一份原著'); return; }
+    box.innerHTML = `<div class="card" style="margin-bottom:10px">${skeleton('row', 3)}</div>`;
+    const r = await api.storyCoverage(sourceId);
+    if (!r.ok) { box.innerHTML = errBox(r.error, '覆盖体检没跑起来', r.trace); return; }
+    const d = r.data;
+    const c = d.counts || {};
+    const BADGE = { ok: 'green', empty: 'gray', dropped: 'gold', failed: 'red', unknown: 'blue', pending: 'gray' };
+    const bad = (d.needs_retry || []).length;
+    const rowOf = (x) => `
+      <div class="row" style="gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)">
+        <span class="chip ${BADGE[x.state] || ''}" style="flex:none">${esc(x.state_label)}</span>
+        <div style="flex:1;min-width:0">
+          <div class="hint-xs"><b>${esc(x.label)}</b> · ${countLabel(x.chars)}${x.cards ? ` · ${x.cards} 张卡` : ''}${x.raw_count ? ` · 模型给了 ${x.raw_count} 条` : ''}${(x.raw_kinds || []).length ? `（类别：${esc(x.raw_kinds.join('、'))}）` : ''}</div>
+          <div class="hint-xs" style="opacity:.75">${esc((x.preview || '').replace(/\s+/g, ' ').slice(0, 90))}</div>
+          ${x.error ? `<div class="hint-xs" style="color:var(--warn)">${esc(x.error)}</div>` : ''}
+        </div>
+      </div>`;
+    // 只把**该管的段**列出来：把几十段"已抽取"全铺开，真正要看的反而找不到
+    const show = (d.chunks || []).filter((x) => x.needs_retry || x.state === 'unknown' || x.state === 'empty');
+    box.innerHTML = `
+      <div class="card" style="margin-bottom:10px;padding:12px">
+        <div class="row wrap" style="gap:6px;align-items:center">
+          <b>抽取覆盖：${esc(d.note || '')}</b>
+          <div class="spacer"></div>
+          ${bad ? `<button class="btn btn-xs btn-primary" id="nov-cover-retry">${icon('refresh', 12)}补抽这 ${bad} 段</button>` : ''}
+          <button class="btn btn-xs" id="nov-cover-close">收起</button>
+        </div>
+        ${(d.notes || []).map((n) => `<div class="hint-xs" style="margin-top:4px">${esc(n)}</div>`).join('')}
+        ${show.length ? show.map(rowOf).join('') : '<div class="hint-xs" style="margin-top:6px">每一段都抽到了卡片。</div>'}
+      </div>`;
+    const close = box.querySelector('#nov-cover-close');
+    if (close) close.onclick = () => { box.innerHTML = ''; };
+    const btn = box.querySelector('#nov-cover-retry');
+    if (!btn) return;
+    btn.onclick = async () => {
+      // 补抽是**花钱**的动作：先说清要跑几段、只补不删，再动手
+      const okGo = await costConfirm({
+        count: bad,
+        what: '补抽漏掉的段落',
+        note: `只补这 ${bad} 段（${(d.needs_retry || []).slice(0, 6).map((i) => `第 ${i + 1} 段`).join('、')}${bad > 6 ? ' 等' : ''}）。`
+          + '已有卡片只补字段、id 不变，不会把改好的卡片冲掉。',
+      });
+      if (!okGo) return;
+      setBusy(btn, true, '提交中');
+      const rr = await api.storyRetryChunks({ source_id: sourceId });
+      setBusy(btn, false);
+      if (!rr.ok) { toast.err(rr.error); return; }
+      localStorage.setItem(JOB_KEY, rr.data.jobId);
+      toast.ok(`已开始补抽 ${rr.data.count} 段`, 'info');
+      pollJob(rr.data.jobId);
+      await loadSources();
+    };
+  }
+
+  container.querySelector('#nov-cover').onclick = () => {
+    if (!projectId) { toast.err('先在右上角选一个项目'); return; }
+    runCoverage();
+  };
 
   container.querySelector('#nov-audit').onclick = () => {
     if (!projectId) { toast.err('先在右上角选一个项目'); return; }

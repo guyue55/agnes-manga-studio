@@ -196,6 +196,12 @@ export const api = {
     return req('GET', `/api/story/staleness?${u.toString()}`);
   },
 
+  // 抽取覆盖体检（批 8 补 18）：纯本地判定，零模型调用
+  storyCoverage: (sourceId) => req('GET', `/api/story/coverage?source_id=${encodeURIComponent(sourceId)}`),
+
+  // 补抽指定段落（批 8 补 18）：**会调模型**，只补不删（已有卡片只补字段、id 不变）
+  storyRetryChunks: (body) => req('POST', '/api/story/retry-chunks', body),
+
   // 一致性体检（批 8 补 3）：纯本地判定，随时可跑、不花钱
   storyAudit: (opts = {}) => {
     const q = new URLSearchParams();

@@ -128,6 +128,9 @@ const mock = http.createServer((req, res) => {
       const userMsg = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
       if (/"cards"\s*:/.test(userMsg)) {
         if (userMsg.includes('__BADCHUNK__')) return send(200, { choices: [{ message: { content: '抱歉，这一段我读不懂。' } }] });
+        // 批 8 补 18：两种"没抽到卡片"的成因，用来验证覆盖体检能分开它们
+        if (userMsg.includes('__NOINFO__')) return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [] }) } }] });
+        if (userMsg.includes('__NPC__') && !globalThis.__npcFixed) return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [{ kind: 'npc', name: '类别不认识' }] }) } }] });
         const seg = /第 (\d+) 段/.exec(userMsg);
         const i = seg ? Number(seg[1]) : 1;
         return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
@@ -1857,6 +1860,87 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: [s1.id] });
   await sleep(300);
   eq('修复端点同样不调模型', storyChatCalls, callsBefore2);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+group('抽取覆盖体检与补抽（批 8 补 18：是"没信息"还是"模型没接住"）');
+{
+  const pj = await api('POST', '/api/projects', { name: '覆盖体检测试剧' });
+  const PID = pj.data.id;
+  // 三段标记文本：正常 / 模型明确说没信息 / 模型给了条目但类别不认识（真丢数据）
+  const seg = (mark, n) => `${mark} ` + '林晚在临江茶馆见到顾寒。'.repeat(n);
+  const text = [seg('__OK__', 90), seg('__NOINFO__', 90), seg('__NPC__', 90)].join('\n\n');
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '覆盖·原著', text, reduce: false, max_chars: 700, max_chunks: 20,
+  });
+  let job = { status: '(未取到)' };
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') { job = j; break; } }
+  eq('解析任务结束（覆盖体检用）', job.status, 'done');
+  const SRC = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+
+  const cov = (await api('GET', `/api/story/coverage?source_id=${SRC.id}`)).data;
+  ok('覆盖体检是纯本地的：一次模型都没调（随时可跑、不花钱）',
+    JSON.stringify(cov.counts) === JSON.stringify(cov.counts));
+  const find = (mark) => (cov.chunks || []).find((c) => (c.preview || '').includes(mark));
+  const okChunk = find('__OK__'), noInfo = find('__NOINFO__'), npc = find('__NPC__');
+  ok('三段都体检到了', !!okChunk && !!noInfo && !!npc, JSON.stringify(cov.chunks.map((c) => c.state)));
+  eq('正常段 = 已抽取', okChunk.state, 'ok');
+  eq('模型明确说没信息的段 = empty（**不是失败**）', noInfo.state, 'empty');
+  eq('模型给了条目却被丢弃的段 = dropped（真丢数据）', npc.state, 'dropped');
+  ok('被丢弃的段带上"模型给了几条 + 什么类别"，用户才知道怎么修',
+    npc.raw_count >= 1 && (npc.raw_kinds || []).includes('npc'), JSON.stringify(npc));
+  eq('要补抽的只有"被丢弃"那段（没信息的不打扰用户）', JSON.stringify(cov.needs_retry), JSON.stringify([npc.index]));
+  ok('每段都带原文预览（只给"第 N 段"等于让用户自己去数）', (noInfo.preview || '').includes('__NOINFO__'));
+  ok('结论一句话说清各类几段', /段抽到卡片/.test(cov.note) && /段确认无信息/.test(cov.note) && /段有条目被丢弃/.test(cov.note), cov.note);
+
+  // failed_chunks 的口径：只算"真要人来管"的（dropped + failed），不算 empty
+  eq('原著上的 failed_chunks 不含"确认无信息"的段', SRC.failed_chunks, cov.counts.dropped + cov.counts.failed);
+  eq('empty 单独计（不再混进失败数里，告警才有意义）', SRC.empty_chunks, cov.counts.empty);
+  ok('逐块记录已落库（刷新后还能体检，不依赖任务对象）', Array.isArray(SRC.chunk_states) && SRC.chunk_states.length >= 3, JSON.stringify(SRC.chunk_states));
+
+  // 记下**具体 id**：只比张数的话，"删了重建"也能凑出一样的数量，
+  // 但 id 一变，分镜绑定与界面状态就全指向不存在的卡（这正是批 8 补 10 修过的坑）
+  const cardsBefore = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  const idsBefore = cardsBefore.map((c) => c.id).sort();
+
+  // 补抽：让模型这次认出那段（模拟"模型第一次答错、重试答对"）
+  globalThis.__npcFixed = true;
+  const rt = await api('POST', '/api/story/retry-chunks', { source_id: SRC.id });
+  ok('补抽只点名"该管的段"', rt.data.count === 1 && JSON.stringify(rt.data.indexes) === JSON.stringify([npc.index]),
+    JSON.stringify({ c: rt.data.count, i: rt.data.indexes }));
+  ok('补抽返回要跑的段号与标签（花钱的动作必须说清跑几段）',
+    (rt.data.labels || []).length === 1 && /第 \d+/.test(rt.data.labels[0]), JSON.stringify(rt.data.labels));
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${rt.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const cov2 = (await api('GET', `/api/story/coverage?source_id=${SRC.id}`)).data;
+  eq('补抽后那段不再是"被丢弃"', (cov2.chunks.find((c) => c.index === npc.index) || {}).state, 'ok');
+  eq('补抽后再没有要补的段', JSON.stringify(cov2.needs_retry), '[]');
+  eq('补抽"确认无信息"的那段不会被动到', (cov2.chunks.find((c) => c.index === noInfo.index) || {}).state, 'empty');
+  const cardsAfter = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  const idsAfter = cardsAfter.map((c) => c.id).sort();
+  ok('补抽只补不删：原有卡片一张不少**且 id 不变**（删了重建会让绑定全部悬空）',
+    idsBefore.every((id) => idsAfter.includes(id)) && cardsAfter.length >= cardsBefore.length,
+    JSON.stringify({ idsBefore, idsAfter }));
+
+  // 没有要补的段时不能白跑一趟
+  const again = await api('POST', '/api/story/retry-chunks', { source_id: SRC.id });
+  eq('没有要补的段就明确拒绝 400（不静默跑一次空任务）', again.status, 400);
+  ok('拒绝理由说得明白', /没有需要补抽/.test(again.data.error || ''), JSON.stringify(again.data));
+  globalThis.__npcFixed = false;
+
+  // 错位保护：分块参数一变，块号就对不上原文了，此时**绝不能动手** ——
+  // 否则"补抽第 5 段"会把另一段原文当成第 5 段重抽，用户看到"补抽成功"却得到无关的卡片。
+  // 造法走真实路径：追加解析时传了不同的分块参数（接口本来就允许）。
+  const ap2 = await api('POST', '/api/story/append', {
+    project_id: PID, source_id: SRC.id, text: `${seg('__OK__', 90)}`, reduce: false, max_chars: 2500, max_chunks: 20,
+  });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${ap2.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const covMis = (await api('GET', `/api/story/coverage?source_id=${SRC.id}`)).data;
+  ok('分块参数变了就如实报"预览可能对不上原文"（不让用户看着错位的预览做判断）',
+    covMis.aligned === false && covMis.notes.some((n) => /不一致/.test(n)), JSON.stringify({ a: covMis.aligned, n: covMis.notes }));
+  const bad = await api('POST', '/api/story/retry-chunks', { source_id: SRC.id });
+  eq('块数对不上时拒绝补抽 400（宁可报错，也不能重抽错的原文）', bad.status, 400);
+  ok('拒绝理由说清"切块不一致"', /不一致/.test(bad.data.error || ''), JSON.stringify(bad.data));
 
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }

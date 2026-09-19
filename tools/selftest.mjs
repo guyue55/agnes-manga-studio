@@ -551,6 +551,59 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('抽取覆盖体检（批 8 补 18：这段是"没信息"还是"模型没接住"）');
+{
+  const story = require('./lib/story.js');
+  // 三种"没抽到卡片"的含义完全不同，此前被压成同一个"失败"
+  eq('抽到卡片 = ok', story.classifyChunk({ cardCount: 2, rawCount: 2 }), 'ok');
+  eq('模型明确说这段没信息 = empty（**不是失败**）', story.classifyChunk({ cardCount: 0, rawCount: 0 }), 'empty');
+  eq('模型给了条目但全被丢弃 = dropped（真丢数据，最隐蔽）', story.classifyChunk({ cardCount: 0, rawCount: 3 }), 'dropped');
+  eq('调用失败/不可解析 = failed', story.classifyChunk({ error: '网关 500' }), 'failed');
+  eq('有错就是 failed（哪怕 rawCount 看着有东西）', story.classifyChunk({ cardCount: 0, rawCount: 3, error: 'x' }), 'failed');
+  ok('只有 failed / dropped 要人来管（empty 是正常结局，报成失败会让告警失去意义）',
+    story.chunkNeedsRetry('failed') && story.chunkNeedsRetry('dropped')
+    && !story.chunkNeedsRetry('empty') && !story.chunkNeedsRetry('ok'));
+
+  const states = [
+    { index: 0, state: 'ok', cards: 2, raw_count: 2 },
+    { index: 1, state: 'empty' },
+    { index: 2, state: 'dropped', raw_count: 1 },
+    { index: 3, state: 'failed', error: '网关 500' },
+  ];
+  const sum = story.summarizeExtraction({ chunkCount: 4, chunkStates: states });
+  eq('四种结局各自计数', JSON.stringify(sum.counts), JSON.stringify({ ok: 1, empty: 1, dropped: 1, failed: 1, unknown: 0, pending: 0 }));
+  eq('要补抽的只有 dropped 与 failed（empty 不打扰用户）', JSON.stringify(sum.needs_retry), JSON.stringify([2, 3]));
+  ok('结论一句话说清四类各几段', /1 段抽到卡片/.test(story.extractionNote(sum)) && /1 段确认无信息/.test(story.extractionNote(sum)));
+
+  // 有逐块记录却缺一段（取消/中断）：既不是"没信息"也不是"漏抽"，但**确实还没抽**
+  const cut = story.summarizeExtraction({ chunkCount: 3, chunkStates: [states[0]] });
+  eq('没跑到的段算 pending', cut.counts.pending, 2);
+  eq('没跑到的段也要能补抽', JSON.stringify(cut.needs_retry), JSON.stringify([1, 2]));
+
+  // 卡片实际覆盖了某块（人工补过卡）→ 以卡片为准，不能因为记录说 empty 就报"没信息"
+  const covered = story.summarizeExtraction({ chunkCount: 2, chunkStates: [{ index: 0, state: 'empty' }], coveredIndexes: [0] });
+  eq('记录说没抽到、但卡片覆盖了这一块 → 算 ok', covered.counts.ok, 1);
+
+  // 老原著（本轮之前解析的）没有逐块记录：**不能替模型回答"没信息"**
+  const legacy = story.summarizeExtraction({ chunkCount: 3, chunkStates: [], coveredIndexes: [1] });
+  eq('老数据：有卡片覆盖的算 ok', legacy.counts.ok, 1);
+  eq('老数据：没卡片的标 unknown（不是 empty，也不是 failed）', legacy.counts.unknown, 2);
+  ok('老数据没有逐块记录', legacy.has_states === false);
+  eq('老数据的 unknown 段作为补抽候选（补抽只补不删，是安全的）', JSON.stringify(legacy.needs_retry), JSON.stringify([0, 2]));
+
+  eq('从卡片收集覆盖块号（evidence 并集）',
+    JSON.stringify(story.chunkIndexesFromCards([{ evidence: [2, 0] }, { chunk_index: 2 }, { evidence: [5] }])),
+    JSON.stringify([0, 2, 5]));
+  eq('块号清洗：丢脏值、去重、按序', JSON.stringify(story.normalizeChunkStates(
+    [{ index: 1, state: 'ok' }, { index: -1 }, { index: 'x' }, { index: 1, state: 'failed' }, { index: 9, state: 'wat' }], 5,
+  )), JSON.stringify([{ index: 1, state: 'ok', cards: 0, raw_count: 0, raw_kinds: [], error: '' }]));
+  eq('落库保留"模型给的类别"（只说丢弃了几条，用户没法动手修）',
+    JSON.stringify(story.normalizeChunkStates([{ index: 0, state: 'dropped', raw_count: 2, raw_kinds: ['npc'] }], 1)[0].raw_kinds),
+    JSON.stringify(['npc']));
+  eq('超出块数的记录丢掉（脏值不能让面板画出不存在的段）',
+    story.normalizeChunkStates([{ index: 7, state: 'ok' }], 3).length, 0);
+}
+
 group('地点卡/道具卡参考图（批 8 补 17：同一个场景每张图都不一样）');
 {
   const story = require('./lib/story.js');

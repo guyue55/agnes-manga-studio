@@ -1257,9 +1257,28 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     // 预检必须把场景/道具卡的参考图也算进去，否则"带了几张"是假的
     && /count\(s\.story_card_ids, cardById, cardUrls\)/.test(boardsSrc));
 
-  // ── 地点卡/道具卡参考图（批 8 补 17）──
+  // ── 抽取覆盖体检与补抽（批 8 补 18）──
   const novelSrc17 = read(path.join(PUB, 'js', 'pages', 'novel.js'));
   const constsSrc17 = read(path.join(PUB, 'js', 'consts.js'));
+  const apiSrc18 = read(path.join(PUB, 'js', 'api.js'));
+  ok('覆盖体检走纯本地端点（随时可跑、不花钱）',
+    /storyCoverage: \(sourceId\) => req\('GET', `\/api\/story\/coverage\?source_id=/.test(apiSrc18));
+  ok('补抽是独立端点（会调模型，所以必须能单独确认成本）',
+    /storyRetryChunks: \(body\) => req\('POST', '\/api\/story\/retry-chunks', body\)/.test(apiSrc18));
+  ok('原著页有覆盖体检入口与面板（不是只有后端能力）',
+    /id="nov-cover"/.test(novelSrc17) && /id="nov-cover-box"/.test(novelSrc17) && /async function runCoverage\(\)/.test(novelSrc17));
+  ok('四种结局分开显示（"没信息"和"被丢弃"长得一样时，真丢数据就永远看不见）',
+    /const BADGE = \{ ok: 'green', empty: 'gray', dropped: 'gold', failed: 'red'/.test(novelSrc17)
+    && /x\.state_label/.test(novelSrc17));
+  ok('被丢弃的段要说清"模型给了几条、什么类别"（只说"丢弃了"用户没法动手修）',
+    /模型给了 \$\{x\.raw_count\} 条/.test(novelSrc17) && /x\.raw_kinds\.join/.test(novelSrc17));
+  ok('补抽按钮带成本确认（花钱的动作不能点一下就发出去）',
+    /id="nov-cover-retry"/.test(novelSrc17) && /costConfirm\(\{[\s\S]{0,200}what: '补抽漏掉的段落'/.test(novelSrc17));
+  ok('补抽后回到进度条（不是点完就没下文）', /localStorage\.setItem\(JOB_KEY, rr\.data\.jobId\)/.test(novelSrc17));
+  ok('不再承诺"可在卡片列表重试"这种没有出口的话（假承诺比不提示更糟）',
+    !/可在卡片列表重试或手动补/.test(novelSrc17) && /if \(j\.fail\) runCoverage\(\)/.test(novelSrc17));
+
+  // ── 地点卡/道具卡参考图（批 8 补 17）──
   ok('地点卡/道具卡能挂参考图（此前只有人物卡有，场景/道具只有一行文字）',
     /CARD_IMAGE_KINDS\.includes\(c\.kind\)/.test(novelSrc17) && /e-refs-\$\{esc\(c\.id\)\}/.test(novelSrc17));
   ok('参考图是**多选缩略图**，保存时单独收集（它不是单值输入，不在 [data-f] 里）',
