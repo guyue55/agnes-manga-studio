@@ -139,6 +139,19 @@ const mock = http.createServer((req, res) => {
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
+        // __LONGARC__：给分集骨架测试造一段"两幕八拍"的剧情（只有带标记的原文才会走到这里，
+        // 所以不可能影响其它分组的既有断言）
+        if (userMsg.includes('__LONGARC__')) {
+          return send(200, { choices: [{ message: { content: JSON.stringify({
+            world: { name: '长弧线旧事', genre: '古装悬疑', tone: '沉郁' },
+            plots: [
+              { name: '长弧·起1', stage: '起', conflict: 'C1' }, { name: '长弧·承1', stage: '承', conflict: 'C2' },
+              { name: '长弧·转1', stage: '转', conflict: 'C3' }, { name: '长弧·合1', stage: '合', outcome: 'O1' },
+              { name: '长弧·起2', stage: '起', conflict: 'C4' }, { name: '长弧·承2', stage: '承', conflict: 'C5' },
+              { name: '长弧·转2', stage: '转', conflict: 'C6' }, { name: '长弧·合2', stage: '合', outcome: 'O2' },
+            ],
+          }) } }] });
+        }
         // 故意包 ```json 围栏：真实网关/模型经常这么回，宽松解析必须吃得下
         return send(200, { choices: [{ message: { content: '```json\n' + JSON.stringify({
           world: { name: '临江旧事', genre: '古装悬疑', tone: '沉郁', mainline: '林晚查父仇，顾寒是唯一线索。' },
@@ -1553,6 +1566,73 @@ group('任务 CRUD 与批量取消');
 }
 
 // ── 批 8：原著解析（分块 map + 全局 reduce + 卡片反向驱动）────────
+group('分集骨架（批 8 补 4：按幕收口 / 参数真的生效 / 不花钱 / 按来源隔离）');
+{
+  const pj = await api('POST', '/api/projects', { name: '分集骨架测试剧' });
+  const PID = pj.data.id;
+  const analyze = async (title, text, opts = {}) => {
+    const an = await api('POST', '/api/story/analyze', Object.assign({ project_id: PID, title, text }, opts));
+    for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+    return an.data.source && an.data.source.id;
+  };
+  const short = await analyze('分集·短片', '林晚在临江茶馆见到顾寒。'.repeat(40));
+  const long = await analyze('分集·长弧', `__LONGARC__${'林晚在临江茶馆见到顾寒。'.repeat(40)}`);
+  ok('两次解析各建一份来源', !!short && !!long && short !== long);
+
+  // ① 不花钱：分集骨架是可判定的，反复调拍数不该产生任何模型调用
+  const callsBefore = storyChatCalls;
+  const r1 = await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${long}&per_episode=3`);
+  eq('端点 200', r1.status, 200);
+  await sleep(400); // 与干跑同一条纪律：等一拍再数，否则只能证明"没有同步调用"
+  eq('排分集**一次模型都没调**（调拍数不花钱，用户才敢反复试）', storyChatCalls, callsBefore);
+
+  // ② 形状与内容
+  eq('返回拍数', r1.data.beat_count, 8);
+  eq('全部标了幕次 → basis=stage', r1.data.basis, 'stage');
+  eq('每集下限原样回显', r1.data.per_episode, 3);
+  eq('硬上限 = 下限 ×2', r1.data.hard_limit, 6);
+  eq('按幕收口：4+4 而不是 3+3+2', r1.data.episodes.map((e) => e.beat_count).join(','), '4,4');
+  eq('集数', r1.data.episode_count, 2);
+  eq('幕次覆盖 8/8', r1.data.stage_covered, 8);
+  eq('没有硬切', r1.data.forced_cuts, 0);
+  ok('信息卡（全局归并出来的）也算进来了', r1.data.world_count >= 1, String(r1.data.world_count));
+  eq('每集都给出幕次标签', r1.data.episodes[0].acts.join(''), '起承转合');
+  ok('每一拍都带结构化字段（界面直接渲染）',
+    r1.data.episodes[0].beats.every((b) => b.name && b.stage), JSON.stringify(r1.data.episodes[0].beats[0]));
+  eq('拍序按原文出现顺序', r1.data.episodes[0].beats.map((b) => b.name).join(','), '长弧·起1,长弧·承1,长弧·转1,长弧·合1');
+  ok('文本带全剧设定与分集骨架', r1.data.text.includes('【全剧设定】') && r1.data.text.includes('【分集骨架】'));
+  ok('文本带切分说明', r1.data.text.includes('【切分说明】'));
+  ok('骨架文本不含未替换占位符', !/\{\{/.test(r1.data.text));
+
+  // ③ 参数真的生效：下限调大后不许在幕中间提前切
+  const r2 = await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${long}&per_episode=5`);
+  eq('下限 5 → 第一集不会在第 4 拍（幕边界）就切', r2.data.episodes.map((e) => e.beat_count).join(','), '8');
+  eq('下限回显 5', r2.data.per_episode, 5);
+  const r3 = await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${long}&per_episode=999`);
+  eq('超上限被钳到 20', r3.data.per_episode, 20);
+  const r4 = await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${long}&per_episode=abc`);
+  eq('非法参数落回默认 4', r4.data.per_episode, 4);
+
+  // ④ 来源隔离：短片那份只有归并出来的 2 拍剧情卡
+  const r5 = await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${short}&per_episode=3`);
+  eq('按来源隔离（短片 2 拍）', r5.data.beat_count, 2);
+  eq('短片只有 1 集', r5.data.episode_count, 1);
+  const r6 = await api('GET', `/api/story/episodes?project_id=${PID}`);
+  ok('按项目汇总时两来源的拍都在', r6.data.beat_count >= 10, String(r6.data.beat_count));
+  const r7 = await api('GET', '/api/story/episodes?project_id=project_not_exist');
+  eq('不存在的项目 → 0 拍（如实为空，不报错也不编造）', r7.data.beat_count, 0);
+  eq('空项目文本为空（调用方据此提示）', r7.data.text, '');
+  ok('空项目给出原因', r7.data.notes.some((n) => n.includes('还没有剧情卡')), JSON.stringify(r7.data.notes));
+
+  // ⑤ 修复端点仍然不花钱（同一条纪律的回归）
+  const callsBefore2 = storyChatCalls;
+  await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${long}&per_episode=2`);
+  await sleep(300);
+  eq('再调一次仍然不花钱', storyChatCalls, callsBefore2);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('一致性体检（批 8 补 3：同名卡 / 别名撞名 / 一键修复 / 绑定改指 / 不花钱）');
 {
   const pj = await api('POST', '/api/projects', { name: '体检测试剧' });

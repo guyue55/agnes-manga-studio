@@ -158,6 +158,15 @@ export const api = {
   storyImportCharacters: (payload) => req('POST', '/api/story/cards/import-characters', payload),
   storyReduce: (sourceId) => req('POST', '/api/story/reduce', { source_id: sourceId }, { timeoutMs: TIMEOUT.gen }),
 
+  // 分集大纲骨架（批 8 补 4）：剧情卡 → 拍子 → 集。纯本地判定，反复调拍数也不花钱
+  storyEpisodes: (opts = {}) => {
+    const q = new URLSearchParams();
+    if (opts.projectId) q.set('project_id', opts.projectId);
+    if (opts.sourceId) q.set('source_id', opts.sourceId);
+    if (opts.perEpisode) q.set('per_episode', String(opts.perEpisode));
+    return req('GET', `/api/story/episodes?${q.toString()}`);
+  },
+
   // 一致性体检（批 8 补 3）：纯本地判定，随时可跑、不花钱
   storyAudit: (opts = {}) => {
     const q = new URLSearchParams();

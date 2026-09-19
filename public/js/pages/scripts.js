@@ -642,13 +642,22 @@ export default async function scripts(container, params) {
     const kinds = String(params.kinds || '').split(',').map((x) => x.trim()).filter(Boolean);
     const tpl = tplOf(TAB_TPL[tab]);
     const source = params.bible;
-    syncViewParams({ bible: '', kinds: '' });
+    // 批 8 补 4：同一入口的第二种载荷 —— 分集大纲骨架（`outline=<每集至少几拍>`）。
+    // 与卡片回注共用落位逻辑，但取的是"按幕切好的集"而不是"卡片清单"。
+    const outlinePer = Number(params.outline) || 0;
+    syncViewParams({ bible: '', kinds: '', outline: '' });
     if (!tpl) { toast.err('当前步骤还没有提示词模板，没法带入——去设置页新建一个'); return; }
-    const r = await api.storyPrompt({ sourceId: source, kinds });
+    const r = outlinePer
+      ? await api.storyEpisodes({ projectId, sourceId: source, perEpisode: outlinePer })
+      : await api.storyPrompt({ sourceId: source, kinds });
     if (!r.ok) { toast.err(r.error); return; }
-    if (!r.data.text) { toast('这份原著里没有可带入的卡片', 'info'); return; }
+    if (!r.data.text) {
+      toast(outlinePer ? '这份原著还没有剧情卡，排不出分集骨架' : '这份原著里没有可带入的卡片', 'info');
+      return;
+    }
     const vars = varsOf(tpl);
-    const pick = pickBibleVar(vars, kinds, fields);
+    // 骨架优先落「本集大纲 / 剧情梗概」这类字段（BIBLE_VAR_KINDS 里 plot 的落点）
+    const pick = pickBibleVar(vars, outlinePer ? ['plot'] : kinds, fields);
     if (!pick) {
       await notice({
         title: '没有可以落位的字段',
@@ -664,8 +673,9 @@ export default async function scripts(container, params) {
     fields.set(pick.name, r.data.text);
     upstream = { from: 'novel', field: pick.name, chars: r.data.text.length, prev };
     renderFields();
+    const what = outlinePer ? `分集骨架（${r.data.episode_count} 集 / ${r.data.beat_count} 拍）` : '原著卡片';
     toast.ok(pick.matched
-      ? `已把原著卡片带入字段「${pick.name}」——确认无误后再生成`
-      : `模板里没有专门的原著字段，已带入第一个空着的长文本框「${pick.name}」`);
+      ? `已把${what}带入字段「${pick.name}」——确认无误后再生成`
+      : `模板里没有专门的原著字段，已把${what}带入第一个空着的长文本框「${pick.name}」`);
   }
 }

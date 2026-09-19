@@ -551,6 +551,122 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('分集骨架纯函数（批 8 补 4：按原文顺序排拍 / 幕次收口 / 硬上限 / 如实上报）');
+{
+  const { planEpisodes, episodeOutlineText, beatLine, EPISODE_PER_DEFAULT, EPISODE_PER_MAX, STAGE_ORDER } = require('./lib/story.js');
+  const plot = (id, name, stage, order, extra) => Object.assign({ id, kind: 'plot', name, stage, order }, extra || {});
+  const sizes = (p) => p.episodes.map((e) => e.beat_count).join(',');
+
+  // ① 空输入：不编造内容，如实说"还没有剧情卡"
+  {
+    const p = planEpisodes([], {});
+    eq('没有卡片 → 0 集', p.episodes.length, 0);
+    eq('没有卡片 → 文本为空（调用方据此提示，不许静默给一段空骨架）', episodeOutlineText([], p), '');
+    ok('没有卡片时给出原因', p.notes.some((n) => n.includes('还没有剧情卡')), JSON.stringify(p.notes));
+    eq('默认每集拍数', p.per_episode, EPISODE_PER_DEFAULT);
+    eq('undefined 安全', planEpisodes(undefined, {}).beat_count, 0);
+  }
+
+  // ② 纯计数切分（一张卡都没标幕次）
+  {
+    const cards = Array.from({ length: 8 }, (_, i) => plot(`p${i}`, `第${i + 1}拍`, '', i + 1));
+    const p = planEpisodes(cards, { perEpisode: 3 });
+    eq('没幕次 → basis=count', p.basis, 'count');
+    eq('按拍数平均切（3,3,2）', sizes(p), '3,3,2');
+    eq('计数切分不会触发硬切上报', p.forced_cuts, 0);
+    ok('如实说明退化为计数切分', p.notes.some((n) => n.includes('都没有标幕次')));
+    eq('幕次覆盖 0', p.stage_covered, 0);
+  }
+
+  // ③ 幕次收口：不拆幕，且不低于下限
+  {
+    const cards = [
+      plot('a1', '起1', '起', 1), plot('a2', '承1', '承', 2), plot('a3', '转1', '转', 3), plot('a4', '合1', '合', 4),
+      plot('b1', '起2', '起', 5), plot('b2', '承2', '承', 6), plot('b3', '转2', '转', 7), plot('b4', '合2', '合', 8),
+    ];
+    const p = planEpisodes(cards, { perEpisode: 3 });
+    eq('全部有幕次 → basis=stage', p.basis, 'stage');
+    eq('收在幕边界上（4,4，而不是 3,3,2）', sizes(p), '4,4');
+    ok('每一集都不低于下限', p.episodes.every((e) => e.beat_count >= 3));
+    ok('没有硬切', p.forced_cuts === 0 && p.notes.some((n) => n.includes('没有从中间劈开一幕')));
+    eq('集内幕次按顺序去重', p.episodes[0].acts.join(''), STAGE_ORDER.join(''));
+  }
+
+  // ④ 硬上限：单幕过长必须切开，否则分集等于没分
+  {
+    const cards = Array.from({ length: 12 }, (_, i) => plot(`x${i}`, `承${i + 1}`, '承', i + 1));
+    const p = planEpisodes(cards, { perEpisode: 4 });
+    eq('单幕 12 拍、下限 4 → 硬上限 8 处切开', sizes(p), '8,4');
+    eq('硬切次数如实上报', p.forced_cuts, 1);
+    ok('硬切有专门提示（建议拆幕或调大下限）', p.notes.some((n) => n.includes('单幕过长')));
+    eq('硬上限 = 下限 ×2', p.hard_limit, 8);
+  }
+
+  // ⑤ 部分标了幕次：basis=mixed，且覆盖数如实上报
+  {
+    const cards = [
+      plot('m1', '起', '起', 1), plot('m2', '承', '承', 2), plot('m3', '合', '合', 3),
+      plot('m4', '没标A', '', 4), plot('m5', '没标B', '', 5),
+    ];
+    const p = planEpisodes(cards, { perEpisode: 2 });
+    eq('部分标幕次 → basis=mixed', p.basis, 'mixed');
+    eq('幕次覆盖如实上报', p.stage_covered, 3);
+    ok('提示没标幕次的拍不会被丢掉', p.notes.some((n) => n.includes('不会被丢掉')));
+    eq('拍子总数不因缺幕次而减少', p.beat_count, 5);
+    eq('所有拍都被分进某一集', p.episodes.reduce((n, e) => n + e.beat_count, 0), 5);
+  }
+
+  // ⑥ 参数钳制与拍序
+  {
+    const cards = [plot('c', '后来的', '起', 9), plot('a', '先出现的', '起', 1), plot('b', '中间的', '承', 5)];
+    const p = planEpisodes(cards, { perEpisode: 0 });
+    eq('下限 0 → 用默认值（不许切成"每集 0 拍"死循环）', p.per_episode, EPISODE_PER_DEFAULT);
+    eq('负数同样落到默认值', planEpisodes(cards, { perEpisode: -3 }).per_episode, EPISODE_PER_DEFAULT);
+    eq('NaN 同样落到默认值', planEpisodes(cards, { perEpisode: 'abc' }).per_episode, EPISODE_PER_DEFAULT);
+    eq('超上限被钳到 20', planEpisodes(cards, { perEpisode: 999 }).per_episode, EPISODE_PER_MAX);
+    eq('小数四舍五入', planEpisodes(cards, { perEpisode: 2.6 }).per_episode, 3);
+    eq('拍序按 order（原文出现顺序），不按传入顺序',
+      planEpisodes(cards, { perEpisode: 9 }).episodes[0].beats.map((b) => b.name).join(','), '先出现的,中间的,后来的');
+  }
+
+  // ⑦ 一拍一行的字段口径
+  {
+    const b = { name: '初见', stage: '起', conflict: '误会', turn: '认出', outcome: '结盟', involved: '林晚、顾寒' };
+    eq('beatLine 带全部下游字段', beatLine(b), '初见｜起｜冲突：误会｜转折：认出｜结果：结盟｜涉及：林晚、顾寒');
+    eq('没字段时退回摘要（不产出空行）', beatLine({ name: 'X', summary: '摘要' }), 'X｜摘要');
+    eq('连摘要都没有时明确标"待补充"（不静默留空）', beatLine({ name: 'X' }), 'X｜（待补充）');
+    eq('没名字也不产出空标题', beatLine({ stage: '起' }).startsWith('（未命名）'), true);
+    const p = planEpisodes([plot('p', '初见', '起', 1, { conflict: '误会', involved: '林晚' })], {});
+    eq('结构化字段原样带出（界面直接渲染，不再解析文本）',
+      `${p.episodes[0].beats[0].conflict}|${p.episodes[0].beats[0].involved}`, '误会|林晚');
+    ok('每集给出估算字数（界面显示"约 N 字"）', p.episodes[0].chars > 0);
+  }
+
+  // ⑧ 骨架文本：全剧设定 + 时间线 + 分集 + 切分说明
+  {
+    const cards = [
+      { id: 'w', kind: 'world', name: '基调', genre: '悬疑', tone: '冷峻', order: 0 },
+      { id: 't1', kind: 'timeline', name: '三日后', when: '第三天黄昏', order_note: '紧接第一幕', order: 1 },
+      plot('p1', '初见', '起', 1, { conflict: '误会' }), plot('p2', '和解', '合', 2, { outcome: '结盟' }),
+    ];
+    const p = planEpisodes(cards, { perEpisode: 2 });
+    const text = episodeOutlineText(cards, p);
+    ok('文本带全剧设定', text.includes('【全剧设定】') && text.includes('题材：悬疑'));
+    ok('文本带全剧时间线（含顺序说明）', text.includes('【全剧时间线】') && text.includes('第三天黄昏') && text.includes('紧接第一幕'));
+    ok('文本带分集骨架与集号', text.includes('【分集骨架】') && text.includes('第 1 集（起·合｜2 拍）'));
+    ok('文本带切分说明', text.includes('【切分说明】'));
+    ok('文本不含未替换的占位符', !/\{\{|\}\}/.test(text));
+    ok('文本开头说明"未新增设定"（免得用户以为模型又编了东西）', text.includes('未新增任何设定'));
+    const noWorld = episodeOutlineText([plot('p', '只有剧情', '起', 1)], planEpisodes([plot('p', '只有剧情', '起', 1)], {}));
+    ok('没有信息卡就不渲染"全剧设定"小节（不出现空标题）', !noWorld.includes('【全剧设定】'));
+    ok('没有时间线卡就不渲染"全剧时间线"小节', !noWorld.includes('【全剧时间线】'));
+    eq('不传 plan 也能自己算（调用方少一个坑）',
+      episodeOutlineText(cards, null, { perEpisode: 2 }).includes('第 1 集'), true);
+    eq('只有信息卡/时间线、没有剧情卡时仍有文本（设定本身也是大纲的一部分）',
+      episodeOutlineText([{ id: 'w', kind: 'world', name: '基调', tone: '冷峻' }], null).includes('【全剧设定】'), true);
+  }
+}
+
 group('一致性体检纯函数（批 8 补 3：同名卡 / 别名撞名 / 缺字段 / 不误报）');
 {
   // 本组在文件里排在 `const story = require(...)` 之前，所以就地取一次（不能引用后面才初始化的 const）

@@ -1948,6 +1948,83 @@ try {
       }
     }
 
+    group('分集骨架契约（批 8 补 4：按幕切集 / 调拍数真的重切 / 带入剧本落到变量）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const before = await J('/api/settings');
+      // 两幕八拍：起承转合 ×2。这份数据专门用来验证"按幕收口"（4+4）而不是"平均切"（4+4 恰好同值，
+      // 所以下限要调到 5 才能把两种规则区分开——见 ②）
+      const LONGARC = [
+        { kind: 'plot', name: '骨架·起1', stage: '起', conflict: '冲突一' },
+        { kind: 'plot', name: '骨架·承1', stage: '承', conflict: '冲突二' },
+        { kind: 'plot', name: '骨架·转1', stage: '转', conflict: '冲突三' },
+        { kind: 'plot', name: '骨架·合1', stage: '合', outcome: '结果一' },
+        { kind: 'plot', name: '骨架·起2', stage: '起', conflict: '冲突四' },
+        { kind: 'plot', name: '骨架·承2', stage: '承', conflict: '冲突五' },
+        { kind: 'plot', name: '骨架·转2', stage: '转', conflict: '冲突六' },
+        { kind: 'plot', name: '骨架·合2', stage: '合', outcome: '结果二' },
+      ];
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: LONGARC }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      let src = null;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'outline-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '分集骨架原著', text: '骨架验收：两幕八拍的剧情。', reduce: false }) });
+        for (let i = 0; i < 40; i++) { await sleep(250); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        src = an.source && an.source.id;
+        ok('分集骨架：解析受理并抽出八拍', !!src, JSON.stringify(an).slice(0, 120));
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${src}'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-outline');`), '原著页分集入口就绪', 12000);
+        await cdp.eval(`document.querySelector('#nov-outline').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /分集骨架：/.test((document.querySelector('#nov-outline-box')||{}).innerText||'');`), '分集骨架面板出现', 8000);
+        const p1 = await cdp.eval(`return (document.querySelector('#nov-outline-box')||{}).innerText || '';`);
+        ok('默认下限 4 拍：八拍切成 2 集（按幕收口）', p1.includes('分集骨架：2 集 / 8 拍'), p1.replace(/\n/g, ' ').slice(0, 120));
+        ok('面板写清这是本地计算、不调用模型（用户才敢反复调）', p1.includes('不调用模型'), p1.replace(/\n/g, ' ').slice(0, 160));
+        ok('切分依据说人话（幕次覆盖数）', p1.includes('幕次覆盖 8/8'), p1.replace(/\n/g, ' ').slice(0, 160));
+        ok('每集标出幕次与拍数（不是一坨文本）', p1.includes('起·承·转·合') && /4 拍/.test(p1));
+        ok('每一拍都列了冲突/结果（拍级信息没有在渲染时丢掉）', p1.includes('冲突一') && p1.includes('结果一'));
+
+        // ② 调下限必须真的重切：5 拍下限时，第 4 拍（幕边界）**不该**再收口
+        await cdp.eval(`const i=document.querySelector('#nov-outline-per'); i.value='5'; document.querySelector('[data-outline-recut]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /分集骨架：1 集/.test((document.querySelector('#nov-outline-box')||{}).innerText||'');`), '按新下限重切', 8000);
+        const p2 = await cdp.eval(`return (document.querySelector('#nov-outline-box')||{}).innerText || '';`);
+        ok('下限调到 5 → 不再在第 4 拍收口（输入框不是装饰）', p2.includes('分集骨架：1 集 / 8 拍'), p2.replace(/\n/g, ' ').slice(0, 120));
+
+        // ③ 带入剧本：与「带入剧本」同一条链路，但载荷是骨架文本
+        await cdp.eval(`document.querySelector('[data-outline-toscript]').click(); return true;`);
+        await waitFor(() => cdp.eval(`location.hash.startsWith('#/scripts')`), '跳转到故事脚本页', 8000);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#fields [data-var="本集大纲"]');`), '单集脚本页签就绪', 12000);
+        const landed = await waitFor(() => cdp.eval(`return (document.querySelector('#fields [data-var="本集大纲"]')||{}).value || '';`)
+          .then((v) => (String(v).includes('【分集骨架】') ? v : false)), '骨架文本落入模板变量', 10000).then((v) => v || '').catch(() => '');
+        ok('骨架落到「本集大纲」字段（按变量名匹配，不是随便一个空框）',
+          String(landed).includes('【分集骨架】') && String(landed).includes('第 1 集'), String(landed).slice(0, 100));
+        ok('落进去的是拍级骨架（含幕次与拍名），不是卡片清单',
+          String(landed).includes('骨架·起1') && String(landed).includes('起'), String(landed).slice(0, 140));
+        ok('骨架文本带切分说明（用户知道为什么这么切）', String(landed).includes('【切分说明】'));
+        ok('带入后 URL 里的 outline 参数被抹掉（刷新不重复覆盖用户后来的修改）',
+          !(await cdp.eval(`location.hash.includes('outline=')`)));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: before.agnes_api_key || '', agnes_api_base_url: before.agnes_api_base_url || '' }) });
+        if (src) await fetch(`http://127.0.0.1:${port}/api/story/sources/${src}`, { method: 'DELETE' });
+      }
+    }
+
     group('剧本链路契约（批 4：就地编辑 → 带入下一步 → 门禁 → 计数）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

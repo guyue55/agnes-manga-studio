@@ -1228,6 +1228,43 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
       /story_cards: \[/.test(ua) && /audit_card_loc_1/.test(ua));
   }
 
+  // ── 分集大纲骨架（批 8 补 4）──
+  // 注：图标名拼错（`icon()` 对不认识的名字静默回落到 info 图标）**已有**棘轮覆盖（见上文"图标 X 已定义"），
+  // 本轮一度想再加一条逐文件比对，发现是重复钉就删掉了 —— 同一件事不要钉两遍（对照 S 证明那条钉是敏感的）。
+  ok('原著页有分集骨架入口与结果容器', /id="nov-outline"/.test(novel) && /id="nov-outline-box"/.test(novel));
+  ok('分集骨架走 api.js 的 storyEpisodes（不自己拼 fetch）',
+    /storyEpisodes: \(opts = \{\}\)/.test(apiSrc) && /\/api\/story\/episodes\?/.test(apiSrc)
+    && /api\.storyEpisodes\(\{ projectId, sourceId/.test(novel));
+  ok('后端注册了分集骨架端点', /on\('GET', '\/api\/story\/episodes'/.test(routesSrc));
+  {
+    const bodyAt = (src, sig) => {
+      const i = src.indexOf(sig);
+      if (i < 0) return '';
+      let d = 0;
+      for (let j = i; j < src.length; j++) {
+        if (src[j] === '{') d++;
+        else if (src[j] === '}') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return '';
+    };
+    const body = bodyAt(routesSrc, "on('GET', '/api/story/episodes'");
+    ok('分集骨架端点不引用任何模型调用（切集是可判定的，不该花钱）',
+      body.length > 200 && !/agnes\.|fetchInternal|agnesFetch/.test(body), body.slice(0, 60));
+  }
+  ok('下限可反复调（输入框 + 重新切分按钮，且说明不花钱）',
+    /id="nov-outline-per"/.test(novel) && /data-outline-recut/.test(novel) && /调拍数不花钱/.test(novel));
+  ok('骨架可复制、可带入剧本', /data-outline-copy/.test(novel) && /data-outline-toscript/.test(novel));
+  ok('带入走既有 hash 链路并带上 outline 参数',
+    /outline: String\(outlinePer\)/.test(novel) && /bible: sourceId/.test(novel));
+  ok('骨架来源标注了切分依据（stage/mixed/count 三种都要说人话）',
+    /BASIS_LABEL = \{/.test(novel) && /stage:/.test(novel) && /count:/.test(novel));
+  ok('没有剧情卡时明确提示先解析（不静默给空骨架）', /还没有剧情卡/.test(novel));
+  ok('scripts.js 认 outline 参数并走分集骨架载荷',
+    /const outlinePer = Number\(params\.outline\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js')))
+    && /api\.storyEpisodes\(\{ projectId, sourceId: source, perEpisode: outlinePer \}\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));
+  ok('骨架优先落「本集大纲/剧情梗概」这类字段（pickBibleVar 传 plot）',
+    /pickBibleVar\(vars, outlinePer \? \['plot'\] : kinds, fields\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));
+
   // ── 一致性体检（批 8 补 3）──
   ok('原著页有体检入口与结果容器', /id="nov-audit"/.test(novel) && /id="nov-audit-box"/.test(novel));
   ok('体检走 api.js 的两个方法（不自己拼 fetch）',
@@ -1269,8 +1306,14 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('复制回注按钮真的渲染了（此前 data-copy 处理器是死代码）',
     /id="nov-copy"/.test(novel) && !/data-copy/.test(novel));
   ok('scripts.js 消费 bible 参数并落到模板变量', /async function applyBible\(\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));
-  ok('带入后从 URL 抹掉参数（刷新不重复覆盖用户后来的修改）',
-    /syncViewParams\(\{ bible: '', kinds: '' \}\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));
+  // 批 8 补 4 起要多抹一个 outline：写成"三个键都在同一个 syncViewParams 调用里清掉"，
+  // 这样新增载荷时必须同步清 URL，而键的顺序变化不会误伤（原来钉的是字面顺序）
+  {
+    const sjs = read(path.join(PUB, 'js', 'pages', 'scripts.js'));
+    const clear = (key) => new RegExp(`syncViewParams\\(\\{[^}]*${key}: ''[^}]*\\}\\)`).test(sjs);
+    ok('带入后从 URL 抹掉参数（刷新不重复覆盖用户后来的修改）',
+      clear('bible') && clear('kinds') && clear('outline'));
+  }
   // 落位表：纯函数，直接断言
   const C = await import(pathToFileURL(path.join(PUB, 'js', 'consts.js')).href);
   const vals = new Map([['本集大纲', ''], ['人物', '已写好的内容']]);

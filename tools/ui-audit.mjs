@@ -211,6 +211,12 @@ try {
           { id: 'audit_card_loc_1', project_id: projReq.id, kind: 'location', name: '审计茶馆·同名用于测量', atmosphere: '潮湿昏暗的江边茶馆', region: '江南水乡' },
           { id: 'audit_card_loc_2', project_id: projReq.id, kind: 'location', name: '审计茶馆·同名用于测量', atmosphere: '白天明亮' },
           { id: 'audit_card_char_1', project_id: projReq.id, kind: 'character', name: '审计角色·超长名字占位用于测量行内截断行为', identity: '茶馆掌柜' },
+          // 批 8 补 4：分集骨架面板要有**真剧情卡**才量得到东西（空面板只会显示"还没有剧情卡"，
+          // 报表照样零发现，等于这个视口没被覆盖）。四拍正好切成一集，能顺带量到拍行与幕次标签。
+          { id: 'audit_card_plot_1', project_id: projReq.id, kind: 'plot', name: '审计起·茶馆初见', stage: '起', conflict: '审计冲突一', outcome: '审计结果一', involved: '审计角色·超长名字占位用于测量行内截断行为', order: 1 },
+          { id: 'audit_card_plot_2', project_id: projReq.id, kind: 'plot', name: '审计承·钥匙现世', stage: '承', conflict: '审计冲突二', order: 2 },
+          { id: 'audit_card_plot_3', project_id: projReq.id, kind: 'plot', name: '审计转·有人跟踪', stage: '转', conflict: '审计冲突三', order: 3 },
+          { id: 'audit_card_plot_4', project_id: projReq.id, kind: 'plot', name: '审计合·密室开启', stage: '合', outcome: '审计结果二', order: 4 },
         ],
         video_assets: [{
           id: 'audit_vid_1', project_id: projReq.id, storyboard_id: null, status: 'completed',
@@ -244,6 +250,9 @@ try {
     // 批 8 补 3：加**内联动作**——点开一致性体检面板再量（`requireModal:false`：这个面板不是弹窗，
     // 默认的"声明了动作就必须开弹窗"自检会把它误报成一条发现）
     ['novel', `#/novel?project_id=${pid}`, `document.querySelector('#nov-audit')?.click();`, { requireModal: false }],
+    // 批 8 补 4：分集骨架面板是同一页的**第二个**内联面板，各自带一个钩子与各自的产出判据
+    // （`box` 指定看哪个容器，否则两个面板会互相替对方"证明有产出"）
+    ['novel-outline', `#/novel?project_id=${pid}`, `document.querySelector('#nov-outline')?.click();`, { requireModal: false, box: '#nov-outline-box' }],
     ['characters', `#/characters?project=${pid}`, `document.querySelector('#new-char')?.click();`],
     ['settings', '#/settings?sec=templates', `document.querySelector('#t-new')?.click();`],
   ];

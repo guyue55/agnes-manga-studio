@@ -14,10 +14,14 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   （合并同名卡 / 删撞名别名 / 人物卡入资产库），合并时**同步把分镜绑定改指到存活卡**（否则镜头会静默失去场景/道具注入）；
   需要人拍板的（两处描述哪个对）只如实列出冲突值，不替用户决定。原著页卡片工作台有体检入口与报告面板。
 - 反向驱动（批 8 补）：卡片 → **资产库**（人物卡幂等入 `characters`，拿到参考图与分镜注入能力）、→ **故事脚本模板变量**（原著页「带入剧本」跳 `#/scripts?...&bible=<id>&kinds=...`，`pickBibleVar` 按变量名落位、提示条可见可撤销）、→ **剪贴板**（任意类别一键复制回注文本）
+- 分集大纲骨架（批 8 补 4）：`GET /api/story/episodes` —— 剧情卡按**原文出现顺序**排成拍子，按幕次（起/承/转/合）
+  **收口切成集**，产出"全剧设定 + 全剧时间线 + 每集拍表 + 切分说明"。与体检同一条纪律：**纯本地、一次模型都不调**，
+  所以"每集至少几拍"可以反复调而不花钱（`perEpisode` 是**下限**，硬上限为下限 ×2，单幕过长会强行切开并如实上报）；
+  原著页「分集大纲」面板可重切/复制/带入，带入复用 `applyBible` 的 `outline=<每拍数>` 载荷（落位走 `pickBibleVar` → 本集大纲）
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 363 / apitest 545 / uitest 893 / browser-test 344），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 11 页，其中 7 页带**弹窗动作钩子**、1 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 409 / apitest 574 / uitest 906 / browser-test 355），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

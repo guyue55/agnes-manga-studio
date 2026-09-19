@@ -36,6 +36,8 @@ export default async function novel(container, params = {}) {
   let job = null;
   let editingId = null;                     // 正在就地编辑的卡片 id
   let armedDel = '';                        // 已按过一次删除的卡片 id（两击确认）
+  let outline = null;                       // 分集骨架结果（null = 还没算过；改卡片/换原著后作废）
+  let outlinePer = Number(params.per_episode) || 4; // 每集至少几拍（可反复调，纯本地计算不花钱）
 
   container.innerHTML = `
     ${head({
@@ -87,9 +89,11 @@ export default async function novel(container, params = {}) {
             <div class="spacer"></div>
             <button class="btn btn-xs" id="nov-copy" title="把卡片回注文本复制到剪贴板（粘进任意模板变量）">${icon('copy', 13)}复制回注</button>
             <button class="btn btn-xs btn-primary" id="nov-toscript" title="把卡片带入「故事脚本」的模板变量，不用手工复制粘贴">${icon('arrowRight', 13)}带入剧本</button>
+            <button class="btn btn-xs" id="nov-outline" title="把剧情卡按原文顺序排成拍子、按幕次收口切成集（纯本地判定，不花钱，可反复调）">${icon('grid', 13)}分集大纲</button>
             <button class="btn btn-xs" id="nov-audit" title="查一遍同名卡、缺字段、别名撞名、没入资产库这些会毁掉一致性的问题（纯本地判定，不花钱）">${icon('check', 13)}一致性体检</button>
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
           </div>
+          <div id="nov-outline-box"></div>
           <div id="nov-audit-box"></div>
           <div id="nov-kinds" class="chips wrap" style="margin-bottom:10px"></div>
           <div id="nov-cards">${skeleton('card', 2)}</div>
@@ -395,6 +399,84 @@ export default async function novel(container, params = {}) {
       loadCards();
     });
   }
+
+  // ── 分集大纲骨架（批 8 补 4）──────────────────────────────
+  // 剧情卡按**原文出现顺序**排成拍子，再按幕次收口切成集。切集是可判定的（拍数下限 + 不拆幕），
+  // 所以刻意不调模型：用户要反复调「每集至少几拍」，每次调都花钱的工具没人会用。
+  // 真正需要 AI 的是"把这些拍写成剧本"，那一步在故事剧本页照旧走生成（有计费闸门）。
+  const BASIS_LABEL = {
+    stage: '全部剧情卡都标了幕次，切分收在幕的边界上',
+    mixed: '部分剧情卡标了幕次，切分优先收在幕的边界上',
+    count: '剧情卡都没标幕次，退化为按拍数平均切分',
+  };
+
+  async function runOutline(per) {
+    const box = container.querySelector('#nov-outline-box');
+    if (per) outlinePer = per;
+    const r = await api.storyEpisodes({ projectId, sourceId: sourceId || undefined, perEpisode: outlinePer });
+    if (!r.ok) { toast.err(r.error); return; }
+    outline = r.data;
+    const d = r.data;
+    if (!d.beat_count) {
+      box.innerHTML = `<div class="note" style="margin-bottom:10px">${icon('grid', 13)} 分集大纲：这份原著还没有剧情卡，先解析出剧情卡才能排分集骨架。</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="note" style="margin-bottom:10px">
+        <div class="row wrap" style="row-gap:6px;align-items:flex-start">
+          <div style="flex:1;min-width:220px">
+            <b>分集骨架：${d.episode_count} 集 / ${d.beat_count} 拍</b>
+            <span class="hint-xs">（幕次覆盖 ${d.stage_covered}/${d.beat_count} 拍）</span>
+            <div class="hint-xs" style="margin-top:3px">${esc(BASIS_LABEL[d.basis] || d.basis)}。纯本地计算，不调用模型——调拍数不花钱，随便试。</div>
+          </div>
+          <label class="hint-xs" for="nov-outline-per" style="flex:0 0 auto">每集至少</label>
+          <input class="input" id="nov-outline-per" type="number" min="1" max="20" value="${d.per_episode}" style="width:64px;flex:0 0 auto" />
+          <span class="hint-xs" style="flex:0 0 auto">拍</span>
+          <button class="btn btn-xs" data-outline-recut style="flex:0 0 auto">重新切分</button>
+          <button class="btn btn-xs" data-outline-copy style="flex:0 0 auto">${icon('copy', 12)}复制</button>
+          <button class="btn btn-xs btn-primary" data-outline-toscript style="flex:0 0 auto">${icon('arrowRight', 12)}带入剧本</button>
+        </div>
+        <div class="divider" style="margin:8px 0"></div>
+        ${d.episodes.map((ep) => `
+          <div style="padding:4px 0">
+            <div><b>${esc(ep.title)}</b>
+              <span class="chip" style="margin-left:4px">${esc(ep.acts.length ? ep.acts.join('·') : '未标幕次')}</span>
+              <span class="hint-xs">${ep.beat_count} 拍 · 约 ${ep.chars} 字</span></div>
+            <div style="padding-left:10px">
+              ${ep.beats.map((b, i) => `<div class="hint-xs" style="margin-top:2px">${i + 1}. ${esc(b.name)}${b.conflict ? `｜冲突：${esc(b.conflict)}` : ''}${b.outcome ? `｜结果：${esc(b.outcome)}` : ''}${b.involved ? `｜涉及：${esc(b.involved)}` : ''}</div>`).join('')}
+            </div>
+          </div>`).join('')}
+        <div class="divider" style="margin:8px 0"></div>
+        ${d.notes.map((n) => `<div class="hint-xs">· ${esc(n)}</div>`).join('')}
+      </div>`;
+    on(box, '[data-outline-recut]', 'click', () => {
+      const v = Number((box.querySelector('#nov-outline-per') || {}).value);
+      runOutline(v > 0 ? v : 4);
+    });
+    on(box, '[data-outline-copy]', 'click', async () => {
+      // 与「复制回注」同一条纪律：失败必须说清是浏览器没给剪贴板权限，不许静默
+      try {
+        await navigator.clipboard.writeText(outline ? outline.text : '');
+        toast.ok(`已复制分集骨架（${d.episode_count} 集 / ${d.beat_count} 拍）——粘进剧本模板变量即可`);
+      } catch { toast.err('复制失败——浏览器没给剪贴板权限，请手动选中'); }
+    });
+    on(box, '[data-outline-toscript]', 'click', () => toScriptOutline());
+  }
+
+  /** 分集骨架 → 故事脚本页（与「带入剧本」同一条链路，只是换成骨架文本） */
+  function toScriptOutline() {
+    if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
+    const q = new URLSearchParams({
+      project: projectId, tab: 'episode_script', bible: sourceId, outline: String(outlinePer),
+    });
+    location.hash = `#/scripts?${q.toString()}`;
+    toast(`正在把 ${outline ? outline.episode_count : ''} 集分集骨架带入「单集脚本」的模板变量`, 'info', 5000);
+  }
+
+  container.querySelector('#nov-outline').onclick = () => {
+    if (!projectId) { toast.err('先在右上角选一个项目'); return; }
+    runOutline();
+  };
 
   // ── 一致性体检（批 8 补 3）────────────────────────────────
   // 纯本地判定：同名卡、别名撞名、缺可注入字段、没进资产库… 这些是会悄悄毁掉一致性的机械问题。
