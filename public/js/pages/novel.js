@@ -80,7 +80,9 @@ export default async function novel(container, params = {}) {
 
       <div>
         <div class="card">
-          <div class="row" style="margin-bottom:10px">
+          <!-- .row 默认不换行：三个按钮 + 标题在 900~1024px 会横向溢出（ui-audit 实测 2 条），
+               加 .wrap 让按钮换行而不是把页面撑出横向滚动条 -->
+          <div class="row wrap" style="margin-bottom:10px;row-gap:6px">
             <div class="card-title" style="margin:0">${icon('layers', 15)}卡片工作台</div>
             <div class="spacer"></div>
             <button class="btn btn-xs" id="nov-copy" title="把卡片回注文本复制到剪贴板（粘进任意模板变量）">${icon('copy', 13)}复制回注</button>

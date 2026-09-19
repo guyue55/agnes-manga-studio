@@ -1763,6 +1763,88 @@ try {
       }
     }
 
+    group('原著卡片注入契约（批 8 补 2：绑卡 → 徽标 → 预览层 → 真机落库）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const before = await J('/api/settings');
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'location', name: '注入验收茶馆', atmosphere: '喧闹潮湿', region: '临江' },
+              { kind: 'prop', name: '注入验收钥匙', owner: '林晚', usage: '开密室' },
+            ] }) } }] });
+          }
+          try { lastOut = JSON.parse(body); } catch { lastOut = { raw: body }; }
+          return send(200, { data: [{ url: 'http://127.0.0.1:1/probe.png' }] });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      let src = null; let sb = null;
+      let lastOut = null; // mock 上游收到的最后一次非 chat 请求（用来断言"真正发出的是什么"）
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'card-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '注入验收原著', text: '注入验收茶馆里，林晚握着注入验收钥匙。', reduce: false }) });
+        src = an.source && an.source.id;
+        let j = null;
+        for (let i = 0; i < 40; i++) { await sleep(250); j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        ok('注入验收：原著解析出卡片', j && j.status === 'done' && j.ok >= 1, JSON.stringify({ s: j && j.status, ok: j && j.ok }));
+        const cards = await J(`/api/story/cards?project_id=${pid}&kind=location`);
+        const loc = (cards || []).find((c) => c.name === '注入验收茶馆');
+        ok('注入验收：地点卡就位', !!loc);
+
+        // 造一个专属镜头，避免与别的组的分镜行混淆
+        sb = await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, episode_number: 1, shot_number: 999, shot_type: '中景',
+            scene_description: '注入验收镜头', image_prompt: 'a quiet teahouse corner' }) });
+        const sid = sb.id;
+
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-edit="${sid}"]');`), '分镜行就绪', 15000);
+        // 未绑卡时不该有 +场景 徽标（否则徽标就是个装饰）
+        ok('未绑卡 → 提示词单元格没有 +场景 层',
+          !(await cdp.eval(`return (document.querySelector('tr:has([data-edit="${sid}"]')||{}).innerText || '';`)).includes('+场景'));
+        await cdp.eval(`document.querySelector('[data-edit="${sid}"]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#s-card-pick');`), '原著卡片选择器出现', 8000);
+        ok('弹窗列出本项目的地点卡/道具卡（带类别前缀）',
+          await cdp.eval(`return (document.querySelector('#s-card-pick').innerText||'').includes('注入验收茶馆');`));
+        ok('卡片 chip 的 tooltip 直接给出会被注入的描述（选之前就能看见后果）',
+          await cdp.eval(`const b=document.querySelector('#s-card-pick [data-card]'); return !!b && (b.getAttribute('title')||'').includes('喧闹潮湿');`));
+        await cdp.eval(`document.querySelector('#s-card-pick [data-card]').click(); return true;`);
+        ok('点选后 chip 进入选中态（可再点取消）',
+          await cdp.eval(`return document.querySelector('#s-card-pick [data-card]').classList.contains('on');`));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('tr:has([data-edit="${sid}"]') && document.querySelector('tr:has([data-edit="${sid}"]').innerText.includes('注入验收茶馆');`), '绑定徽标出现', 8000);
+        ok('保存后行内显示绑定的原著卡片徽标', true);
+        const cellText = await cdp.eval(`return (document.querySelector('tr:has([data-edit="${sid}"]')||{}).innerText || '';`);
+        ok('提示词单元格标出 +场景 层（哪一层被注入了一眼可见）', cellText.includes('+场景'), cellText.replace(/\n/g, ' ').slice(0, 120));
+        const tip = await cdp.eval(`const t=document.querySelector('tr:has([data-edit="${sid}"]')?.querySelector('.prompt-cell .inline-target'); return t ? (t.getAttribute('title')||'') : '';`);
+        ok('预览 tooltip 里就是真正会发出的最终词（含场景道具注入）',
+          tip.includes('场景道具——注入验收茶馆：喧闹潮湿，临江'), tip.replace(/\n/g, ' ').slice(0, 160));
+        const saved = (await J(`/api/storyboards?project_id=${pid}&episode=1`)).find((r) => r.id === sid);
+        ok('绑定真机落库（不是只改了前端状态）',
+          Array.isArray(saved.story_card_ids) && saved.story_card_ids.includes(loc.id), JSON.stringify(saved.story_card_ids));
+        // 出图真发出去的词里必须带上（前端预览与后端 finalPrompt 同构的最终证明）
+        await J('/api/agnes/image', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: 'a quiet teahouse corner', project_id: pid, storyboard_id: sid, size: '1024x1024' }) });
+        const sent = String((lastOut && lastOut.prompt) || '');
+        ok('出图实际发出的提示词含原著场景道具注入（预览没骗人）',
+          sent.includes('场景道具——注入验收茶馆：喧闹潮湿，临江'), sent.slice(0, 160) || JSON.stringify(lastOut).slice(0, 120));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: before.agnes_api_key || '', agnes_api_base_url: before.agnes_api_base_url || '' }) });
+        if (sb && sb.id) await fetch(`http://127.0.0.1:${port}/api/storyboards/${sb.id}`, { method: 'DELETE' });
+        if (src) await fetch(`http://127.0.0.1:${port}/api/story/sources/${src}`, { method: 'DELETE' });
+      }
+    }
+
     group('剧本链路契约（批 4：就地编辑 → 带入下一步 → 门禁 → 计数）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

@@ -537,6 +537,42 @@ export function characterPhrase(prompt, chars) {
   return p.trim() ? `${p}, ${block}` : block;
 }
 
+/**
+ * 批 8 补 2：原著卡片注入的前端镜像 —— 必须与 lib/routes.js 的 storyCardPhrase **逐字同构**
+ * （uitest 有文本比对钉）。分镜页用它算"生成时真正发出的是什么"，两边一漂移预览就开始骗人。
+ * 只注入画面上看得见的两类：地点卡与道具卡；人物卡走角色库那条路。
+ */
+export const STORY_CARD_INJECT_FIELDS = {
+  location: ['atmosphere', 'region', 'time_of_day', 'features'],
+  prop: ['owner', 'usage', 'features'],
+};
+
+/** 按类别取"会被注入提示词"的那几个字段，拼成一句短语（没内容返回空串） */
+export function storyCardLook(card) {
+  const kind = String((card && card.kind) || '').trim();
+  const fields = STORY_CARD_INJECT_FIELDS[kind];
+  if (!fields) return '';
+  return fields.map((f) => String(card[f] == null ? '' : card[f]).trim()).filter(Boolean).join('，');
+}
+
+export function storyCardPhrase(prompt, cards) {
+  const list = Array.isArray(cards) ? cards.filter(Boolean) : [];
+  if (!list.length) return prompt;
+  const p = String(prompt || '');
+  const lower = p.toLowerCase();
+  const parts = [];
+  for (const c of list) {
+    const name = String(c.name == null ? '' : c.name).trim();
+    const look = storyCardLook(c);
+    if (!look) continue;
+    if (lower.includes(look.toLowerCase())) continue;
+    parts.push(name ? `${name}：${look}` : look);
+  }
+  if (!parts.length) return prompt;
+  const block = `场景道具——${parts.join('；')}`;
+  return p.trim() ? `${p}, ${block}` : block;
+}
+
 export const STORYBOARD_STATUS = {
   pending: { label: '待处理', cls: 'gray' },
   image_ready: { label: '有图片', cls: 'blue' },

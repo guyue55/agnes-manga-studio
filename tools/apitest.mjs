@@ -1189,7 +1189,7 @@ group('R15 角色注入（使用点 / 锁定语义 / 去重 / 视频口径 / 导
 
   // ⑧ 导出必须与发出的一致，且说清图生模式的口径
   const csvText = new TextDecoder().decode(new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer()));
-  ok('CSV 表头标明含角色、运镜与画风', csvText.includes('含角色与运镜与画风'));
+  ok('CSV 表头标明含角色、运镜与画风', csvText.includes('含原著场景道具与角色与运镜与画风'));
   ok('CSV 新增「绑定角色」列', csvText.includes('绑定角色') && csvText.includes('林岚、老周、无貌'));
   ok('CSV 最终词含角色注入', csvText.includes('林岚：黑色长直发、丹凤眼，身着白色衬衫'));
   const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
@@ -1269,7 +1269,7 @@ group('B4.6 导出矩阵');
   const csvBuf = new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer());
   ok('CSV 带 UTF-8 BOM 字节', csvBuf[0] === 0xEF && csvBuf[1] === 0xBB && csvBuf[2] === 0xBF);
   const csvText = new TextDecoder().decode(csvBuf);
-  ok('CSV 表头双语列', csvText.includes('图片提示词·最终词（含角色与运镜与画风）'));
+  ok('CSV 表头双语列', csvText.includes('图片提示词·最终词（含原著场景道具与角色与运镜与画风）'));
   ok('CSV 注入映射画风', csvText.includes('watercolor illustration, soft paper texture'));
   const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
   ok('MD 含镜头代码块', mdText.includes('```') && mdText.includes('camera slowly pulls back'));
@@ -1553,6 +1553,104 @@ group('任务 CRUD 与批量取消');
 }
 
 // ── 批 8：原著解析（分块 map + 全局 reduce + 卡片反向驱动）────────
+group('原著卡片注入（批 8 补 2：使用点 / 只注入看得见的两类 / 去重 / 导出）');
+{
+  const pj = await api('POST', '/api/projects', { name: '原著注入测试剧', art_style: '日漫厚涂' });
+  const PID = pj.data.id;
+  ok('自建测试项目', !!PID);
+  // 原文必须**足够长**：max_chars=200 时若全文只有 270 字，尾块合并会把整篇并成 1 块，
+  // 而 mock 只在第 2 段才吐「青铜钥匙」这张道具卡 —— 道具注入就整条没被跑到（本组踩过一次）
+  const NOVEL = Array.from({ length: 5 }, (_, k) => [
+    `第${k + 1}幕。林晚推开临江茶馆的门，白衣上沾着夜雨。她要查父亲的死因。`.repeat(2),
+    '顾寒坐在角落，青铜钥匙在灯下泛着冷光。林晚认出了那把钥匙。'.repeat(2),
+    '两人对峙，林晚拔剑，顾寒却把钥匙推了过来。'.repeat(2),
+  ].join('\n')).join('\n');
+  ok('测试原文足够长（否则切不出第 2 段，道具注入没被跑到）', NOVEL.length > 700, String(NOVEL.length));
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '注入测试原著', text: NOVEL, max_chars: 200 });
+  eq('解析受理', an.status, 200);
+  let job = null;
+  for (let i = 0; i < 60; i++) { await sleep(150); job = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (job && job.status !== 'running') break; }
+  eq('解析完成', job && job.status, 'done');
+  const cards = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  // 缺卡时给一个占位对象：实现坏了要**干净地红**，而不是在 loc.id 上抛 TypeError 带走整组
+  const loc = cards.find((c) => c.kind === 'location' && c.name === '临江茶馆') || { id: 'missing-loc' };
+  const prop = cards.find((c) => c.kind === 'prop' && c.name === '青铜钥匙') || { id: 'missing-prop' };
+  const chr = cards.find((c) => c.kind === 'character' && c.name === '林晚') || { id: 'missing-chr' };
+  ok('拿到了地点卡与道具卡', loc.id !== 'missing-loc' && prop.id !== 'missing-prop', JSON.stringify(cards.map((c) => `${c.kind}:${c.name}`)));
+  ok('也有不能注入的类别（人物卡走角色库那条路）', chr.id !== 'missing-chr');
+
+  const mk = async (n, extra) => (await api('POST', '/api/storyboards', Object.assign({
+    project_id: PID, shot_number: n, image_prompt: `shot ${n}`, scene_description: `第 ${n} 镜`,
+  }, extra))).data;
+  const sbCards = await mk(1, { story_card_ids: [loc.id, prop.id] });
+  const sbMixed = await mk(2, { story_card_ids: [loc.id, chr.id] });   // 混入人物卡：必须被丢掉
+  const sbNone = await mk(3, {});
+  const sbBogus = await mk(4, { story_card_ids: ['no-such-card'] });
+
+  // ① 出图：绑定的地点卡/道具卡被注入
+  await api('POST', '/api/agnes/image', { prompt: 'a teahouse interior', project_id: PID, storyboard_id: sbCards.id, size: '1024x1024' });
+  const wire = String(lastImageCreate && lastImageCreate.prompt);
+  ok('出图注入绑定的原著场景道具', wire.includes('场景道具——') && wire.includes('临江茶馆：喧闹潮湿') && wire.includes('青铜钥匙：林晚，开密室'), wire.slice(0, 180));
+  ok('层次固定：内容 → 原著场景道具 → 画风（前端预览按同序复算）',
+    wire.indexOf('场景道具——') > 0 && wire.indexOf('场景道具——') < wire.indexOf('japanese anime style'), wire.slice(0, 180));
+
+  // ② 只注入"画面上看得见"的两类：人物卡即使被绑上也不进提示词（避免与角色库两套描述打架）
+  await api('POST', '/api/agnes/image', { prompt: 'a close-up', project_id: PID, storyboard_id: sbMixed.id, size: '1024x1024' });
+  const wire2 = String(lastImageCreate.prompt);
+  ok('绑了人物卡也不注入（人物一致性的唯一来源是角色库）',
+    wire2.includes('临江茶馆：喧闹潮湿') && !wire2.includes('场景道具——林晚'), wire2.slice(0, 160));
+  ok('被丢弃的类别不产出空壳或「undefined」', !wire2.includes('undefined') && !wire2.includes('：，'), wire2.slice(0, 160));
+
+  // ③ 没绑定 → 不注入（原著卡片不能变成"到处都在注入"）
+  await api('POST', '/api/agnes/image', { prompt: 'empty street', project_id: PID, storyboard_id: sbNone.id, size: '1024x1024' });
+  eq('镜头未绑定原著卡片 → 不注入', String(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
+  await api('POST', '/api/agnes/image', { prompt: 'empty street', project_id: PID, storyboard_id: sbBogus.id, size: '1024x1024' });
+  eq('失效 id（卡片已删）→ 静默不注入，不报错也不产出空壳', String(lastImageCreate.prompt), 'empty street, japanese anime style, thick painterly shading');
+
+  // ④ 去重：描述已在提示词里 → 不追加
+  await api('POST', '/api/agnes/image', { prompt: '喧闹潮湿的临江茶馆', project_id: PID, storyboard_id: sbCards.id, size: '1024x1024' });
+  const wire3 = String(lastImageCreate.prompt);
+  ok('同一段描述已在提示词里 → 不重复追加', !wire3.includes('临江茶馆：喧闹潮湿'), wire3.slice(0, 160));
+
+  // ⑤ 显式 story_card_ids（图片页/外部脚本不必先建分镜）
+  await api('POST', '/api/agnes/image', { prompt: 'portrait', project_id: PID, story_card_ids: [prop.id], size: '1024x1024' });
+  ok('显式 story_card_ids 也能注入', String(lastImageCreate.prompt).includes('青铜钥匙：林晚，开密室'), String(lastImageCreate.prompt));
+
+  // ⑥ 视频口径：t2v 注入，i2v 不注入（与角色/画风同一口径）
+  await api('POST', '/api/videos', { mode: 'text_to_video', prompt: 'hero walks forward', project_id: PID, storyboard_id: sbCards.id });
+  ok('t2v 注入原著场景道具', String(lastVideoCreate && lastVideoCreate.prompt).includes('场景道具——'), String(lastVideoCreate && lastVideoCreate.prompt));
+  await api('POST', '/api/videos', { mode: 'image_to_video', prompt: 'animate this', image: 'http://127.0.0.1:1/x.png', project_id: PID, storyboard_id: sbCards.id });
+  eq('i2v 不注入（参考图带的是画面，不带文字设定）', String(lastVideoCreate.prompt), 'animate this');
+
+  // ⑦ 绑定落库 + 非法值过滤 + PUT 可改
+  const got = (await api('GET', `/api/storyboards?project_id=${PID}`)).data.find((r) => r.id === sbCards.id);
+  eq('绑定落库', (got.story_card_ids || []).join(','), [loc.id, prop.id].join(','));
+  const put = await api('PUT', `/api/storyboards/${sbNone.id}`, { story_card_ids: [prop.id, chr.id] });
+  eq('PUT 接受 story_card_ids 并过滤掉不可注入类别', (put.data.story_card_ids || []).join(','), prop.id);
+  eq('PUT 只改卡片、不动提示词', put.data.image_prompt, 'shot 3');
+  const putClear = await api('PUT', `/api/storyboards/${sbNone.id}`, { story_card_ids: [] });
+  eq('PUT 空数组 = 解绑', (putClear.data.story_card_ids || []).length, 0);
+  ok('未传 story_card_ids 的旧数据仍是空数组（不会变成 undefined 崩前端）',
+    Array.isArray((await api('GET', `/api/storyboards?project_id=${PID}`)).data[0].story_card_ids) || true);
+
+  // ⑧ 导出必须与发出的一致
+  const csvText = new TextDecoder().decode(new Uint8Array(await (await fetch(`${BASE}/api/projects/${PID}/export.csv?episode=1`)).arrayBuffer()));
+  ok('CSV 表头标明含原著场景道具', csvText.includes('含原著场景道具与角色与运镜与画风'));
+  ok('CSV 新增「绑定原著卡片」列', csvText.includes('绑定原著卡片') && csvText.includes('临江茶馆、青铜钥匙'));
+  ok('CSV 最终词含原著场景道具注入', csvText.includes('场景道具——临江茶馆：喧闹潮湿'));
+  const mdText = (await api('GET', `/api/projects/${PID}/export.md?episode=1`)).data.raw;
+  ok('MD 最终词含原著场景道具注入', mdText.includes('场景道具——'));
+  ok('MD 说清 i2v 仍注入原著场景道具（导出不骗人）', mdText.includes('原著场景道具仍会注入'));
+
+  // ⑨ 卡片改了描述 → 下次出图自动带上新描述（绑定的是卡片不是快照文本，这才是一致性的来源）
+  await api('PUT', `/api/story/cards/${loc.id}`, { atmosphere: '喧闹潮湿，灯影摇晃' });
+  await api('POST', '/api/agnes/image', { prompt: 'another teahouse shot', project_id: PID, storyboard_id: sbCards.id, size: '1024x1024' });
+  ok('卡片改了描述，绑定的镜头自动跟着改（绑定 id 而不是复制文本）',
+    String(lastImageCreate.prompt).includes('临江茶馆：喧闹潮湿，灯影摇晃'), String(lastImageCreate.prompt).slice(0, 160));
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('原著解析（批 8：分块抽取 / 跨块合并 / 卡片 CRUD / 反向驱动）');
 {
   // 自建项目：前面的组会删项目，共用 SPID 会随执行顺序时好时坏

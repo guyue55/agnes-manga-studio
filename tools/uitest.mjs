@@ -272,7 +272,7 @@ group('B4 画风分层');
     routesSrc.includes('function artStylePhrase')
     && (routesSrc.match(/finalPrompt\(body\.prompt|finalPrompt\(r\.(?:image|video)_prompt/g) || []).length === 6);
   ok('4.1 入库只存镜头内容（写入点绝不注入）',
-    !/artStylePhrase|characterPhrase|finalPrompt/.test(bodyOf(routesSrc, 'function storyboardRow')));
+    !/artStylePhrase|characterPhrase|finalPrompt|storyCardPhrase/.test(bodyOf(routesSrc, 'function storyboardRow')));
   // R15：角色注入的前后端镜像必须逐字同构（逻辑一漂移，界面预览就开始骗人）
   const phraseBody = (src) => {
     const i = src.indexOf('function characterPhrase(prompt, chars) {');
@@ -282,6 +282,34 @@ group('B4 画风分层');
     phraseBody(routesSrc).length > 300 && phraseBody(routesSrc) === phraseBody(constsSrc));
   ok('4.1 角色注入含锁定语义与去重（自证非空跑）',
     /is_locked/.test(phraseBody(routesSrc)) && /出场角色——/.test(phraseBody(routesSrc)));
+  // 批 8 补 2：原著卡片注入的前后端镜像同样必须逐字同构（分镜页预览靠它算"真正发出的是什么"）
+  const cardBody = (src) => {
+    const i = src.indexOf('function storyCardPhrase(prompt, cards) {');
+    return i < 0 ? '' : bodyOf(src, 'function storyCardPhrase(prompt, cards) {').replace(/\s+/g, '');
+  };
+  const lookBody = (src) => {
+    const i = src.indexOf('function storyCardLook(card) {');
+    return i < 0 ? '' : bodyOf(src, 'function storyCardLook(card) {').replace(/\s+/g, '');
+  };
+  ok('4.1 原著卡片注入前后端同构（逐字比对，去空白）',
+    cardBody(routesSrc).length > 300 && cardBody(routesSrc) === cardBody(constsSrc));
+  ok('4.1 原著卡片取字段逻辑前后端同构',
+    lookBody(routesSrc).length > 150 && lookBody(routesSrc) === lookBody(constsSrc));
+  ok('4.1 原著卡片注入含去重与空壳防护（自证非空跑）',
+    /lower\.includes/.test(cardBody(routesSrc)) && /场景道具——/.test(cardBody(routesSrc)));
+  const injectKeys = (src) => {
+    const m = src.match(/STORY_CARD_INJECT_FIELDS = \{([\s\S]*?)\n\};/);
+    return m ? [...m[1].matchAll(/(\w+):\s*\[/g)].map((x) => x[1]).sort().join(',') : '';
+  };
+  ok('4.1 前后端可注入类别表同构', injectKeys(routesSrc) !== '' && injectKeys(routesSrc) === injectKeys(constsSrc));
+  ok('4.1 写入时按可注入类别白名单过滤（绑了人物卡不该"显示已绑定却永不生效"）',
+    /function injectableCardIds/.test(routesSrc) && /story_card_ids: injectableCardIds\(/.test(routesSrc)
+    && /patch\.story_card_ids = injectableCardIds\(/.test(routesSrc));
+  ok('4.2 分镜页把原著卡片注入算进计算态预览（顺序：内容 → 场景道具 → 角色）',
+    sbSrc.includes('storyCardPhrase') && sbSrc.indexOf('storyCardPhrase(text, cards)') < sbSrc.indexOf('characterPhrase(withCards, chars)'));
+  ok('4.2 分镜页有原著卡片选择器与绑定回传', /id="s-card-pick"/.test(sbSrc) && /story_card_ids: \[\.\.\.pickedCards\]/.test(sbSrc));
+  ok('4.2 分镜页表格显示绑定的原著卡片（含失效提示）', /function cardBadges/.test(sbSrc) && /原著卡片失效/.test(sbSrc));
+  ok('4.2 提示词单元格标出 +场景 层', /\+场景/.test(sbSrc));
   const keysOf = (src) => {
     const m = src.match(/ART_STYLE_MAP = \{([\s\S]*?)\n\};/);
     return m ? [...m[1].matchAll(/'([^']+)':/g)].map((x) => x[1]).sort().join(',') : '';
@@ -291,7 +319,7 @@ group('B4 画风分层');
   ok('4.2 分镜提示词计算态预览', sbSrc.includes('artStylePhrase') && sbSrc.includes('+画风'));
   { // 1.6 防增量棘轮：字号地坪 11px 永不回退；裸 font-size 总量只减不增
     // 新页也必须进棘轮：否则"新加的页面"天然是裸字号与微字号的免检区
-    const pageFiles = ['dashboard','projects','scripts','storyboards','characters','images','videos','assets','tasks','settings']
+    const pageFiles = ['dashboard','projects','scripts','novel','storyboards','characters','images','videos','assets','tasks','settings']
       .map((n) => read(path.join(PUB, 'js', 'pages', n + '.js')));
     const all = pageFiles.join('');
     ok('1.6 字号地坪 ≥11px（JS 页）', !/font-size:(?:[1-9]|10(?:\.5)?)px/.test(all));
@@ -898,7 +926,7 @@ group('批 5：提示词资产化（R19 运镜字典 / R20 平台画幅 / R21 �
   ok('R19 视频侧运镜对所有模式注入（参考图带不了运动）',
     /const cam = str\(body\.camera_move\)\.trim\(\)/.test(routesSrc) && /cameraMove: cam/.test(routesSrc));
   ok('R19 导出含运镜列与运镜口径说明',
-    /'景别', '运镜'/.test(routesSrc) && /含出场角色、运镜与画风/.test(routesSrc));
+    /'景别', '运镜'/.test(routesSrc) && /含原著场景道具、出场角色、运镜与画风/.test(routesSrc));
 
   // ④ 前端接线：编辑弹窗 + 行徽标 + 预览标签
   ok('R19 编辑弹窗有运镜选择器与分组（optgroup 走原生键盘可达）',
@@ -1174,6 +1202,10 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('带入参数走 hash（可刷新/可分享/可回退）',
     /new URLSearchParams\(\{ project: projectId, tab: 'episode_script', bible: sourceId \}\)/.test(novel));
   ok('带入作用域跟随分组筛选（选了人物卡就只带人物卡）', /function scopeKinds\(\) \{ return kindFilter \? \[kindFilter\] : \[\]; \}/.test(novel));
+  // ui-audit 实测过：三个按钮 + 标题在 900~1024px 会把页面撑出横向滚动条，
+  // 靠 .row.wrap 换行解决。ui-audit 不是门禁，所以这里钉住修法，防止"优化时又改回不换行"。
+  ok('卡片工作台工具栏允许换行（否则窄视口横向溢出）',
+    /<div class="row wrap" style="margin-bottom:10px;row-gap:6px">/.test(novel));
   ok('复制回注按钮真的渲染了（此前 data-copy 处理器是死代码）',
     /id="nov-copy"/.test(novel) && !/data-copy/.test(novel));
   ok('scripts.js 消费 bible 参数并落到模板变量', /async function applyBible\(\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));

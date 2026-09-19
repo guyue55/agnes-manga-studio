@@ -551,6 +551,35 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('原著卡片注入纯函数（批 8 补 2：只注入看得见的两类 / 去重 / 空壳防护）');
+{
+  const { storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS } = createRoutes;
+  const teahouse = { kind: 'location', name: '临江茶馆', atmosphere: '喧闹潮湿', region: '临江', time_of_day: '夜晚', features: '木质结构' };
+  const key = { kind: 'prop', name: '青铜钥匙', owner: '林晚', usage: '开密室', features: '锈迹斑斑' };
+  eq('无卡片 → 原样返回（不留分隔符）', storyCardPhrase('a room', []), 'a room');
+  eq('undefined 安全（批量项可能没有该字段）', storyCardPhrase('a room', undefined), 'a room');
+  eq('空提示词不产出前导逗号', storyCardPhrase('', [key]), '场景道具——青铜钥匙：林晚，开密室，锈迹斑斑');
+  eq('地点卡按 氛围/地域/时段/特征 顺序拼', storyCardLook(teahouse), '喧闹潮湿，临江，夜晚，木质结构');
+  eq('道具卡按 持有者/用途/特征 顺序拼', storyCardLook(key), '林晚，开密室，锈迹斑斑');
+  eq('多卡片用分号分隔、顺序保持', storyCardPhrase('x', [teahouse, key]),
+    'x, 场景道具——临江茶馆：喧闹潮湿，临江，夜晚，木质结构；青铜钥匙：林晚，开密室，锈迹斑斑');
+  // 只注入"画面上看得见"的两类：人物卡走角色库那条路（有参考图与锁定语义），
+  // 信息卡/剧情卡/时间线是给编剧看的全局设定，逐镜注入只会稀释画面描述、白烧配额。
+  eq('人物卡不在注入范围（走角色库那条路）', storyCardLook({ kind: 'character', name: '林岚', appearance: '长发' }), '');
+  eq('信息卡不在注入范围（全局设定不该逐镜注入）', storyCardLook({ kind: 'world', name: '世界观', worldview: '架空唐朝' }), '');
+  eq('剧情卡不在注入范围', storyCardLook({ kind: 'plot', name: '初见', conflict: '误会' }), '');
+  eq('时间线不在注入范围', storyCardLook({ kind: 'timeline', name: '三日后', when: '第三天' }), '');
+  ok('注入范围恰好是 location + prop（新增类别必须显式决策，不许默认注入）',
+    Object.keys(STORY_CARD_INJECT_FIELDS).sort().join(',') === 'location,prop', Object.keys(STORY_CARD_INJECT_FIELDS).join(','));
+  eq('没填任何可注入字段 → 不产出「名字：」空壳', storyCardPhrase('x', [{ kind: 'location', name: '空地点' }]), 'x');
+  // 去重：同一段描述已在提示词里就不再追加（长提示词自我重复会挤掉有效信息）
+  eq('描述已在提示词里 → 跳过', storyCardPhrase('喧闹潮湿，临江，夜晚，木质结构的茶馆', [teahouse]), '喧闹潮湿，临江，夜晚，木质结构的茶馆');
+  eq('同名但描述不同 → 仍注入（场景换了说法）', storyCardPhrase('临江茶馆里很安静', [teahouse]),
+    '临江茶馆里很安静, 场景道具——临江茶馆：喧闹潮湿，临江，夜晚，木质结构');
+  eq('没有名字的卡片也能注入（只有描述）', storyCardPhrase('x', [{ kind: 'prop', usage: '开密室' }]), 'x, 场景道具——开密室');
+  eq('空串名字不产出「：」', storyCardPhrase('x', [{ kind: 'prop', name: '   ', usage: '开密室' }]), 'x, 场景道具——开密室');
+}
+
 group('角色注入纯函数（R15：锁定语义 / 去重 / 空壳防护）');
 {
   const { characterPhrase } = createRoutes;

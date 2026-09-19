@@ -5,6 +5,7 @@
  */
 import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
+  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS,
   effectiveVideoSeconds, VIDEO_DURATION_RANGE,
   CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
@@ -20,6 +21,13 @@ export default async function storyboards(container, params) {
   const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   // R14：本项目的角色档案（bootstrap 随 state 下发，不再单独请求）
   const charsOf = () => (state.characters || []).filter((c) => c.project_id === projectId);
+  // 批 8 补 2：本项目可注入的原著卡片（只含地点卡/道具卡，与后端 STORY_CARD_INJECT_FIELDS 同源）
+  const cardsOf = () => (state.storyCards || []).filter((c) => c.project_id === projectId && STORY_CARD_INJECT_FIELDS[c.kind]);
+  async function loadStoryCards(pid) {
+    if (!pid) return;
+    const r = await api.storyCards({ projectId: pid });
+    state.storyCards = (r.ok && r.data) || [];
+  }
   let rows = [];
   const selected = new Set();
   let job = null;
@@ -157,7 +165,8 @@ export default async function storyboards(container, params) {
       return;
     }
     // 角色档案与分镜并行拉：预览要显示角色注入，快照过期会让预览与后端不一致
-    const [r, imgs] = await Promise.all([api.storyboards(projectId, episode), api.images(projectId), loadCharacters(projectId)]);
+    // 角色档案 / 原著卡片与分镜并行拉：预览要显示注入，快照过期会让预览与后端不一致
+    const [r, imgs] = await Promise.all([api.storyboards(projectId, episode), api.images(projectId), loadCharacters(projectId), loadStoryCards(projectId)]);
     if (!r.ok) { el.innerHTML = `<div class="note red">${esc(r.error)}</div>`; return; }
     rows = r.data || [];
     // 分镜 → 图片的映射，批量生成视频时用来判断是否走图生视频
@@ -204,7 +213,7 @@ export default async function storyboards(container, params) {
             <td style="font-family:var(--mono);color:var(--text)">#${esc(s.shot_number)}</td>
             <td><span class="badge gray">${esc(s.shot_type)}</span>${
               s.camera_move ? `<span class="badge gray cam-badge" title="运镜：${esc(cameraMovePhrase(s.camera_move) || '—')}${cameraMoveAffectsStill(s.camera_move) ? '' : '（仅视频生效，静帧图无法表达运动）'}">${esc(s.camera_move)}</span>` : ''}</td>
-            <td><div class="cell-ellipsis" style="max-width:260px" title="${esc(s.scene_description)}">${esc(s.scene_description || '—')}</div></td>
+            <td><div class="cell-ellipsis" style="max-width:260px" title="${esc(s.scene_description)}">${esc(s.scene_description || '—')}</div>${cardBadges(s)}</td>
             <td>${charCell(s)}</td>
             <td><div class="cell-ellipsis" style="max-width:150px;color:var(--text-3)" title="${esc(s.dialogue)}">${esc(s.dialogue || '—')}</div></td>
             <td>${esc(s.duration_seconds)}s</td>
@@ -317,6 +326,19 @@ export default async function storyboards(container, params) {
     };
   }
 
+  /** 绑定的原著卡片徽标（批 8 补 2）：让"这个镜头挂了哪些场景/道具"不打开弹窗就能看见 */
+  function cardBadges(s) {
+    const ids = Array.isArray(s.story_card_ids) ? s.story_card_ids : [];
+    if (!ids.length) return '';
+    const bound = ids.map((id) => cardsOf().find((c) => c.id === id)).filter(Boolean);
+    if (!bound.length) return `<div class="row" style="gap:4px;margin-top:3px"><span class="badge red" title="绑定的原著卡片已被删除，点编辑可清理">原著卡片失效 ${ids.length}</span></div>`;
+    const label = (c) => `${STORY_CARD_LABELS[c.kind] || c.kind}：${c.name}`;
+    return `<div class="row" style="gap:4px;margin-top:3px;flex-wrap:wrap" title="出图/出视频时会把这几张卡的场景与道具描述统一注入：\n${esc(bound.map((c) => label(c)).join('\n'))}">
+      ${bound.slice(0, 2).map((c) => `<span class="badge gray">${esc(c.name)}</span>`).join('')}
+      ${bound.length > 2 ? `<span class="badge gray">+${bound.length - 2}</span>` : ''}
+    </div>`;
+  }
+
   /**
    * 人物单元格（R14）：结构化角色绑定优先展示，自由文本作为补充。
    * 两者都显示而不是二选一——老分镜只有文本，新分镜才有 id；只显示其中一种会让另一半"看起来丢了"。
@@ -385,7 +407,11 @@ export default async function storyboards(container, params) {
     const style = (state.projects.find((p) => p.id === projectId) || {}).art_style || '';
     const chars = (Array.isArray(s.character_ids) ? s.character_ids : [])
       .map((id) => charsOf().find((c) => c.id === id)).filter(Boolean);
-    const withChars = characterPhrase(text, chars);
+    const cards = (Array.isArray(s.story_card_ids) ? s.story_card_ids : [])
+      .map((id) => cardsOf().find((c) => c.id === id)).filter(Boolean);
+    // 顺序必须与后端 finalPrompt 一致：内容 → 原著场景道具 → 角色 → 运镜 → 画风
+    const withCards = storyCardPhrase(text, cards);
+    const withChars = characterPhrase(withCards, chars);
     // 图片是静帧：运镜只认机位/视角类；视频列全量（见 consts.js cameraMovePhrase 的 forStill）
     const cam = cameraMovePhrase(s.camera_move, field === 'image_prompt');
     const withCam = cam && !withChars.toLowerCase().includes(cam.toLowerCase()) ? `${withChars}, ${cam}` : withChars;
@@ -394,10 +420,11 @@ export default async function storyboards(container, params) {
     // data-prompt 给测试与后续就地编辑一个稳定锚点（列内还有别的 .cell-ellipsis，靠选择器顺序取会取错）
     return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
       <button type="button" class="cell-ellipsis inline-target" data-inline="${esc(s.id)}" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3);text-align:left" title="点击就地编辑\n${final !== text ? `生成时实际发出：\n${esc(final)}` : esc(text)}">${esc(text)}</button>
-      ${withChars !== text ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
+      ${withCards !== text ? `<span class="prompt-tag" title="原著场景道具由系统统一注入：${esc(cards.filter((c) => withCards.includes(c.name)).map((c) => c.name).join('、'))}">+场景</span>` : ''}
+      ${withChars !== withCards ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
       ${withCam !== withChars ? `<span class="prompt-tag" title="运镜由系统统一注入：${esc(cam)}">+运镜</span>` : ''}
       ${style && final !== withCam ? `<span class="prompt-tag" title="画风由系统统一注入：${esc(style)}">+画风</span>` : ''}
-      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的角色与画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
+      <button class="icon-btn" data-copy-prompt="${esc(text)}" title="复制（不含系统注入的原著场景道具、角色与画风）" style="width:26px;height:26px;background:rgba(255,255,255,0.06);color:var(--text-3)">${icon('copy', 11)}</button>
     </div>`;
   }
 
@@ -717,6 +744,7 @@ ${text}`,
       image_prompt: '', video_prompt: '', negative_prompt: 'low quality, blurry, distorted face',
     };
     const pickedChars = new Set(Array.isArray(s.character_ids) ? s.character_ids : []);
+    const pickedCards = new Set(Array.isArray(s.story_card_ids) ? s.story_card_ids : []);
     modal({
       title: isNew ? '添加镜头' : `编辑镜头 #${s.shot_number}`,
       wide: true,
@@ -739,6 +767,12 @@ ${text}`,
             ${charsOf().length
     ? `<div class="chips" id="s-char-pick">${charsOf().map((c) => `<button type="button" class="chip${(s.character_ids || []).includes(c.id) ? ' on' : ''}" data-char="${esc(c.id)}" title="${esc(c.appearance || '未填外貌')}">${c.is_locked ? icon('lock', 11) : ''}${esc(c.name)}</button>`).join('')}</div>`
     : '<div class="note">本项目还没有角色档案 —— 去「角色库」建一个主角，之后每个镜头挂上它，出图就不会换脸。</div>'}
+          </div>
+          <div class="field" style="grid-column:1/-1">
+            <label>原著场景道具（地点卡 / 道具卡）<span style="color:var(--text-4);font-weight:400">（选中的卡片会在出图/出视频时统一注入描述，跨镜头不换场景）</span></label>
+            ${cardsOf().length
+    ? `<div class="chips" id="s-card-pick">${cardsOf().map((c) => `<button type="button" class="chip${(s.story_card_ids || []).includes(c.id) ? ' on' : ''}" data-card="${esc(c.id)}" title="${esc(storyCardLook(c) || '未填描述')}">${esc(STORY_CARD_LABELS[c.kind] || '')}·${esc(c.name)}</button>`).join('')}</div>`
+    : '<div class="note">本项目还没有地点卡/道具卡 —— 去「原著解析」粘一段原文解析一次，或手工在卡片工作台补。</div>'}
           </div>
           <div class="field"><label for="s-scene">场景</label><input class="input" id="s-scene" value="${esc(s.scene)}" /></div>
           <div class="field" style="grid-column:1/-1"><label for="s-action">动作</label><input class="input" id="s-action" value="${esc(s.action)}" /></div>
@@ -793,6 +827,14 @@ ${text}`,
             b.classList.toggle('on', pickedChars.has(id));
           };
         });
+        // 原著卡片（地点卡/道具卡）：与角色同一交互范式，选中的会在使用点注入
+        root.querySelectorAll('#s-card-pick [data-card]').forEach((b) => {
+          b.onclick = () => {
+            const id = b.getAttribute('data-card');
+            if (pickedCards.has(id)) pickedCards.delete(id); else pickedCards.add(id);
+            b.classList.toggle('on', pickedCards.has(id));
+          };
+        });
         root.querySelector('[data-yes]').onclick = async () => {
           const payload = {
             shot_number: Math.max(1, Number(root.querySelector('#s-num').value) || 1),
@@ -801,6 +843,7 @@ ${text}`,
             scene_description: root.querySelector('#s-desc').value,
             characters: root.querySelector('#s-chars').value,
             character_ids: [...pickedChars],
+            story_card_ids: [...pickedCards],
             scene: root.querySelector('#s-scene').value,
             action: root.querySelector('#s-action').value,
             dialogue: root.querySelector('#s-dlg').value,
