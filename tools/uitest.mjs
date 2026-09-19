@@ -1230,6 +1230,24 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 逐集生成分镜（批 8 补 9）──
+  ok('单集生成与逐集生成共用同一个内核（各写一份提示词迟早会漂移）',
+    /async function shotsFromText\(text, ep\)/.test(boardsSrc)
+    && /const out = await shotsFromText\(text, episode\)/.test(boardsSrc)
+    && /const out = await shotsFromText\(sc\.content, ep\)/.test(boardsSrc));
+  ok('逐集生成分镜：分镜写进对应的那一集（不串集）',
+    /episode_number: ep,/.test(boardsSrc) && /note: `分镜生成\$\{ep > 1/.test(boardsSrc));
+  ok('逐集生成分镜：先确认调用次数，可取消，失败只丢这一集',
+    /每集<b>调用一次模型<\/b>/.test(boardsSrc) && /batchStop = true/.test(boardsSrc)
+    && /done\.push\(\{ ep, error: out\.error \}\)/.test(boardsSrc));
+  ok('已经有分镜的集默认跳过（重跑不会把同一集翻倍）',
+    /id="bs-skip" checked/.test(boardsSrc) && /cfg\.skipExisting && countByEp\.get\(ep\)/.test(boardsSrc));
+  ok('跳过判据按**整部剧**统计，不是只看当前这一集（否则其它集永远判成"没有"）',
+    /const allShots = await api\.storyboards\(projectId\)/.test(boardsSrc)
+    && !/const existing = \(rows \|\| \[\]\)\.filter/.test(boardsSrc));
+  ok('缺分集骨架/缺分集剧本时给的是下一步该去哪，不是空转',
+    /还没有分集骨架/.test(boardsSrc) && /还没有分集剧本/.test(boardsSrc) && /逐集生成/.test(boardsSrc));
+
   // ── 分集上下文与逐集生成（批 8 补 8）──
   ok('单集拍表与前情提要都在后端纯函数里（前端不再抄一份渲染逻辑）',
     /function episodeBriefText/.test(storySrc) && /function priorBrief/.test(storySrc)

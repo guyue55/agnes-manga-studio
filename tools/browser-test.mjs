@@ -1711,13 +1711,24 @@ try {
         ['逐集·起2', '起', 'C4'], ['逐集·承2', '承', 'C5'], ['逐集·转2', '转', 'C6'], ['逐集·合2', '合', 'O2'],
       ];
       let lastUser8 = '';
+      let sbCalls = 0;      // 分镜链被调用了几次（"每集一次""跳过的集不再调用"都要靠它证明）
       const mock = http.createServer((req, res) => {
         const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
         let body = ''; req.on('data', (c) => { body += c; });
         req.on('end', () => {
           if (req.url.startsWith('/v1/chat/completions')) {
             let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
-            lastUser8 = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            // 分镜链与卡片链按提示词形状分流（与既有各组的做法一致）
+            if (/分镜表/.test(user)) {
+              sbCalls++;
+              return send(200, { choices: [{ message: { content: JSON.stringify({ shots: [
+                { shot_number: 1, shot_type: '全景', scene_description: '逐集分镜一', characters: '', action: '', dialogue: '', narration: '', sound_effect: '', duration_seconds: 4, image_prompt: 'wide shot of a teahouse', video_prompt: 'slow push in', negative_prompt: '' },
+                { shot_number: 2, shot_type: '特写', scene_description: '逐集分镜二', characters: '', action: '', dialogue: '', narration: '', sound_effect: '', duration_seconds: 3, image_prompt: 'close up of a key', video_prompt: 'hold', negative_prompt: '' },
+                { shot_number: 3, shot_type: '中景', scene_description: '逐集分镜三', characters: '', action: '', dialogue: '', narration: '', sound_effect: '', duration_seconds: 3, image_prompt: 'medium shot of a door', video_prompt: 'tilt down', negative_prompt: '' },
+              ] }) } }] });
+            }
+            lastUser8 = user;
             return send(200, { choices: [{ message: { content: JSON.stringify({ cards: plotCards.map(([name, stage, conflict]) => ({ kind: 'plot', name, stage, conflict })) }) } }] });
           }
           return send(200, { ok: true });
@@ -1793,6 +1804,40 @@ try {
         await cdp.eval(`document.querySelector('.modal-foot [data-no]').click(); return true;`);
         await sleep(600);
         ok('取消后一集都不生成', (await J(`/api/scripts?project_id=${pid}`)).length === callsBefore8);
+
+        // ⑦ 逐集生成分镜：剧本已经按集存好了，分镜顺着它一集一集往下做
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#gen-eps-sb');`), '分镜页逐集生成按钮', 12000);
+        await cdp.eval(`document.querySelector('#gen-eps-sb').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#bs-from');`), '逐集生成分镜弹窗', 8000);
+        const bsTxt = await cdp.eval(`return (document.querySelector('.modal')||{}).innerText||'';`);
+        ok('逐集生成分镜先讲清调用次数与现有分集剧本', /每集调用一次模型/.test(bsTxt.replace(/\s+/g, '')) || /每集/.test(bsTxt), bsTxt.replace(/\s+/g, ' ').slice(0, 120));
+        ok('逐集生成分镜默认跳过已有分镜的集（重跑不会翻倍）', await cdp.eval(`return !!document.querySelector('#bs-skip') && document.querySelector('#bs-skip').checked;`));
+        // 默认范围是"有剧本的集"（3..5 集有剧本时不用手动改）；这里手动拉成 1〜2 集，
+        // 才能测到"没有剧本的集被跳过、且不调用模型"这条路
+        await cdp.eval(`const f=document.querySelector('#bs-from'); f.value='1'; const t=document.querySelector('#bs-to'); t.value='2'; return true;`);
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /逐集生成结束|已取消/.test((document.querySelector('#batch-bar')||{}).innerText||'');`), '逐集生成分镜结束', 30000);
+        const bar8 = await cdp.eval(`return (document.querySelector('#batch-bar')||{}).innerText||'';`);
+        // 汇总（完成几集/几个镜头）在 toast 里，逐集结果在进度条里 —— 两处都读，别只读一处就说"报数了"
+        const toast8 = await cdp.eval(`return Array.from(document.querySelectorAll('.toast,.toast-wrap,#toasts')).map((x) => x.innerText).join('|');`);
+        const sb2 = await J(`/api/storyboards?project_id=${pid}&episode=2`);
+        ok('分镜写进了对应的那一集（不串集）', sb2.length === 3 && sb2.every((x) => Number(x.episode_number) === 2), JSON.stringify(sb2.map((x) => x.episode_number)));
+        ok('没有剧本的集如实跳过、不调用模型', /成功 1/.test(bar8) && /跳过 1/.test(bar8) && /第 1 集/.test(bar8) && sbCalls === 1, JSON.stringify({ bar: bar8.replace(/\s+/g, ' ').slice(0, 110), calls: sbCalls }));
+        ok('逐集结果与汇总都报数（进度条逐集、toast 汇总）',
+          /成功 1 · 跳过 1 · 失败 0/.test(bar8.replace(/\s+/g, ' ')) && /完成 1 集/.test(toast8) && /3 个镜头/.test(toast8),
+          JSON.stringify({ bar: bar8.replace(/\s+/g, ' ').slice(0, 90), toast: toast8.replace(/\s+/g, ' ').slice(0, 110) }));
+
+        // 再跑一次：第 2 集已经有分镜 → 默认跳过，且**一次模型都不调**（这条是"不会翻倍"的硬证据）
+        await cdp.eval(`document.querySelector('#gen-eps-sb').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#bs-from');`), '逐集生成分镜弹窗（重跑）', 8000);
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /逐集生成结束|已取消/.test((document.querySelector('#batch-bar')||{}).innerText||'');`), '重跑结束', 20000);
+        const bar8b = await cdp.eval(`return (document.querySelector('#batch-bar')||{}).innerText||'';`);
+        ok('重跑时已有分镜的集被跳过，且一次模型都没调', /成功 0/.test(bar8b) && /跳过 1/.test(bar8b) && sbCalls === 1, JSON.stringify({ bar: bar8b.replace(/\s+/g, ' ').slice(0, 110), calls: sbCalls }));
+        ok('重跑没有把分镜翻倍（还是 3 个）', (await J(`/api/storyboards?project_id=${pid}&episode=2`)).length === 3);
+
       } finally {
         mock.close();
         await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before8) });

@@ -10,7 +10,7 @@ import {
   CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
 import { api } from '../api.js';
-import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
+import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback, notice } from '../ui.js';
 import { head, projectPicker, renderBatchBar, makeTokenStore } from './helpers.js';
 import { charCount, limitState, FIELD_SOFT_LIMIT } from '../textstats.js';
 import { state, onEvent, syncViewParams, loadCharacters } from '../app.js';
@@ -49,6 +49,7 @@ export default async function storyboards(container, params) {
       <div class="hint-xs" id="roster-hint" style="margin-top:4px"></div>
       <div class="row wrap" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" id="gen-sb">${icon('wand', 14)}生成第 ${episode} 集分镜</button>
+        <button class="btn btn-sm" id="gen-eps-sb" title="按已保存的分集剧本逐集生成分镜（每集一次模型调用）">${icon('grid', 14)}逐集生成分镜</button>
         <button class="btn btn-sm" id="add-shot">${icon('plus', 14)}手动添加镜头</button>
         <button class="btn btn-sm" id="sb-autobind" title="按「出场人物」与提示词文本，把项目里的角色与地点/道具卡自动绑到对应镜头（纯本地匹配，不调模型）">${icon('link', 14)}自动匹配绑定</button>
         <div class="spacer"></div>
@@ -96,6 +97,7 @@ export default async function storyboards(container, params) {
   epSel.onchange = () => { episode = Number(epSel.value); selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#gen-sb').onclick = genFromScript;
+  container.querySelector('#gen-eps-sb').onclick = openBatchShots;
   container.querySelector('#add-shot').onclick = () => editShot(null);
   container.querySelector('#sb-autobind').onclick = autoBind;
   loadRoster(''); // 进页面就把"会不会带上名册"讲清楚，而不是等生成完才发现名字对不上
@@ -444,10 +446,209 @@ export default async function storyboards(container, params) {
 
   // ── 从脚本生成分镜 ───────────────────────────────────────
   let genBusy = false;
+  let batchStop = false;   // 逐集生成分镜的取消旗标（与批量出图的 cancelBatch 分开：两者互不干扰）
   /** 模型可能把 characters / sound_effect 返回成数组，统一拼成可读文本 */
   const flat = (v) => Array.isArray(v)
     ? v.map((x) => (x && typeof x === 'object' ? JSON.stringify(x) : String(x))).join('、')
     : String(v ?? '');
+
+  /**
+   * 逐集生成分镜（批 8 补 9）：剧本已经按集存好了（补 8 的 episode_number），这里顺着它一集一集往下做。
+   * 三条纪律与逐集生成剧本一致：**先确认调用次数**、**失败只丢这一集**、**可取消**；
+   * 另加一条：**已经有分镜的集默认跳过**（重跑一次就会把同一集的分镜翻倍，那是灾难性的）。
+   */
+  async function openBatchShots() {
+    if (genBusy) { toast.err('正在生成中，等这一次结束再开始逐集生成'); return; }
+    if (!projectId) { toast.err('请先选择项目'); return; }
+    const plan = await api.storyEpisodes({ project_id: projectId });
+    if (!plan.ok || !plan.data.episode_count) {
+      await notice({
+        title: '还没有分集骨架',
+        lines: [
+          '逐集生成分镜要先有<b>分集剧本</b>，而分集骨架来自原著解析里的剧情卡。',
+          '到「原著解析」粘贴/上传小说 → 解析出卡片 → 看「分集大纲」；再到「故事脚本」页用「逐集生成」把每集剧本生成出来。',
+        ],
+        okText: '知道了',
+      });
+      return;
+    }
+    const n = plan.data.episode_count;
+    const sr = await api.scripts(projectId);
+    const byEp = new Map();
+    for (const sc of (sr.ok ? sr.data : [])) {
+      if (sc.script_type !== 'episode_script' || !sc.episode_number) continue;
+      // 同一集有多条（重生成过）时取最新的一条：列表按 created_at 倒序，第一条即最新
+      if (!byEp.has(sc.episode_number)) byEp.set(sc.episode_number, sc);
+    }
+    if (!byEp.size) {
+      await notice({
+        title: '还没有分集剧本',
+        lines: [
+          '逐集生成分镜的输入是<b>按集保存的剧本</b>，现在一条都没有。',
+          '到「故事脚本」页选「单集脚本」页签 → 「逐集生成」，生成完会自动按集存下来。',
+        ],
+        okText: '知道了',
+      });
+      return;
+    }
+    // 已有分镜的集数必须**按整部剧**统计：页面上的 rows 只有当前这一集，
+    // 拿它判断"其它集有没有分镜"永远得到"没有"，重跑就会把那些集翻倍（这正是要防的事）
+    const allShots = await api.storyboards(projectId);
+    const countByEp = new Map();
+    for (const r of (allShots.ok ? allShots.data : [])) {
+      const k = Number(r.episode_number) || 1;
+      countByEp.set(k, (countByEp.get(k) || 0) + 1);
+    }
+    const eps = [...byEp.keys()].sort((a, b) => a - b);
+    const cfg = await new Promise((resolve) => {
+      let settled = false;
+      const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
+      modal({
+        title: '逐集生成分镜',
+        body: `<div class="note">按已保存的分集剧本逐集生成，每集<b>调用一次模型</b>。分镜写进对应的那一集
+          （不会串集），生成后同样按「出场人物」自动绑定角色/场景。</div>
+          <div class="hint-xs" style="margin-top:8px">现有分集剧本：${eps.map((e) => `第 ${e} 集`).join('、')}（共 ${eps.length} 集，分集骨架 ${n} 集）</div>
+          ${[...countByEp.keys()].length ? `<div class="hint-xs" style="margin-top:4px">已有分镜的集：${[...countByEp.entries()].sort((a, b) => a[0] - b[0]).map(([e, c]) => `第 ${e} 集(${c})`).join('、')}</div>` : ''}
+          <div class="row wrap" style="gap:10px;margin-top:12px">
+            <div class="field" style="flex:1;min-width:110px"><label for="bs-from">从第几集</label><input class="input" id="bs-from" type="number" min="1" max="${n}" value="${eps[0]}" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label for="bs-to">到第几集</label><input class="input" id="bs-to" type="number" min="1" max="${n}" value="${eps[eps.length - 1]}" /></div>
+          </div>
+          <label class="row" style="gap:8px;align-items:center;margin-top:12px;cursor:pointer">
+            <input type="checkbox" id="bs-skip" checked />
+            <span class="hint-xs">已经有分镜的集跳过（默认勾选：重跑不会把同一集的分镜翻倍）</span>
+          </label>
+          <div class="hint-xs" style="margin-top:8px">没有剧本的集会如实跳过、不会调用模型；中途可以取消，已经生成的集保留。</div>`,
+        footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>开始生成</button>`,
+        onDismiss: () => settle(null),
+        onMount(root, close) {
+          root.querySelector('[data-no]').onclick = () => { settle(null); close(); };
+          root.querySelector('[data-yes]').onclick = () => {
+            settle({
+              from: Math.max(1, Math.min(n, Number(root.querySelector('#bs-from').value) || 1)),
+              to: Math.max(1, Math.min(n, Number(root.querySelector('#bs-to').value) || n)),
+              skipExisting: !!root.querySelector('#bs-skip').checked,
+            });
+            close();
+          };
+        },
+      });
+    });
+    if (cfg) runBatchShots(cfg, byEp, countByEp);
+  }
+
+  async function runBatchShots(cfg, byEp, countByEp) {
+    const from = Math.min(cfg.from, cfg.to);
+    const to = Math.max(cfg.from, cfg.to);
+    const box = container.querySelector('#batch-bar');
+    const btn = container.querySelector('#gen-eps-sb');
+    const done = [];
+    batchStop = false;
+    genBusy = true;
+    if (btn) btn.disabled = true;
+    const paint = (cur, note) => {
+      if (!box) return;
+      const okN = done.filter((d) => d.ok).length;
+      const skipN = done.filter((d) => d.skipped).length;
+      const badN = done.filter((d) => !d.ok && !d.skipped).length;
+      box.innerHTML = `<div class="card" style="margin-bottom:12px;padding:12px 14px">
+        <div class="row" style="gap:10px;align-items:center">
+          ${cur ? '<div class="spinner sm"></div>' : ''}
+          <span style="font-size:12.5px">${esc(note)}</span>
+          <div class="spacer"></div>
+          <span class="hint-xs">成功 ${okN} · 跳过 ${skipN} · 失败 ${badN}</span>
+          ${cur ? '<button class="btn btn-xs" id="bs-stop">取消</button>' : ''}
+        </div>
+        ${done.length ? `<div class="hint-xs" style="margin-top:6px">${done.map((d) => `${d.ok ? '✓' : (d.skipped ? '–' : '✗')}第 ${d.ep} 集`).join(' · ')}</div>` : ''}
+      </div>`;
+      const stop = box.querySelector('#bs-stop');
+      if (stop) stop.onclick = () => { batchStop = true; stop.disabled = true; stop.textContent = '正在取消…'; };
+    };
+    for (let ep = from; ep <= to; ep++) {
+      if (batchStop) { paint(null, '已取消'); break; }
+      const sc = byEp.get(ep);
+      if (!sc) { done.push({ ep, skipped: true, why: '没有剧本' }); continue; }
+      if (cfg.skipExisting && countByEp.get(ep)) {
+        done.push({ ep, skipped: true, why: `已有 ${countByEp.get(ep)} 个镜头` });
+        continue;
+      }
+      paint(ep, `正在生成第 ${ep} 集分镜…`);
+      const out = await shotsFromText(sc.content, ep);
+      if (out.ok) done.push({ ep, ok: true, inserted: out.inserted, bound: out.bound });
+      else done.push({ ep, error: out.error });
+    }
+    genBusy = false;
+    if (btn) btn.disabled = false;
+    const okN = done.filter((d) => d.ok).length;
+    const shotsN = done.reduce((a, d) => a + (d.inserted || 0), 0);
+    const bad = done.filter((d) => !d.ok && !d.skipped);
+    const skipped = done.filter((d) => d.skipped);
+    paint(null, batchStop ? '已取消' : '逐集生成结束');
+    if (okN) await load();
+    const parts = [`完成 ${okN} 集 / ${shotsN} 个镜头`];
+    if (skipped.length) parts.push(`跳过 ${skipped.length} 集（${skipped.map((d) => `第 ${d.ep} 集：${d.why}`).join('；')}）`);
+    if (bad.length) parts.push(`失败 ${bad.length} 集（${bad.map((d) => `第 ${d.ep} 集：${d.error}`).join('；')}）`);
+    if (bad.length) toast.err(parts.join(' · '), 9000);
+    else toast.ok(parts.join(' · '));
+  }
+
+  /**
+   * 一段脚本 → 某一集的分镜（生成 + 落库 + 生成即绑定）。
+   * 单集生成与逐集生成**共用这一份**：两条路各写一份提示词与字段映射，迟早会出现
+   * "单集生成有 13 个字段、批量生成少两个"这种静默漂移。
+   * 不碰 UI（不 toast、不弹窗、不刷新）—— 那是调用方的事。
+   */
+  async function shotsFromText(text, ep) {
+    const roster = await loadRoster(text);
+    const r = await api.genText({
+      messages: [
+        { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。提示词只写镜头内容，不要写整体画风或媒介词（anime style、oil painting 等），也不要写人物长相——画风与人物长相都由系统在使用点统一注入，写进提示词会与注入的那份打架。characters(出场人物) 必须使用角色名册里的本名。' },
+        {
+          role: 'user',
+          content: `请将以下脚本内容转换为分镜表。输出一个 JSON 对象，格式：{"shots": [ ...每个元素是一个镜头... ]}，每个镜头包含：
+shot_number(数字)、shot_type(景别)、scene_description(画面描述)、characters(出场人物)、action(动作)、dialogue(台词)、narration(旁白)、sound_effect(音效)、duration_seconds(时长数字)、image_prompt(英文图片提示词)、video_prompt(英文视频提示词)、negative_prompt(英文负面提示词)。
+
+${roster.text ? `${roster.text}\n\n` : ''}${text}`,
+        },
+      ],
+      project_id: projectId,
+      note: `分镜生成${ep > 1 ? ` 第 ${ep} 集` : ''}`,
+      json_mode: true, // 走 response_format=json_object，杜绝语法坏 JSON
+    });
+    if (!r.ok) return { ok: false, error: `模型调用失败：${r.error}` };
+    const shots = extractJsonArray(r.data.content);
+    if (!shots || !shots.length) {
+      const len = (r.data.content || '').length;
+      return { ok: false, error: len ? `模型输出无法解析成镜头数组（共 ${len} 字符）` : '模型返回了空内容', raw: r.data.content || '' };
+    }
+    const rows2 = shots.map((s, i) => ({
+      project_id: projectId,
+      episode_number: ep,
+      shot_number: Math.max(1, Number(s.shot_number) || i + 1),
+      shot_type: flat(s.shot_type) || '中景',
+      scene_description: flat(s.scene_description),
+      characters: flat(s.characters),
+      scene: flat(s.scene),
+      action: flat(s.action),
+      dialogue: flat(s.dialogue),
+      narration: flat(s.narration),
+      sound_effect: flat(s.sound_effect),
+      duration_seconds: Number(s.duration_seconds) || 3,
+      image_prompt: flat(s.image_prompt),
+      video_prompt: flat(s.video_prompt),
+      negative_prompt: flat(s.negative_prompt) || 'low quality, blurry, distorted face',
+      status: 'pending',
+      sort_order: i,
+    }));
+    const r2 = await api.createStoryboards(rows2);
+    if (!r2.ok) return { ok: false, error: r2.error };
+    // 生成即绑定：模型自己写了「出场人物」，名字能对上项目里的角色就直接绑上（只吃高置信那档）。
+    // 不绑的话，用户得挨个镜头点一遍，不点就静默没有外貌注入。
+    const rows = (r2.data && r2.data.rows) || [];
+    const ab = await api.storyboardsAutoBind({
+      project_id: projectId, storyboard_ids: rows.map((x) => x.id), strong_only: true,
+    });
+    return { ok: true, inserted: r2.data.inserted, bound: ab.ok ? ab.data.updated : 0, roster, rows };
+  }
 
   async function genFromScript() {
     if (genBusy) return; // 双击会重复烧一次 API 配额
@@ -466,76 +667,25 @@ export default async function storyboards(container, params) {
     genBusy = true;
     setBusy(btn, true, '分镜生成中');
     try {
-      // 角色名册（批 8 补 6）：模型不知道项目里已有哪些角色，写出来的「出场人物」常常对不上资产库
-      // （"女主""少女"混着来），结果是绑定全落空、谁都没有外貌注入。名册从源头把名字对齐。
-      const roster = await loadRoster(text);
-      const r = await api.genText({
-        messages: [
-          { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。提示词只写镜头内容，不要写整体画风或媒介词（anime style、oil painting 等），也不要写人物长相——画风与人物长相都由系统在使用点统一注入，写进提示词会与注入的那份打架。characters(出场人物) 必须使用角色名册里的本名。' },
-          {
-            role: 'user',
-            content: `请将以下脚本内容转换为分镜表。输出一个 JSON 对象，格式：{"shots": [ ...每个元素是一个镜头... ]}，每个镜头包含：
-shot_number(数字)、shot_type(景别)、scene_description(画面描述)、characters(出场人物)、action(动作)、dialogue(台词)、narration(旁白)、sound_effect(音效)、duration_seconds(时长数字)、image_prompt(英文图片提示词)、video_prompt(英文视频提示词)、negative_prompt(英文负面提示词)。
-
-${roster.text ? `${roster.text}\n\n` : ''}${text}`,
-          },
-        ],
-        project_id: projectId,
-        note: '分镜生成',
-        json_mode: true, // 走 response_format=json_object，杜绝语法坏 JSON
-      });
-      if (!r.ok) { toast.err(`模型调用失败：${r.error}`); return; }
-      const shots = extractJsonArray(r.data.content);
-      if (!shots || !shots.length) {
-        const len = (r.data.content || '').length;
-        if (!len) toast.err('模型返回了空内容，请重试或换个模型', 5200);
-        else {
-          // 解析失败不再只甩一句话：把原始输出亮出来，用户能自己判断问题在哪
-          modal({
-            title: '无法从模型输出中解析出镜头数组',
-            wide: true,
-            body: `<div class="note red" style="margin-bottom:10px">模型共返回 ${len} 字符（见下方原文）。可换更强的模型（如 agnes-2.5-pro）重试，或照原文手动录入。</div>
-              <pre class="json-out" style="max-height:55vh;overflow:auto">${esc(r.data.content)}</pre>`,
-            footer: `<button class="btn" data-close>关闭</button>`,
-          });
-        }
+      const out = await shotsFromText(text, episode);
+      if (!out.ok) {
+        if (out.raw === undefined) { toast.err(out.error); return; }
+        // 解析失败不再只甩一句话：把原始输出亮出来，用户能自己判断问题在哪
+        modal({
+          title: '无法从模型输出中解析出镜头数组',
+          wide: true,
+          body: `<div class="note red" style="margin-bottom:10px">${esc(out.error)}（见下方原文）。可换更强的模型（如 agnes-2.5-pro）重试，或照原文手动录入。</div>
+            <pre class="json-out" style="max-height:55vh;overflow:auto">${esc(out.raw)}</pre>`,
+          footer: `<button class="btn" data-close>关闭</button>`,
+        });
         return;
       }
-      const rows2 = shots.map((s, i) => ({
-        project_id: projectId,
-        episode_number: episode,
-        shot_number: Math.max(1, Number(s.shot_number) || i + 1),
-        shot_type: flat(s.shot_type) || '中景',
-        scene_description: flat(s.scene_description),
-        characters: flat(s.characters),
-        scene: flat(s.scene),
-        action: flat(s.action),
-        dialogue: flat(s.dialogue),
-        narration: flat(s.narration),
-        sound_effect: flat(s.sound_effect),
-        duration_seconds: Number(s.duration_seconds) || 3,
-        image_prompt: flat(s.image_prompt),
-        video_prompt: flat(s.video_prompt),
-        negative_prompt: flat(s.negative_prompt) || 'low quality, blurry, distorted face',
-        status: 'pending',
-        sort_order: i,
-      }));
-      const r2 = await api.createStoryboards(rows2);
-      if (r2.ok) {
-        // 生成即绑定：模型自己写了「出场人物」，名字能对上项目里的角色就直接绑上（只吃高置信那档，
-        // 提示词推断的那些不自动绑）。不绑的话，用户得挨个镜头点一遍，不点就静默没有外貌注入。
-        const rows = (r2.data && r2.data.rows) || [];
-        const ab = await api.storyboardsAutoBind({
-          project_id: projectId, storyboard_ids: rows.map((r) => r.id), strong_only: true,
-        });
-        const n = ab.ok ? ab.data.updated : 0;
-        const named = roster.count ? `（已按 ${roster.count} 个角色的本名生成）` : '';
-        toast.ok(n
-          ? `已生成 ${r2.data.inserted} 个镜头${named}，并按「出场人物」自动绑定 ${n} 个镜头的角色/场景（可点掉）`
-          : `已生成 ${r2.data.inserted} 个镜头${named}`);
-        container.querySelector('#script-in').value = '';
-        load();
-      } else toast.err(r2.error);
+      const named = out.roster.count ? `（已按 ${out.roster.count} 个角色的本名生成）` : '';
+      toast.ok(out.bound
+        ? `已生成 ${out.inserted} 个镜头${named}，并按「出场人物」自动绑定 ${out.bound} 个镜头的角色/场景（可点掉）`
+        : `已生成 ${out.inserted} 个镜头${named}`);
+      container.querySelector('#script-in').value = '';
+      load();
     } finally {
       genBusy = false;
       setBusy(btn, false);
