@@ -1948,6 +1948,70 @@ try {
       }
     }
 
+    group('镜头绑定自动匹配契约（批 8 补 5：干跑确认 → 落库 → 体检兜底 → 按目标修复）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const post = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      // 三个角色：甲只在「出场人物」里出现（强），乙只在画面描述里出现（弱，可能撞词），丙留到后面手工加镜头时用
+      const mk = async (name, appearance) => (await post('/api/characters', { project_id: pid, name, appearance })).id;
+      const cA = await mk('绑定验收角色甲', '红衣');
+      const cB = await mk('绑定验收角色乙', '蓝衣');
+      const cC = await mk('绑定验收角色丙', '绿衣');
+      let ids = [];
+      try {
+        const rows = (await post('/api/storyboards', { rows: [
+          { project_id: pid, episode_number: 1, shot_number: 1, shot_type: '中景', characters: '绑定验收角色甲', image_prompt: 'two people', scene_description: '甲走进来' },
+          { project_id: pid, episode_number: 1, shot_number: 2, shot_type: '近景', characters: '', image_prompt: 'close-up', scene_description: '绑定验收角色乙递上钥匙' },
+        ] })).rows;
+        ids = rows.map((r) => r.id);
+        ok('绑定契约：两个镜头就绪', ids.length === 2);
+
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#sb-autobind');`), '分镜页就绪', 12000);
+        await cdp.eval(`document.querySelector('#sb-autobind').click(); return true;`);
+        const cText = await waitFor(() => cdp.eval(`const m=document.querySelector('.modal'); return m ? m.innerText : '';`), '自动匹配确认弹窗', 8000).catch(() => '');
+        ok('自动匹配先弹确认（不静默改数据）', String(cText).includes('自动匹配绑定'), String(cText).replace(/\n/g, ' ').slice(0, 120));
+        ok('弹窗列出会绑到哪些镜头与哪些名字',
+          String(cText).includes('#1') && String(cText).includes('绑定验收角色甲'), String(cText).replace(/\n/g, ' ').slice(0, 160));
+        ok('把"只在提示词里出现"的推断项标出来（让人扫一眼）',
+          String(cText).includes('提示词推断'), String(cText).replace(/\n/g, ' ').slice(0, 200));
+        ok('说明不会改写镜头内容（只影响注入）', String(cText).includes('不会改写镜头内容'));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !document.querySelector('.modal');`), '确认后弹窗关闭', 6000);
+        await sleep(400);
+        const after = await J(`/api/storyboards?project_id=${pid}&episode=1`);
+        const s1 = after.find((x) => x.id === ids[0]);
+        const s2 = after.find((x) => x.id === ids[1]);
+        ok('确认后真的落库（镜头 1 绑上强匹配的角色）', (s1.character_ids || []).includes(cA), JSON.stringify(s1.character_ids));
+        ok('弱匹配也在确认后落库（它就在弹窗里列着）', (s2.character_ids || []).includes(cB), JSON.stringify(s2.character_ids));
+
+        // 体检兜底：自动匹配跑过之后**手工**加的镜头没人管 —— 这条最容易被忽略
+        await post('/api/storyboards', { project_id: pid, episode_number: 1, shot_number: 3, shot_type: '全景', characters: '绑定验收角色丙', image_prompt: 'wide shot', scene_description: '丙登场' });
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-audit');`), '原著页就绪', 12000);
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /绑定验收角色丙/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '体检报出漏绑', 10000);
+        const panel = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText || '';`);
+        ok('体检把"提到却没绑"的镜头报出来', panel.includes('绑定验收角色丙') && panel.includes('提到但没绑定'), panel.replace(/\n/g, ' ').slice(0, 160));
+        ok('体检范围写明含镜头（不是只体检卡片）', panel.includes('个镜头'), panel.replace(/\n/g, ' ').slice(0, 200));
+
+        // 按目标修复：点一下把这条修掉
+        const clicked = await cdp.eval(`const b=Array.from(document.querySelectorAll('#nov-audit-box [data-audit-fix]')).find(x=>(x.getAttribute('data-audit-fix')==='bind_shot_target') && (x.closest('.row')||{}).innerText && x.closest('.row').innerText.includes('绑定验收角色丙')); if(!b) return false; b.click(); return true;`);
+        ok('漏绑项给了"绑到这些镜头"的修复按钮', clicked === true);
+        const c2 = await waitFor(() => cdp.eval(`const m=document.querySelector('.modal'); return m ? m.innerText : '';`), '绑定确认弹窗', 6000).catch(() => '');
+        ok('绑定前弹确认并说明只影响注入', String(c2).includes('不会改写镜头内容'), String(c2).replace(/\n/g, ' ').slice(0, 140));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !/绑定验收角色丙/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '修复后该条消失', 10000);
+        const s3 = (await J(`/api/storyboards?project_id=${pid}&episode=1`)).find((x) => x.shot_number === 3);
+        ok('修复真的写进了后端', (s3.character_ids || []).includes(cC), JSON.stringify(s3.character_ids));
+      } finally {
+        for (const id of ids) await fetch(`http://127.0.0.1:${port}/api/storyboards/${id}`, { method: 'DELETE' });
+        await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=${pid}&episode=1`, { method: 'DELETE' });
+        for (const cid of [cA, cB, cC].filter(Boolean)) await fetch(`http://127.0.0.1:${port}/api/characters/${cid}`, { method: 'DELETE' });
+      }
+    }
+
     group('分集骨架契约（批 8 补 4：按幕切集 / 调拍数真的重切 / 带入剧本落到变量）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

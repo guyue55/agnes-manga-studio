@@ -404,6 +404,15 @@ export default async function novel(container, params = {}) {
   // 剧情卡按**原文出现顺序**排成拍子，再按幕次收口切成集。切集是可判定的（拍数下限 + 不拆幕），
   // 所以刻意不调模型：用户要反复调「每集至少几拍」，每次调都花钱的工具没人会用。
   // 真正需要 AI 的是"把这些拍写成剧本"，那一步在故事剧本页照旧走生成（有计费闸门）。
+  // 修复按钮文案（每种问题一个明确的动作，不用"一键修复"这种含糊说法）
+  const FIX_LABEL = {
+    dup_name: '合并同名卡',
+    alias_collision: '删掉撞名别名',
+    char_not_in_asset: '一键入资产库',
+    bind_shot_target: '绑到这些镜头',
+    lock_shot_char: '锁定该角色',
+  };
+
   const BASIS_LABEL = {
     stage: '全部剧情卡都标了幕次，切分收在幕的边界上',
     mixed: '部分剧情卡标了幕次，切分优先收在幕的边界上',
@@ -490,8 +499,9 @@ export default async function novel(container, params = {}) {
     const r = await api.storyAudit({ projectId });
     if (!r.ok) { toast.err(r.error); return; }
     const { counts, issues, total_cards: total } = r.data;
+    const shots = r.data.shots_scanned || 0;
     if (!issues.length) {
-      box.innerHTML = `<div class="note" style="margin-bottom:10px">${icon('check', 13)} 一致性体检：${total} 张卡片，没发现问题。</div>`;
+      box.innerHTML = `<div class="note" style="margin-bottom:10px">${icon('check', 13)} 一致性体检：${total} 张卡片、${shots} 个镜头，没发现问题。</div>`;
       return;
     }
     box.innerHTML = `
@@ -499,7 +509,7 @@ export default async function novel(container, params = {}) {
         <div class="row wrap" style="row-gap:6px;align-items:flex-start">
           <div style="flex:1;min-width:200px">
             <b>一致性体检：${issues.length} 项</b>（要处理 ${counts.warn} · 可优化 ${counts.info}，其中 ${counts.fixable} 项可一键修复）
-            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>（同名卡常常来自不同原著，只看当前这份就看不见）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
+            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>的 ${total} 张卡片 + ${shots} 个镜头（同名卡常常来自不同原著，只看当前这份就看不见；镜头漏绑绑定不会有任何报错，只会在出图时少一段外貌/场景描述）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
           </div>
           <button class="btn btn-xs" data-audit-again>重新体检</button>
           <button class="btn btn-xs" data-audit-close>收起</button>
@@ -512,7 +522,7 @@ export default async function novel(container, params = {}) {
               <div style="font-weight:550">${esc(it.title)}</div>
               <div class="hint-xs" style="margin-top:2px">${esc(it.detail)}</div>
             </div>
-            ${it.fixable ? `<button class="btn btn-xs" data-audit-fix="${esc(it.code)}" data-fix-idx="${i}" style="flex:0 0 auto">${it.code === 'char_not_in_asset' ? '一键入资产库' : it.code === 'dup_name' ? '合并同名卡' : '删掉撞名别名'}</button>` : ''}
+            ${it.fixable ? `<button class="btn btn-xs" data-audit-fix="${esc(it.fix_code || it.code)}" data-fix-idx="${i}" style="flex:0 0 auto">${FIX_LABEL[it.fix_code || it.code] || '一键修复'}</button>` : ''}
           </div>`).join('')}
       </div>`;
     // 修复项：只做机械且可解释的三件事，做完重新体检（用户能立刻看到结果变化）
@@ -535,13 +545,36 @@ export default async function novel(container, params = {}) {
         });
         if (!okGo) return;
       }
+      if (code === 'bind_shot_target') {
+        const n = (issue.shot_ids || []).length;
+        const okGo = await confirm({
+          title: '绑定到这些镜头',
+          text: `会把「${esc(issue.target_name)}」绑到 <b>${n}</b> 个镜头上（${(issue.shots || []).slice(0, 8).map((x) => `#${x.shot_number}`).join('、')}${n > 8 ? ' 等' : ''}）。`
+            + '<br><br>绑定只影响生成时注入的外貌/场景短语，<b>不会改写镜头内容</b>；绑错了可以在镜头卡片上点掉。',
+          okText: '绑定',
+        });
+        if (!okGo) return;
+      }
+      if (code === 'lock_shot_char') {
+        const okGo = await confirm({
+          title: '锁定角色',
+          text: `锁定「${esc(issue.target_name)}」后，它绑定的<b>每个</b>镜头都会逐字注入同一段外貌描述（未锁定时，提示词里提到角色名就会跳过注入——这正是那 ${(issue.shot_ids || []).length} 个镜头"看起来绑了却没生效"的原因）。`,
+          okText: '锁定',
+        });
+        if (!okGo) return;
+      }
       setBusy(btn, true);
-      const r = await api.storyAuditFix({ project_id: projectId, code, card_ids: issue.card_ids || [] });
+      const r = await api.storyAuditFix({
+        project_id: projectId, code, card_ids: issue.card_ids || [],
+        target_id: issue.target_id, shot_ids: issue.shot_ids || [],
+      });
       setBusy(btn, false);
       if (!r.ok) { toast.err(r.error); return; }
       const d = r.data;
       if (code === 'dup_name') toast.ok(`已合并 ${d.merged_groups} 组同名卡，删除 ${d.removed_cards} 张，${d.repointed_shots} 个镜头的绑定已改指存活卡`);
       else if (code === 'alias_collision') toast.ok(`已清理 ${d.fixed_cards} 张卡的撞名别名`);
+      else if (code === 'bind_shot_target') toast.ok(`已把「${d.target_name}」绑到 ${d.bound_shots} 个镜头上`);
+      else if (code === 'lock_shot_char') toast.ok(`已锁定「${d.target_name}」，这些镜头会逐字注入它的外貌`);
       else toast.ok(`已把 ${d.created_count} 张人物卡写进资产库${d.skipped_count ? `（${d.skipped_count} 张已在库里）` : ''}`);
       await loadCards();
       await runAudit();

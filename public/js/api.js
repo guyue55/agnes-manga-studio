@@ -158,6 +158,9 @@ export const api = {
   storyImportCharacters: (payload) => req('POST', '/api/story/cards/import-characters', payload),
   storyReduce: (sourceId) => req('POST', '/api/story/reduce', { source_id: sourceId }, { timeoutMs: TIMEOUT.gen }),
 
+  // 镜头绑定自动匹配（批 8 补 5）：纯本地匹配（不调模型）。dryRun 用来"先看会绑什么再决定"
+  storyboardsAutoBind: (body) => req('POST', '/api/storyboards/auto-bind', body),
+
   // 分集大纲骨架（批 8 补 4）：剧情卡 → 拍子 → 集。纯本地判定，反复调拍数也不花钱
   storyEpisodes: (opts = {}) => {
     const q = new URLSearchParams();

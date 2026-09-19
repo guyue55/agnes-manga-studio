@@ -1228,6 +1228,45 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
       /story_cards: \[/.test(ua) && /audit_card_loc_1/.test(ua));
   }
 
+  const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  // ── 镜头绑定自动匹配与镜头侧体检（批 8 补 5）──
+  ok('api.js 有自动匹配方法与正确路径',
+    /storyboardsAutoBind: \(body\)/.test(apiSrc) && /'\/api\/storyboards\/auto-bind'/.test(apiSrc));
+  ok('后端注册了自动匹配端点', /on\('POST', '\/api\/storyboards\/auto-bind'/.test(routesSrc));
+  {
+    const bodyAt = (src, sig) => {
+      const i = src.indexOf(sig);
+      if (i < 0) return '';
+      let d = 0;
+      for (let j = i; j < src.length; j++) {
+        if (src[j] === '{') d++;
+        else if (src[j] === '}') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return '';
+    };
+    const body = bodyAt(routesSrc, "on('POST', '/api/storyboards/auto-bind'");
+    ok('自动匹配端点不引用任何模型调用（名字匹配是可判定的，不该花钱）',
+      body.length > 400 && !/agnes\.|fetchInternal|agnesFetch/.test(body), body.slice(0, 60));
+  }
+  ok('分镜页有自动匹配按钮与"先看会绑什么再决定"的干跑',
+    /id="sb-autobind"/.test(boardsSrc) && /dry_run: true/.test(boardsSrc) && /async function autoBind\(\)/.test(boardsSrc));
+  ok('干跑结果先弹确认再落库（列镜头号与名字，并标出推断项）',
+    /dry\.data\.matches/.test(boardsSrc) && /提示词推断/.test(boardsSrc) && /okText: '就这么绑'/.test(boardsSrc));
+  ok('生成分镜后自动绑一次（只吃高置信那档，不猜）',
+    /strong_only: true/.test(boardsSrc) && /并按「出场人物」自动绑定/.test(boardsSrc));
+  ok('绑定是并集而不是覆盖（人手工绑过的不被抹掉）', /new Set\(\[\.\.\.\(Array\.isArray\(s\.character_ids\)/.test(routesSrc));
+  ok('原著页体检渲染镜头侧问题（同一份报告里，不再开第二个入口）',
+    /shot_issues/.test(routesSrc) && /shots_scanned/.test(novel) && /个镜头/.test(novel));
+  ok('修复按钮文案表覆盖新动作（不出现含糊的"一键修复"）',
+    /FIX_LABEL = \{/.test(novel) && /bind_shot_target: '绑到这些镜头'/.test(novel) && /lock_shot_char: '锁定该角色'/.test(novel));
+  ok('修复请求带上 target_id 与 shot_ids（按目标修复，不做"能匹配的都绑上"）',
+    /target_id: issue\.target_id, shot_ids: issue\.shot_ids/.test(novel));
+  // 问题码（shot_char_unbound）与修复动作码（bind_shot_target）是两件事：
+  // 第一版把 it.code 当修复码发给后端，界面按钮点了会 400（浏览器契约测试抓到的）
+  ok('按钮发的是修复动作码而不是问题码', /data-audit-fix="\$\{esc\(it\.fix_code \|\| it\.code\)\}"/.test(novel));
+  ok('锁定前弹确认并说明"锁了就是每个镜头都注入"',
+    /锁定「\$\{esc\(issue\.target_name\)\}」后/.test(novel) && /每个<\/b>镜头都会逐字注入/.test(novel));
+
   // ── 分集大纲骨架（批 8 补 4）──
   // 注：图标名拼错（`icon()` 对不认识的名字静默回落到 info 图标）**已有**棘轮覆盖（见上文"图标 X 已定义"），
   // 本轮一度想再加一条逐文件比对，发现是重复钉就删掉了 —— 同一件事不要钉两遍（对照 S 证明那条钉是敏感的）。
@@ -1269,7 +1308,9 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('原著页有体检入口与结果容器', /id="nov-audit"/.test(novel) && /id="nov-audit-box"/.test(novel));
   ok('体检走 api.js 的两个方法（不自己拼 fetch）',
     /storyAudit: \(opts = \{\}\)/.test(apiSrc) && /storyAuditFix: \(body\)/.test(apiSrc)
-    && /api\.storyAudit\(\{ projectId/.test(novel) && /api\.storyAuditFix\(\{ project_id: projectId, code/.test(novel));
+    && /api\.storyAudit\(\{ projectId/.test(novel)
+    // 允许换行/多字段：钉的是"带 project_id 与 code 调这个方法"，不是某一行的排版
+    && /api\.storyAuditFix\(\{[\s\S]{0,120}?project_id: projectId[\s\S]{0,60}?code[,:]/.test(novel));
   ok('api.js 的体检端点路径正确',
     /\/api\/story\/audit\?/.test(apiSrc) && /'\/api\/story\/audit\/fix'/.test(apiSrc));
   ok('后端注册了体检与修复两个端点', /on\('GET', '\/api\/story\/audit'/.test(routesSrc) && /on\('POST', '\/api\/story\/audit\/fix'/.test(routesSrc));

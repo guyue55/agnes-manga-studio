@@ -551,6 +551,102 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('镜头绑定匹配与体检纯函数（批 8 补 5：名字识别 / 两档置信度 / 按目标聚合）');
+{
+  const { matchShotBindings, bindNames, auditShotBindings } = require('./lib/story.js');
+  const chars = [
+    { id: 'c1', name: '林晚', alias: '晚晚、林老板', appearance: '白衣', is_locked: false },
+    { id: 'c2', name: '林晚秋', appearance: '青衣' },
+    { id: 'c3', name: '雪', appearance: '白发' },          // 单字名：不该进匹配池
+    { id: 'c4', name: '顾寒', appearance: '黑甲', is_locked: true },
+  ];
+  const cards = [
+    { id: 'k1', kind: 'location', name: '临江茶馆', aliases: ['茶馆'], atmosphere: '喧闹' },
+    { id: 'k2', kind: 'prop', name: '青铜钥匙', owner: '林晚' },
+    { id: 'k3', kind: 'character', name: '卡片形态的角色', appearance: '不该被绑进 story_card_ids' },
+  ];
+  const names = (m) => m.chars.map((x) => x.name).join(',');
+
+  // ① 可匹配名：本名 + 两种别名形态，单字名与空名不进池
+  eq('角色的 alias（"、"分隔字符串）与卡片的 aliases（数组）都能进匹配池',
+    bindNames(chars[0]).join('|'), '林晚|晚晚|林老板');
+  eq('卡片的 aliases 数组同样进池', bindNames(cards[0]).join('|'), '临江茶馆|茶馆');
+  eq('单字名不进池（撞普通词概率太高，宁可漏也不要错绑）', bindNames(chars[2]).length, 0);
+  eq('空行安全', bindNames(null).length, 0);
+  eq('名字里的空白被去掉', bindNames({ name: ' 林晚 ' }).join('|'), '林晚');
+
+  // ② 两档置信度：出场人物字段=强，提示词/描述里出现=弱
+  {
+    const strong = matchShotBindings({ characters: '林晚、顾寒' }, { characters: chars });
+    eq('「出场人物」里的名字算强匹配', strong.chars.map((x) => `${x.name}:${x.via}`).join(','), '林晚:characters,顾寒:characters');
+    eq('强匹配不计入 weak', strong.weak, 0);
+    eq('强匹配数如实上报', strong.strong, 2);
+    const weak = matchShotBindings({ characters: '', scene_description: '林晚走进来' }, { characters: chars });
+    eq('只在画面描述里出现算弱匹配', weak.chars.map((x) => `${x.name}:${x.via}`).join(','), '林晚:prompt');
+    eq('弱匹配计入 weak（自动化不吃这一档）', weak.weak, 1);
+    const mixed = matchShotBindings({ characters: '林晚', scene_description: '林晚秋也在' }, { characters: chars });
+    eq('同一行在强文本里命中就不再看弱文本', mixed.chars.map((x) => `${x.name}:${x.via}`).join(','), '林晚:characters,林晚秋:prompt');
+  }
+
+  // ③ 名字识别：长名优先、两个都真出现时都要、别名、已绑定不重复
+  eq('文本写的是"林晚秋"时不该同时绑上"林晚"（短名被长名罩住）',
+    names(matchShotBindings({ characters: '林晚秋登场' }, { characters: chars })), '林晚秋');
+  eq('两个名字都真的出现时都要绑',
+    names(matchShotBindings({ characters: '林晚秋和林晚都来了' }, { characters: chars })), '林晚秋,林晚');
+  eq('别名能匹配到本体，且 hit 记的是实际命中的别名',
+    JSON.stringify(matchShotBindings({ characters: '晚晚来了' }, { characters: chars }).chars.map((x) => [x.name, x.hit])),
+    '[["林晚","晚晚"]]');
+  eq('单字名不匹配（"下雪了"不该绑上角色"雪"）',
+    names(matchShotBindings({ characters: '下雪了' }, { characters: chars })), '');
+  eq('已经绑过的角色不再重复报',
+    names(matchShotBindings({ characters: '林晚', character_ids: ['c1'] }, { characters: chars })), '');
+  eq('已经绑过的卡片不再重复报',
+    matchShotBindings({ scene_description: '临江茶馆', story_card_ids: ['k1'] }, { cards }).cards.length, 0);
+  eq('非可注入类别的卡片（人物卡）不参与匹配',
+    matchShotBindings({ characters: '卡片形态的角色' }, { cards }).cards.length, 0);
+
+  // ④ 体检按目标聚合：一个角色漏绑十几个镜头只报一条
+  {
+    const shots = [
+      { id: 's1', shot_number: 1, episode_number: 1, characters: '林晚', character_ids: [] },
+      { id: 's2', shot_number: 2, episode_number: 1, characters: '林晚、顾寒', character_ids: ['c4'] },
+      { id: 's3', shot_number: 3, episode_number: 2, characters: '', scene_description: '两人走进临江茶馆' },
+    ];
+    const r = auditShotBindings(shots, { characters: chars, cards });
+    const byCode = (c) => r.issues.filter((x) => x.code === c);
+    eq('体检扫描镜头数如实上报', r.scanned, 3);
+    eq('漏绑的角色聚成一条（而不是每镜头一条）', byCode('shot_char_unbound').length, 1);
+    eq('聚合里带上了全部相关镜头', byCode('shot_char_unbound')[0].shot_ids.join(','), 's1,s2');
+    eq('有强匹配的组算"要处理"', byCode('shot_char_unbound')[0].level, 'warn');
+    eq('弱匹配的卡片组算"可优化"（可能只是撞词）', byCode('shot_card_unbound')[0].level, 'info');
+    eq('可修复数如实统计', r.counts.fixable, r.issues.length);
+    ok('每条都带 target_id 与修复动作码（界面据此发请求，不能拿问题码当动作码）',
+      r.issues.every((x) => x.target_id && x.fixable === true && x.fix_code),
+      JSON.stringify(r.issues.map((x) => [x.code, x.fix_code])));
+    ok('聚合里带镜头明细（确认弹窗要列给用户看）',
+      byCode('shot_char_unbound')[0].shots.some((x) => x.shot_number === 2));
+    eq('空输入安全', auditShotBindings(undefined, {}).issues.length, 0);
+    eq('空镜头列表的计数全 0', JSON.stringify(auditShotBindings([], {}).counts), '{"warn":0,"info":0,"fixable":0}');
+  }
+
+  // ⑤ 最隐蔽的一条：绑了但没锁定，且提示词里出现了角色名 → 按既定语义不会注入外貌
+  {
+    const shots = [
+      { id: 'a', shot_number: 1, characters: '林晚', character_ids: ['c1'], image_prompt: '林晚站在门口' },
+      { id: 'b', shot_number: 2, characters: '林晚', character_ids: ['c1'], image_prompt: 'a girl in white' },
+      { id: 'c', shot_number: 3, characters: '顾寒', character_ids: ['c4'], image_prompt: '顾寒拔剑' },
+    ];
+    const r = auditShotBindings(shots, { characters: chars, cards: [] });
+    const un = r.issues.filter((x) => x.code === 'shot_char_unlocked');
+    eq('只报"提示词里出现了名字"的那些镜头', un.length === 1 && un[0].shot_ids.join(','), 'a');
+    eq('锁定过的角色不算问题', un.some((x) => x.target_id === 'c4'), false);
+    eq('未锁定问题的修复动作是"锁定"', un[0].fix_code, 'lock_shot_char');
+    eq('fixable 仍是布尔（与卡片侧同一口径，界面按它算"可一键修复"数）', un[0].fixable, true);
+    eq('未锁定只算"可优化"（界面一切正常，只是注入被跳过）', un[0].level, 'info');
+    ok('详情说清"看起来绑了却没生效"的原因', un[0].detail.includes('未锁定') && un[0].detail.includes('换脸'), un[0].detail);
+  }
+}
+
 group('分集骨架纯函数（批 8 补 4：按原文顺序排拍 / 幕次收口 / 硬上限 / 如实上报）');
 {
   const { planEpisodes, episodeOutlineText, beatLine, EPISODE_PER_DEFAULT, EPISODE_PER_MAX, STAGE_ORDER } = require('./lib/story.js');

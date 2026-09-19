@@ -169,8 +169,9 @@ try {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: '审计项目·超长名称占位', art_style: '日漫厚涂', aspect_ratio: '9:16 竖屏' }),
   })).json();
+  const sbIds = [];
   for (let i = 1; i <= 4; i++) {
-    await fetch(`http://127.0.0.1:${port}/api/storyboards`, {
+    const sbRow = await (await fetch(`http://127.0.0.1:${port}/api/storyboards`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_id: projReq.id, episode_number: 1, shot_number: i, shot_type: '特写',
@@ -179,18 +180,28 @@ try {
         video_prompt: 'camera slowly dollies in from wide shot to the girl face, rain streaks falling, subtle hair movement in wind, neon flicker reflections',
         duration_seconds: 5,
       }),
-    });
+    })).json();
+    sbIds.push(sbRow.id);
   }
   // 角色卡必须"有内容"才被量到：空态下卡片样式（截断/对比度/可点目标）根本没被渲染出来
+  const charIds = [];
   for (const [nm, app, outfit, lock] of [
     ['审计角色·超长外貌占位', '黑色长直发垂至腰间，丹凤眼，左眉尾有一颗小痣，皮肤偏冷白，唇色偏深，颈侧有一道细长的旧疤，惯常微微侧头看人', '白色衬衫外搭深蓝西装外套，袖口卷起两折，腰间系一条细银链', true],
     ['审计角色乙', '银灰色寸头，右眼下方有一道横向伤疤', '黑色高领毛衣', false],
   ]) {
-    await fetch(`http://127.0.0.1:${port}/api/characters`, {
+    const cRow = await (await fetch(`http://127.0.0.1:${port}/api/characters`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_id: projReq.id, name: nm, role: '主角', appearance: app, outfit, is_locked: lock }),
-    });
+    })).json();
+    charIds.push(cRow.id);
   }
+  // 批 8 补 5：体检面板现在也报"镜头侧"的问题。种子里没有这类行的话，那几行的布局
+  // （徽标 + 长标题 + 修复按钮 + 镜头号列表）在 4 个视口下就是盲区 —— 与"卡片必须有内容"同一个道理。
+  const putShot = (id, patch) => fetch(`http://127.0.0.1:${port}/api/storyboards/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+  });
+  await putShot(sbIds[0], { characters: '审计角色乙' });                                       // 提到却没绑 → 要处理
+  await putShot(sbIds[1], { characters: '审计角色乙', character_ids: [charIds[1]], image_prompt: '审计角色乙站在雨里' }); // 绑了但没锁定 → 可优化
   // 素材/任务页此前是**空态**在受检——空态没有卡片，卡片的截断/对比度/可点目标全都没被量到
   // （与"角色卡必须有内容"同一个坑）。用 /api/import 塞一条图片与一条已完成视频，
   // 让这两页也落在真实密度上；顺带让弹窗钩子有东西可点。

@@ -1566,6 +1566,142 @@ group('任务 CRUD 与批量取消');
 }
 
 // ── 批 8：原著解析（分块 map + 全局 reduce + 卡片反向驱动）────────
+group('镜头绑定自动匹配与镜头侧体检（批 8 补 5：两档置信度 / 只并集不覆盖 / 按目标修复）');
+{
+  const pj = await api('POST', '/api/projects', { name: '绑定匹配测试剧' });
+  const PID = pj.data.id;
+  const mkChar = (body) => api('POST', '/api/characters', Object.assign({ project_id: PID }, body));
+  const c1 = (await mkChar({ name: '匹配林晚', alias: '小晚、晚晚', appearance: '白衣长剑' })).data;
+  const c2 = (await mkChar({ name: '匹配顾寒', appearance: '黑甲' })).data;
+  const c3 = (await mkChar({ name: '匹配雪', appearance: '白发' })).data;  // 单字名
+  const k1 = (await api('POST', '/api/story/cards/import', { project_id: PID, kind: 'location', name: '匹配临江茶馆', aliases: ['老茶馆'], atmosphere: '喧闹潮湿' }).catch(() => ({ data: null }))).data;
+  // 卡片没有专门的建卡端点（卡片由解析产出），这里直接用一条分镜把地点卡带不出来 —— 改为走解析太重，
+  // 所以卡片侧只用"人物卡不该进 story_card_ids"这条负向断言（正向的卡片匹配由 selftest 纯函数钉覆盖）。
+  const mkShot = async (rows) => (await api('POST', '/api/storyboards', { rows: rows.map((r) => Object.assign({ project_id: PID, episode_number: 1 }, r)) })).data.rows;
+  const shots = await mkShot([
+    { shot_number: 1, characters: '匹配林晚、匹配顾寒', image_prompt: 'two people', scene_description: '两人对坐' },
+    { shot_number: 2, characters: '', image_prompt: 'close-up', scene_description: '匹配林晚走进来' },
+    { shot_number: 3, characters: '下雪了', image_prompt: 'snow falling' },
+    { shot_number: 4, characters: '匹配林晚', image_prompt: 'x', character_ids: [c2.id] },
+  ]);
+  ok('建了 4 个镜头用于匹配', shots.length === 4, JSON.stringify(shots.map((x) => x.shot_number)));
+
+  // ① 不花钱：名字匹配是可判定的，不该产生任何模型调用
+  const callsBefore = storyChatCalls;
+  const dry = await api('POST', '/api/storyboards/auto-bind', { project_id: PID, episode_number: 1, dry_run: true });
+  eq('干跑 200', dry.status, 200);
+  await sleep(400);
+  eq('自动匹配**一次模型都没调**（可判定的事不该花钱）', storyChatCalls, callsBefore);
+  eq('干跑不落库', dry.data.updated, 0);
+  eq('干跑扫到的镜头数', dry.data.scanned, 4);
+  const dryS1 = dry.data.matches.find((m) => m.shot_number === 1);
+  eq('干跑报出镜头 1 该绑的角色（强匹配）', dryS1.added_characters.map((x) => x.name).join(','), '匹配林晚,匹配顾寒');
+  ok('强匹配标了 via=characters', dryS1.added_characters.every((x) => x.via === 'characters' && !x.weak));
+  const dryS2 = dry.data.matches.find((m) => m.shot_number === 2);
+  eq('只在画面描述里出现算弱匹配', dryS2.added_characters.map((x) => `${x.name}:${x.via}`).join(','), '匹配林晚:prompt');
+  const stillEmpty = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data.find((x) => x.shot_number === 1);
+  eq('干跑之后库里还是没绑定（"先看会绑什么再决定"必须是真的）', (stillEmpty.character_ids || []).length, 0);
+
+  // ② 强匹配自动绑（生成后自动跑的就是这个模式）
+  const strong = await api('POST', '/api/storyboards/auto-bind', { project_id: PID, episode_number: 1, strong_only: true });
+  eq('strong_only 只绑高置信那档', strong.data.weak, 0);
+  const after = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data;
+  const s1 = after.find((x) => x.shot_number === 1);
+  const s2 = after.find((x) => x.shot_number === 2);
+  const s3 = after.find((x) => x.shot_number === 3);
+  const s4 = after.find((x) => x.shot_number === 4);
+  eq('镜头 1 绑上了两个角色', (s1.character_ids || []).length, 2);
+  eq('镜头 2 的弱匹配没有被自动绑（不猜）', (s2.character_ids || []).length, 0);
+  eq('单字名"雪"不会被"下雪了"误绑（宁可漏也不要错绑）', (s3.character_ids || []).length, 0);
+  ok('已经手工绑过的绑定没被抹掉（并集而不是覆盖）', (s4.character_ids || []).includes(c2.id), JSON.stringify(s4.character_ids));
+  ok('镜头 4 同时补上了新匹配到的角色', (s4.character_ids || []).includes(c1.id), JSON.stringify(s4.character_ids));
+
+  // ③ 默认模式（含弱匹配）：界面先确认再走这条路 —— 它必须把 strong_only 跳过的那些也补上
+  const all = await api('POST', '/api/storyboards/auto-bind', { project_id: PID, episode_number: 1 });
+  ok('默认模式会把弱匹配也绑上（界面先确认再调）', all.data.weak >= 1, JSON.stringify({ weak: all.data.weak, updated: all.data.updated }));
+  const s2b = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data.find((x) => x.shot_number === 2);
+  ok('镜头 2 现在绑上了（弱匹配确实落库了）', (s2b.character_ids || []).length === 1, JSON.stringify(s2b.character_ids));
+
+  // ④ 幂等：同一个模式再跑一次没有新增（两种模式都要幂等，不能"跑一次多绑一点"）
+  const again = await api('POST', '/api/storyboards/auto-bind', { project_id: PID, episode_number: 1 });
+  eq('再跑一次不再重复绑（幂等）', again.data.updated, 0);
+  eq('strong_only 模式同样幂等',
+    (await api('POST', '/api/storyboards/auto-bind', { project_id: PID, episode_number: 1, strong_only: true })).data.updated, 0);
+
+  // ⑤ 参数与边界
+  eq('缺 project_id → 400', (await api('POST', '/api/storyboards/auto-bind', {})).status, 400);
+  const byIds = await api('POST', '/api/storyboards/auto-bind', { project_id: PID, storyboard_ids: [s1.id] });
+  eq('按 storyboard_ids 限定范围时不碰其它镜头', byIds.data.scanned, 1);
+  eq('不存在的项目 → 扫 0 个镜头（如实为空，不报错）', (await api('POST', '/api/storyboards/auto-bind', { project_id: 'project_nope' })).data.scanned, 0);
+
+  // ⑥ 镜头侧体检：漏绑的角色聚成一条，并带修复动作
+  const audit = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('体检 200', audit.status, 200);
+  ok('体检报出扫描到的镜头数', audit.data.shots_scanned >= 4, String(audit.data.shots_scanned));
+  ok('体检里同时有卡片侧与镜头侧两组（各自计数）',
+    !!audit.data.card_counts && !!audit.data.shot_counts, JSON.stringify(Object.keys(audit.data)));
+  eq('总数 = 卡片侧 + 镜头侧（不许只算一边）',
+    audit.data.counts.warn, audit.data.card_counts.warn + audit.data.shot_counts.warn);
+  // 把镜头 2 的绑定清掉，制造一条确定的漏绑
+  await api('PUT', `/api/storyboards/${s2.id}`, { character_ids: [] });
+  const audit2 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const un = audit2.data.shot_issues.filter((x) => x.code === 'shot_char_unbound' && x.target_id === c1.id);
+  eq('漏绑聚成一条（按角色，而不是每镜头一条）', un.length, 1);
+  ok('聚合里带上了镜头明细', (un[0].shot_ids || []).length >= 1, JSON.stringify(un[0].shot_ids));
+  eq('修复动作码是"绑到这些镜头"', un[0].fix_code, 'bind_shot_target');
+
+  // ⑦ 按目标修复：只绑这一个角色，不做"能匹配的都绑上"
+  const fix = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: un[0].shot_ids });
+  eq('修复 200', fix.status, 200);
+  eq('绑到的镜头数如实上报', fix.data.bound_shots, un[0].shot_ids.length);
+  const s2c = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data.find((x) => x.shot_number === 2);
+  ok('镜头 2 现在绑上了这个角色', (s2c.character_ids || []).includes(c1.id), JSON.stringify(s2c.character_ids));
+  ok('没有顺带绑上别的角色（一次点击只做一个明确动作）', !(s2c.character_ids || []).includes(c2.id), JSON.stringify(s2c.character_ids));
+  const fix2 = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: un[0].shot_ids });
+  eq('再修一次不重复绑（幂等）', fix2.data.bound_shots, 0);
+  eq('缺 target_id → 400', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', shot_ids: ['x'] })).status, 400);
+  eq('缺 shot_ids → 400', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id })).status, 400);
+  eq('不存在的目标 → 404', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: 'char_nope', shot_ids: [s1.id] })).status, 404);
+
+  // ⑧ 未锁定角色：绑了、但**提示词里出现名字**时不会注入外貌（characterPhrase 的既定语义）→ 可一键锁定
+  //    判据必须与注入时用的字段一致（image_prompt / video_prompt），所以先把镜头 1 的提示词改成含名字的
+  await api('PUT', `/api/storyboards/${s1.id}`, { image_prompt: '匹配林晚站在门口' });
+  const beforeLock = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const unlocked = beforeLock.data.shot_issues.filter((x) => x.code === 'shot_char_unlocked' && x.target_id === c1.id);
+  eq('报出"绑了但没锁定"的镜头（最隐蔽的一条）', unlocked.length, 1);
+  eq('只报提示词里真的出现名字的那些镜头', unlocked[0].shot_ids.join(','), s1.id);
+  ok('英文提示词（没写名字）的镜头不报 —— 那些镜头其实会正常注入外貌',
+    !unlocked[0].shot_ids.includes(s2.id), JSON.stringify(unlocked[0].shot_ids));
+  eq('未锁定问题的修复动作码是"锁定"', unlocked[0].fix_code, 'lock_shot_char');
+  const lock = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'lock_shot_char', target_id: c1.id });
+  eq('锁定 200', lock.status, 200);
+  eq('锁定生效', lock.data.locked, 1);
+  eq('再锁一次不重复（幂等）', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'lock_shot_char', target_id: c1.id })).data.already, true);
+  const afterLock = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('锁定后这一条消失（体检不是永远报同样的话）',
+    afterLock.data.shot_issues.filter((x) => x.code === 'shot_char_unlocked' && x.target_id === c1.id).length, 0);
+  eq('锁定不存在的角色 → 404', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'lock_shot_char', target_id: 'char_nope' })).status, 404);
+
+  // ⑨ 人物卡不能绑进 story_card_ids（写入白名单 + 修复端点各一层）
+  const charCard = (await api('GET', `/api/story/cards?project_id=${PID}&kind=character`)).data;
+  if (charCard && charCard.length) {
+    eq('把人物卡当目标绑 → 400（只有地点/道具卡可注入）',
+      (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: charCard[0].id, shot_ids: [s1.id] })).status, 400);
+  }
+  eq('不认识的修复项 → 400 且列出支持的项',
+    (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'nope' })).status, 400);
+  ok('错误文案列出了新支持的修复项',
+    /bind_shot_target/.test((await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'nope' })).data.error || ''));
+
+  // ⑩ 修复也不花钱（同一条纪律的回归）
+  const callsBefore2 = storyChatCalls;
+  await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: [s1.id] });
+  await sleep(300);
+  eq('修复端点同样不调模型', storyChatCalls, callsBefore2);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('分集骨架（批 8 补 4：按幕收口 / 参数真的生效 / 不花钱 / 按来源隔离）');
 {
   const pj = await api('POST', '/api/projects', { name: '分集骨架测试剧' });

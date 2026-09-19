@@ -49,6 +49,7 @@ export default async function storyboards(container, params) {
       <div class="row wrap" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" id="gen-sb">${icon('wand', 14)}生成第 ${episode} 集分镜</button>
         <button class="btn btn-sm" id="add-shot">${icon('plus', 14)}手动添加镜头</button>
+        <button class="btn btn-sm" id="sb-autobind" title="按「出场人物」与提示词文本，把项目里的角色与地点/道具卡自动绑到对应镜头（纯本地匹配，不调模型）">${icon('link', 14)}自动匹配绑定</button>
         <div class="spacer"></div>
         <button class="btn btn-sm" id="gen-img-prompts">${icon('image', 14)}批量补图片提示词</button>
         <button class="btn btn-sm" id="gen-vid-prompts">${icon('video', 14)}批量补视频提示词</button>
@@ -95,6 +96,7 @@ export default async function storyboards(container, params) {
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#gen-sb').onclick = genFromScript;
   container.querySelector('#add-shot').onclick = () => editShot(null);
+  container.querySelector('#sb-autobind').onclick = autoBind;
   container.querySelector('#gen-img-prompts').onclick = () => batchPrompts('image');
   container.querySelector('#gen-vid-prompts').onclick = () => batchPrompts('video');
   container.querySelector('#batch-img').onclick = () => batchImages();
@@ -514,10 +516,60 @@ ${text}`,
         sort_order: i,
       }));
       const r2 = await api.createStoryboards(rows2);
-      if (r2.ok) { toast.ok(`已生成 ${r2.data.inserted} 个镜头`); container.querySelector('#script-in').value = ''; load(); }
-      else toast.err(r2.error);
+      if (r2.ok) {
+        // 生成即绑定：模型自己写了「出场人物」，名字能对上项目里的角色就直接绑上（只吃高置信那档，
+        // 提示词推断的那些不自动绑）。不绑的话，用户得挨个镜头点一遍，不点就静默没有外貌注入。
+        const rows = (r2.data && r2.data.rows) || [];
+        const ab = await api.storyboardsAutoBind({
+          project_id: projectId, storyboard_ids: rows.map((r) => r.id), strong_only: true,
+        });
+        const n = ab.ok ? ab.data.updated : 0;
+        toast.ok(n
+          ? `已生成 ${r2.data.inserted} 个镜头，并按「出场人物」自动绑定 ${n} 个镜头的角色/场景（可点掉）`
+          : `已生成 ${r2.data.inserted} 个镜头`);
+        container.querySelector('#script-in').value = '';
+        load();
+      } else toast.err(r2.error);
     } finally {
       genBusy = false;
+      setBusy(btn, false);
+    }
+  }
+
+  // ── 自动匹配绑定（批 8 补 5）────────────────────────────
+  /**
+   * 分镜表是模型生成的，它只把"谁出场"写成自由文本，结构化绑定是空的 —— 不点就静默失去
+   * 外貌/场景注入。这里把可判定的匹配（名字/别名出现在「出场人物」或提示词里）自动绑上。
+   * 分两档：模型明确写了"出场人物"的直接绑；只是文本里出现过的先列出来让人确认（中文名字会撞词）。
+   */
+  async function autoBind() {
+    if (!projectId) { toast.err('先选一个项目'); return; }
+    const btn = container.querySelector('#sb-autobind');
+    setBusy(btn, true);
+    try {
+      const dry = await api.storyboardsAutoBind({ project_id: projectId, episode_number: episode, dry_run: true });
+      if (!dry.ok) { toast.err(dry.error); return; }
+      const hits = (dry.data.matches || []).filter((m) => m.added_characters.length || m.added_cards.length);
+      if (!hits.length) { toast('本集没有发现可以自动匹配的绑定——先确认分镜里写了「出场人物」，且项目里有对应角色/卡片', 'info', 6000); return; }
+      const lines = hits.slice(0, 12).map((m) => {
+        const names = m.added_characters.concat(m.added_cards)
+          .map((x) => `${esc(x.name)}${x.weak ? '<span class="hint-xs">（提示词推断）</span>' : ''}`).join('、');
+        return `#${m.shot_number} → ${names}`;
+      });
+      const more = hits.length > 12 ? `<div class="hint-xs">…另有 ${hits.length - 12} 个镜头</div>` : '';
+      const okc = await confirm({
+        title: '自动匹配绑定',
+        text: `将在 <b>${hits.length}</b> 个镜头上补 ${dry.data.strong + dry.data.weak} 处绑定（其中 <b>${dry.data.weak}</b> 处是"提示词里出现过"的推断，可能撞词，请扫一眼）：<br><br>`
+          + lines.join('<br>') + more
+          + '<br><br>绑定只影响生成时注入的外貌/场景短语，<b>不会改写镜头内容</b>；绑错了可以在镜头卡片上点掉。',
+        okText: '就这么绑',
+      });
+      if (!okc) return;
+      const r = await api.storyboardsAutoBind({ project_id: projectId, episode_number: episode });
+      if (!r.ok) { toast.err(r.error); return; }
+      toast.ok(`已给 ${r.data.updated} 个镜头补上绑定（共 ${r.data.strong + r.data.weak} 处）`);
+      load();
+    } finally {
       setBusy(btn, false);
     }
   }
