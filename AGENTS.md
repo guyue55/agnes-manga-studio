@@ -79,6 +79,14 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   `blocked`（前置没做，点进去也做不了）与 `todo`（轮到你了）**严格分开** —— 混成一个"待办"，
   用户会照着点却发现按钮是灰的；`partial`（做了一半）也是独立状态（只看"有没有"不看"够不够"会误报 done）。
   分母口径按**集**去重（同一集重生成存多条，按条数算会虚高），出图段的 need 是**镜头数**（不是"有没有分镜"）
+- 卡片溯源（批 8 补 20）：卡片上只有"证据段 3"这种**段号** —— 想核对"这张卡说得对吗"就得自己回原文里数段，
+  于是要么盲信（错卡一路传到剧本/分镜）要么重读整本。`story.markTerms` 把原文切成 `{t, hit}` 纯文本片段
+  （**只切分、不生成 HTML**：命中的词来自模型输出，服务端拼标签就是把模型输出注进页面；
+  前端逐个 `esc` 后再包 `<mark>`），`story.excerptAround` 只截命中附近并**如实说明掐掉了头尾**；
+  `GET /api/story/card-source` **纯本地**（重新切块 + 文本匹配，一次模型都不调），卡片行「看原文」就地展开。
+  匹配靠**区间合并**保证结果与词的先后无关（原本还按词长排序，对照证明是多余代码，已删）。
+  溯源能力的前提一并钉住：`source_id` 是**来源事实**、白名单外改不动；删原著**级联删卡片**
+  （否则留下"指不到原文的孤儿卡"，溯源自己先断）
 - 参考图缺口体检（批 8 补 19）：补 13/补 17 把参考图接进了出图调用，但"接上了"不等于"有人挂" ——
   一个场景在 20 个镜头里反复出现、一张参考图都没挂，20 张图长得都不一样，而链路上**没有任何报错**
   （每张图单独看都"成功"）。`story.auditRefImageGaps` 纯本地并进一致性体检（`ref_issues` + `issues`）：
@@ -134,7 +142,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 640 / apitest 823 / uitest 1026 / browser-test 468），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 654 / apitest 838 / uitest 1035 / browser-test 475），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

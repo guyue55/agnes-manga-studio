@@ -551,6 +551,43 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('卡片溯源（批 8 补 20：这张卡是从原文哪儿读出来的）');
+{
+  const story = require('./lib/story.js');
+  const segs = (t, terms) => story.markTerms(t, terms).segments;
+
+  eq('命中处被单独切出来（片段只分"命中/未命中"，不生成 HTML）',
+    JSON.stringify(segs('顾寒见到林晚。', ['林晚'])),
+    JSON.stringify([{ t: '顾寒见到', hit: false }, { t: '林晚', hit: true }, { t: '。', hit: false }]));
+  ok('返回的是纯文本片段，**绝不含 HTML**（前端负责转义；这里若拼标签就是把模型输出直接注进页面）',
+    segs('<img src=x onerror=alert(1)>林晚', ['林晚']).every((x) => typeof x.t === 'string' && !/^</.test(x.t.replace('<img src=x onerror=alert(1)>', ''))));
+  // 真正吃劲的是"区间合并"，不是词的先后：换一下词序结果必须一样
+  // （此前这里钉的是"按词长排序"，但对照 BP 证明排序是多余的 —— 合并已经保证了结果，故排序已删）
+  eq('重叠处合并成完整词（"林晚"与"林晚儿"重叠时给出完整的那个）',
+    JSON.stringify(segs('林晚儿来了', ['林晚', '林晚儿']).filter((x) => x.hit).map((x) => x.t)),
+    JSON.stringify(['林晚儿']));
+  eq('结果与词的先后无关（换了词序必须一样，否则就是靠巧合）',
+    JSON.stringify(segs('林晚儿来了', ['林晚儿', '林晚'])),
+    JSON.stringify(segs('林晚儿来了', ['林晚', '林晚儿'])));
+  eq('重叠命中合并成一段（"林晚"与"林晚儿"重叠处不许切成碎渣）',
+    segs('林晚儿来了', ['林晚', '林晚儿']).length, 2);
+  eq('太短的词不匹配（单字会把整段切碎，等于没有信息）',
+    JSON.stringify(segs('林晚来了', ['林'])), JSON.stringify([{ t: '林晚来了', hit: false }]));
+  eq('没有命中词时原样返回一段', JSON.stringify(segs('林晚来了', [])), JSON.stringify([{ t: '林晚来了', hit: false }]));
+  eq('别名也参与匹配', story.markTerms('阿晚来了', ['林晚', '阿晚']).hits.length, 1);
+
+  const long = `开头。${'铺垫'.repeat(300)}林晚登场。${'后续'.repeat(300)}`;
+  const ex = story.excerptAround(long, ['林晚'], { radius: 100 });
+  ok('长段落只截命中附近（整段倒给用户等于让他自己找）', ex.text.length < long.length && ex.text.length <= 260, String(ex.text.length));
+  ok('命中处仍在片段里且标了出来', ex.hits.includes('林晚') && ex.segments.some((x) => x.hit));
+  eq('如实说明掐掉了头尾（不假装这是完整段落）', ex.truncated, true);
+  const whole = story.excerptAround('林晚来了。', ['林晚']);
+  eq('本来就短就不用标截断', whole.truncated, false);
+  const none = story.excerptAround('这一段没有那个名字。', ['林晚']);
+  eq('没命中也要给东西看（返回空白会让人以为出错）', none.text, '这一段没有那个名字。');
+  eq('没命中时命中词为空', none.hits.length, 0);
+}
+
 group('参考图缺口体检（批 8 补 19：同一个场景 20 张图都不一样）');
 {
   const story = require('./lib/story.js');

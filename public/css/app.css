@@ -763,6 +763,31 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
 .note.orange { background: rgba(232, 150, 60, 0.07); border-color: rgba(232, 150, 60, 0.22); color: #FCD34D; }
 .note.green { background: var(--ok-soft); border-color: rgba(79, 190, 139, 0.22); color: #9BE0BD; }
 
+/* ── 原文引用（批 8 补 20：卡片溯源）────────────────────────
+   原文片段要像"引文"而不是像界面文字：等宽感 + 左侧竖线 + 命中处高亮，
+   用户一眼能分清"这是原著写的"和"这是工具说的"。 */
+.src-quote {
+  margin-top: 5px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border-left: 3px solid rgba(214, 181, 109, 0.5);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.85;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.src-quote mark {
+  background: rgba(214, 181, 109, 0.22);
+  color: #F0D9A0;
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
 /* ── 弹窗 ───────────────────────────────────────────────── */
 .modal-mask {
   position: fixed;

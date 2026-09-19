@@ -1263,8 +1263,27 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     // 预检必须把场景/道具卡的参考图也算进去，否则"带了几张"是假的
     && /count\(s\.story_card_ids, cardById, cardUrls\)/.test(boardsSrc));
 
-  // ── 参考图缺口体检（批 8 补 19）──
+  // 这一片（批 8 补 18/19/20）共用的源码文本：**只在这里声明一次**。
+  // 之前每个小组各声明一次，往中间插新组就会踩"先用后声明"（ReferenceError），已踩两次。
   const novelSrc17 = read(path.join(PUB, 'js', 'pages', 'novel.js'));
+  const constsSrc17 = read(path.join(PUB, 'js', 'consts.js'));
+
+  // ── 卡片溯源（批 8 补 20）──
+  const apiSrc20 = read(path.join(PUB, 'js', 'api.js'));
+  ok('卡片溯源走纯本地端点（随时可点、不花钱）',
+    /storyCardSource: \(cardId\) => req\('GET', `\/api\/story\/card-source\?card_id=/.test(apiSrc20));
+  ok('卡片行有"看原文"入口（只给"证据段 3"这种段号，用户核对就得自己数段）',
+    /data-src-of="\$\{esc\(c\.id\)\}"/.test(novelSrc17) && /看原文/.test(novelSrc17));
+  ok('命中处标出来（一眼看到"就是这里"）', /<mark>\$\{esc\(x\.t\)\}<\/mark>/.test(novelSrc17));
+  ok('片段逐段转义后才包 mark（命中的词来自模型输出，不转义就是把模型输出注进页面）',
+    /const hl = \(segs\) => \(segs \|\| \[\]\)\.map\(\(x\) => \(x\.hit \? `<mark>\$\{esc\(x\.t\)\}<\/mark>` : esc\(x\.t\)\)\)/.test(novelSrc17));
+  ok('如实说明片段只截了命中附近（不假装是完整段落）', /只显示命中附近/.test(novelSrc17));
+  ok('没命中时也如实说（返回空白会让人以为出错）', /这段里没找到这个名字/.test(novelSrc17));
+  const cssSrc20 = read(path.join(PUB, 'css', 'app.css'));
+  ok('原文引用有自己的样式（要像"引文"而不是像界面文字）',
+    /\.src-quote \{/.test(cssSrc20) && /\.src-quote mark \{/.test(cssSrc20));
+
+  // ── 参考图缺口体检（批 8 补 19）──
   ok('体检报告里"机器修不了"的问题也要给出口（只报告不给去处 = 死胡同）',
     /data-audit-go="\$\{i\}"/.test(novelSrc17) && /navigate\(issue\.go\.page, issue\.go\.params/.test(novelSrc17));
   ok('原著页能从链接直接定位到那张卡（"去处理"必须真的落到具体对象上）',
@@ -1276,7 +1295,6 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /issues\.sort\(\(a, b\) => \(b\.shot_numbers/.test(read(path.join('lib', 'story.js'))));
 
   // ── 抽取覆盖体检与补抽（批 8 补 18）──
-  const constsSrc17 = read(path.join(PUB, 'js', 'consts.js'));
   const apiSrc18 = read(path.join(PUB, 'js', 'api.js'));
   ok('覆盖体检走纯本地端点（随时可跑、不花钱）',
     /storyCoverage: \(sourceId\) => req\('GET', `\/api\/story\/coverage\?source_id=/.test(apiSrc18));

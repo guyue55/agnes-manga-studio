@@ -1845,6 +1845,67 @@ try {
       }
     }
 
+    group('卡片溯源契约（批 8 补 20：这张卡是从原文哪儿读出来的）');
+    {
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'character', name: '林晚', role: '主角', appearance: '白衣' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'src-key' }) });
+        pid = (await POST('/api/projects', { name: '溯源验收剧' })).id;
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '溯源·原著',
+          text: '顾寒推门而入，林晚抬头看雨。'.repeat(60), reduce: false });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        const CARD = (await J(`/api/story/cards?project_id=${pid}`)).find((c) => c.kind === 'character');
+        ok('解析出了人物卡（下面用它验证溯源）', !!CARD, JSON.stringify(CARD || {}).slice(0, 120));
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-src-of="${CARD.id}"]');`), '看原文按钮', 15000);
+        await cdp.eval(`document.querySelector('[data-src-of="${CARD.id}"]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-src-slot="${CARD.id}"] .src-quote');`), '原文片段面板', 15000);
+        const panel = await cdp.eval(`return (document.querySelector('[data-src-slot="${CARD.id}"]')||{}).innerText||'';`);
+        const marks = await cdp.eval(`return [...document.querySelectorAll('[data-src-slot="${CARD.id}"] mark')].map((m) => m.innerText);`);
+        ok('面板直接给出原文（不再只给"证据段 3"这种段号，让用户自己回去数）',
+          /原文依据/.test(panel) && panel.includes('顾寒推门而入'), JSON.stringify(panel.slice(0, 240)));
+        ok('命中处标出来了（一眼看到"就是这里"）', marks.includes('林晚'), JSON.stringify(marks.slice(0, 6)));
+        ok('带上原著标题与段号（用户知道这段是从哪份原文的第几段来的）',
+          panel.includes('溯源·原著') && /第 \d+\/\d+ 段/.test(panel), JSON.stringify(panel.slice(0, 200)));
+        ok('如实说明片段只截了命中附近（不假装是完整段落）', /只显示命中附近/.test(panel), JSON.stringify(panel.slice(0, 400)));
+
+        // 转义：原文里的尖括号必须原样显示，不能变成标签（命中的词来自模型输出）
+        const esc = await cdp.eval(`return document.querySelectorAll('[data-src-slot="${CARD.id}"] script, [data-src-slot="${CARD.id}"] img').length;`);
+        ok('片段里的内容没有变成真标签（只转义，不解析）', esc === 0, String(esc));
+
+        await cdp.eval(`document.querySelector('[data-src-slot="${CARD.id}"] [data-src-close]').click(); return true;`);
+        const closed = await cdp.eval(`return document.querySelector('[data-src-slot="${CARD.id}"]').hidden;`);
+        ok('能收起（展开的原文不该赖在卡片上）', closed === true);
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('参考图缺口契约（批 8 补 19：同一个场景 20 张图都不一样）');
     {
       const mock = http.createServer((req, res) => {

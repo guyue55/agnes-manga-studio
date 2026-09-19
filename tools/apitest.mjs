@@ -1867,6 +1867,51 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('卡片溯源（批 8 补 20：这张卡是从原文哪儿读出来的）');
+{
+  const pj = await api('POST', '/api/projects', { name: '溯源测试剧' });
+  const PID = pj.data.id;
+  const text = ['顾寒推门而入，林晚抬头看雨。', '林晚在临江茶馆等到天黑。'].join('\n\n').repeat(8);
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '溯源·原著', text, reduce: false });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const CARD = (await api('GET', `/api/story/cards?project_id=${PID}`)).data[0];
+
+  const r = await api('GET', `/api/story/card-source?card_id=${CARD.id}`);
+  eq('卡片溯源可用（纯本地：重新切块 + 文本匹配，一次模型都没调）', r.status, 200);
+  eq('返回 ok:true', r.data.ok, true);
+  eq('带上原著标题（用户要知道这段是从哪份原文来的）', r.data.source_title, '溯源·原著');
+  ok('给出原文片段（不再是只给"证据段 3"这种段号）', (r.data.excerpts || []).length >= 1, JSON.stringify(r.data.excerpts).slice(0, 200));
+  const ex0 = r.data.excerpts[0];
+  ok('命中处单独切出来（前端才能标出来）', (ex0.segments || []).some((x) => x.hit), JSON.stringify(ex0.segments).slice(0, 200));
+  ok('报出命中了哪些词（用户一眼确认"就是这里"）', (ex0.hits || []).includes(CARD.name), JSON.stringify(ex0.hits));
+  ok('片段里含原文（不是空壳）', (ex0.segments || []).map((x) => x.t).join('').includes('林晚'), JSON.stringify(ex0.segments).slice(0, 200));
+  ok('片段只含文本、不含 HTML（前端负责转义；服务端拼标签就是把模型输出注进页面）',
+    (ex0.segments || []).every((x) => typeof x.t === 'string' && !/[<>]/.test(x.t)), JSON.stringify(ex0.segments).slice(0, 200));
+  eq('块数对得上时如实标 aligned', r.data.aligned, true);
+  ok('带上段号标签与字数（用户知道自己在看多长的一段）', /第 \d+\/\d+ 段/.test(ex0.label) && ex0.chars > 0, JSON.stringify({ l: ex0.label, c: ex0.chars }));
+
+  const noId = await api('GET', '/api/story/card-source');
+  eq('缺 card_id 明确报错 200 带 ok:false（不静默返回空）', noId.data.ok, false);
+  const missing = await api('GET', '/api/story/card-source?card_id=nope');
+  ok('卡片不存在时如实说明', missing.data.ok === false && /不存在/.test(missing.data.error), JSON.stringify(missing.data));
+
+  // source_id 是**来源事实**，白名单外改不动 —— 否则"溯源"这个能力自己就先断了
+  await api('PUT', `/api/story/cards/${CARD.id}`, { source_id: '' });
+  const after = await api('GET', `/api/story/cards?project_id=${PID}`);
+  eq('source_id 改不动（它是来源事实；能改的话溯源就断了）',
+    after.data.find((c) => c.id === CARD.id).source_id, CARD.source_id);
+
+  // 删除原著会**级联删卡片**：留着就是"指不到原文的孤儿卡"，用户再也无法核对模型抽得对不对。
+  // 所以"卡片没有出处"在正常路径上不存在（接口里的兜底分支只防老数据/手改 JSON）
+  const srcId = CARD.source_id;
+  const del = await api('DELETE', `/api/story/sources/${srcId}`);
+  ok('删原著会连卡片一起删（否则就留下指不到原文的孤儿卡，溯源能力自己先断）',
+    del.status === 200 && del.data.removed_cards >= 1, JSON.stringify(del.data));
+  eq('卡片确实没了', (await api('GET', `/api/story/cards?project_id=${PID}`)).data.filter((c) => c.source_id === srcId).length, 0);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('参考图缺口体检（批 8 补 19：同一个场景 20 张图都不一样）');
 {
   const pj = await api('POST', '/api/projects', { name: '参考图缺口测试剧' });

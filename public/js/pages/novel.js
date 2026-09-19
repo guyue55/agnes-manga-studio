@@ -409,6 +409,38 @@ export default async function novel(container, params = {}) {
     }
     const shown = kindFilter ? cards.filter((c) => c.kind === kindFilter) : cards;
     box.innerHTML = shown.map(cardHtml).join('');
+    // 卡片溯源：把"证据段 3"变成能直接读的原文（命中处标出来）。
+    // 片段由服务端切成 {t, hit} 且**不含 HTML**，这里只负责转义与包裹 —— 命中的词来自模型输出，必须转义。
+    on(box, '[data-src-of]', 'click', async (e) => {
+      const id = dataOf(e.currentTarget, 'src-of');
+      const slot = container.querySelector(`#nov-src-${id}`);
+      if (!slot) return;
+      if (!slot.hidden) { slot.hidden = true; slot.innerHTML = ''; return; }
+      slot.hidden = false;
+      slot.innerHTML = `<div class="note" style="margin-top:6px">${skeleton('row', 1)}</div>`;
+      const r = await api.storyCardSource(id);
+      if (!r.ok) { slot.innerHTML = errBox(r.error, '原文没取到', r.trace); return; }
+      const d = r.data;
+      const hl = (segs) => (segs || []).map((x) => (x.hit ? `<mark>${esc(x.t)}</mark>` : esc(x.t))).join('');
+      slot.innerHTML = `
+        <div class="note" style="margin-top:6px">
+          <div class="row wrap" style="gap:6px;align-items:flex-start">
+            <div style="flex:1;min-width:180px">
+              <b>原文依据</b><span class="hint-xs">　来自「${esc(d.source_title || '原著')}」</span>
+              <div class="hint-xs" style="margin-top:3px">核对这张卡说得对不对，不用再回原文里数段。命中处已标出；片段只截了命中附近，不是完整段落。</div>
+            </div>
+            <button class="btn btn-xs" data-src-close="${esc(d.card_id)}">收起</button>
+          </div>
+          ${(d.notes || []).length ? `<div class="hint-xs" style="margin-top:6px;color:var(--warn)">${d.notes.map(esc).join('；')}</div>` : ''}
+          ${(d.excerpts || []).length ? d.excerpts.map((x) => `
+            <div style="margin-top:8px">
+              <div class="hint-xs"><b>${esc(x.label)}</b> · 共 ${countLabel(x.chars)}${x.hits.length ? ` · 命中 ${esc(x.hits.join('、'))}` : ' · 这段里没找到这个名字'}</div>
+              <div class="src-quote">${hl(x.segments)}${x.truncated ? '<span class="hint-xs">…（前后还有内容，只显示命中附近）</span>' : ''}</div>
+            </div>`).join('') : `<div class="hint-xs" style="margin-top:6px">没有可展示的原文片段。</div>`}
+        </div>`;
+      const cb = slot.querySelector('[data-src-close]');
+      if (cb) cb.onclick = () => { slot.hidden = true; slot.innerHTML = ''; };
+    });
     on(box, '[data-edit]', 'click', (e) => { editingId = dataOf(e.currentTarget, 'edit'); renderCards(); });
     on(box, '[data-cancel]', 'click', () => { editingId = null; renderCards(); });
     // 参考图选中态：勾选后给卡片描边（否则选中与未选中在缩略图上几乎看不出差别）
@@ -832,12 +864,14 @@ export default async function novel(container, params = {}) {
           ${c.edited ? '<span class="chip on" title="你改过这张卡，重新解析不会覆盖它">已改</span>' : ''}
           <div class="spacer"></div>
           ${c.kind === 'character' ? `<button class="btn btn-xs" data-tochar="${esc(c.id)}">${icon('users', 12)}入资产库</button>` : ''}
+          <button class="btn btn-xs" data-src-of="${esc(c.id)}" title="看这张卡是从原文哪一段读出来的">${icon('book', 12)}看原文</button>
           <button class="btn btn-xs" data-edit="${esc(c.id)}">${icon('edit', 12)}</button>
           <button class="btn btn-xs btn-danger" data-del-card="${esc(c.id)}">${icon('trash', 12)}</button>
         </div>
         ${c.summary ? `<div class="hint" style="margin-bottom:6px">${esc(c.summary)}</div>` : ''}
         ${bits ? `<div class="row wrap" style="gap:10px">${bits}</div>` : ''}
         ${(c.aliases || []).length ? `<div class="hint-xs">别名：${esc(c.aliases.join('、'))}</div>` : ''}
+        <div id="nov-src-${esc(c.id)}" data-src-slot="${esc(c.id)}" hidden></div>
       </div>`;
   }
 
