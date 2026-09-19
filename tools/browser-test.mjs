@@ -1845,6 +1845,83 @@ try {
       }
     }
 
+    group('章节目录契约（批 8 补 21：段号是切块的副产物，作者想的是"第几章"）');
+    {
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              // 第二章那段故意返回一个不认识的类别 → 那一段被丢弃，章节目录要能定位到它
+              const cards = um.includes('__NPC__')
+                ? [{ kind: 'npc', name: '类别不认识' }]
+                : [{ kind: 'character', name: '林晚', role: '主角', appearance: '白衣' }];
+              return send({ choices: [{ message: { content: JSON.stringify({ cards }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'chap-key' }) });
+        pid = (await POST('/api/projects', { name: '章节验收剧' })).id;
+        const body = (t) => `${t}\n\n${'顾寒推门而入，林晚抬头看雨。'.repeat(14)}`;
+        const text = [body('第一章 雨夜'), body('第二章 茶馆 __NPC__'), body('第三章 决断')].join('\n\n');
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '章节·原著', text, reduce: false, max_chars: 300 });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        // 等**真卡片**而不是 `.card`：加载骨架也是 `.card`，等它会在数据还没到时立刻满足（这个坑栽过一次了）
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-cards [data-src-of]');`), '原著页卡片', 15000);
+
+        // 读整个卡片容器的文本：只挑"某个 .hint-xs"会在选择器没命中时静默拿到空串，
+        // 断言就变成"看起来红、但不知道为什么"（这次真踩到）——读容器至少能看到真实内容
+        const cardsText = await cdp.eval(`return (document.querySelector('#nov-cards')||{}).innerText||'';`);
+        const srcLine = (cardsText.split('\n').find((x) => x.includes('来源：')) || '');
+        // 不写死章号：卡片落在哪一块由切块结果决定。要钉的是"出处报的是**章**，不是段号"
+        ok('卡片出处直接说"第几章"（不再只给"第 N 段"让用户自己数）',
+          /来源：第[一二三四五六七八九十0-9]+章/.test(srcLine), JSON.stringify(cardsText.slice(0, 400)));
+        ok('识别不到章节时才退回段号（这里不该出现"来源：第 N 段"）',
+          !/来源：第 \d+ 段/.test(srcLine), JSON.stringify(srcLine));
+        ok('出处是**卡片本体**上就有的（藏在编辑态里等于没有：核对要随手可做）',
+          /来源：/.test(cardsText) && !/编辑/.test(cardsText.split('来源：')[0].slice(-40)), JSON.stringify(cardsText.slice(0, 200)));
+
+        await cdp.eval(`document.querySelector('#nov-chap').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /章节目录/.test((document.querySelector('#nov-chap-box')||{}).innerText||'');`), '章节目录面板', 15000);
+        const panel = await cdp.eval(`return (document.querySelector('#nov-chap-box')||{}).innerText||'';`);
+        ok('列出每一章（章名可见）', /第一章 雨夜/.test(panel) && /第三章 决断/.test(panel), JSON.stringify(panel.slice(0, 300)));
+        ok('报出"共几章、几章抽到了卡片"', /共 3 章/.test(panel) && /章抽到了卡片/.test(panel), JSON.stringify(panel.slice(0, 200)));
+        ok('被丢弃的那一段能定位到具体哪一章（"没接住"要报在对的章上）',
+          /没接住/.test(panel), JSON.stringify(panel.slice(0, 500)));
+        ok('并指向出口（去抽取覆盖看是哪几段）', /抽取覆盖/.test(panel), JSON.stringify(panel.slice(0, 500)));
+
+        const cardId = (await J(`/api/story/cards?project_id=${pid}`))[0].id;
+        await cdp.eval(`document.querySelector('[data-src-of="${cardId}"]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-src-slot="${cardId}"] .src-quote');`), '原文片段面板', 15000);
+        const srcPanel = await cdp.eval(`return (document.querySelector('[data-src-slot="${cardId}"]')||{}).innerText||'';`);
+        // 不写死是哪一章：卡片落在哪一块由切块结果决定（这段原文里林晚出现在第三章那块）
+        ok('溯源面板也带上章节标题（出处口径一致）',
+          /第[一二三四五六七八九十]+章/.test(srcPanel), JSON.stringify(srcPanel.slice(0, 240)));
+
+        await cdp.eval(`document.querySelector('#nov-chap-close').click(); return true;`);
+        ok('章节目录能收起', await cdp.eval(`return (document.querySelector('#nov-chap-box')||{}).innerHTML === '';`));
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('卡片溯源契约（批 8 补 20：这张卡是从原文哪儿读出来的）');
     {
       const mock = http.createServer((req, res) => {

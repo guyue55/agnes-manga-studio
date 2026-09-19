@@ -551,6 +551,75 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('章节识别与章节级溯源（批 8 补 21：段号是切块的副产物，作者想的是"第几章"）');
+{
+  const story = require('./lib/story.js');
+  const titles = (t) => story.detectChapters(t).chapters.map((c) => c.title);
+  // 章节之间必须有**实打实的正文**：挨太近的行会被判成目录（下一条专门钉这个）。
+  // 所以用例统一用 120 字的正文，别拿"标题挨着标题"当章节样本。
+  const BODY = '正文内容。'.repeat(30);
+  const book = (...ts) => ts.map((t) => `${t}\n${BODY}`).join('\n');
+  const J = (x) => JSON.stringify(x);
+
+  eq('识别中文章节标题', J(titles(book('第一章 雨夜', '第二章 茶馆'))), J(['第一章 雨夜', '第二章 茶馆']));
+  eq('识别"第 12 章"这种带空格与阿拉伯数字的', J(titles(book('第 12 章'))), J(['第 12 章']));
+  eq('识别回/节/卷', J(titles(book('第一回 起', '第三节 承', '第二卷 转'))),
+    J(['第一回 起', '第三节 承', '第二卷 转']));
+  eq('识别序章/楔子/尾声/番外', J(titles(book('楔子', '尾声'))), J(['楔子', '尾声']));
+  eq('识别英文章节', J(titles(book('Chapter 3', 'Epilogue'))), J(['Chapter 3', 'Epilogue']));
+  eq('识别 Markdown 标题', J(titles(book('# 开端', '## 转折'))), J(['# 开端', '## 转折']));
+
+  // 误判防线：正文里提到章节名、以及目录页
+  // 关键：这一行**以"第十二章"开头**（正文里回指章节很常见），但它很长 → 不是标题。
+  // 拿"他翻开第十二章……"当反例是测不出东西的：那种行本来就不匹配 `^第…章`。
+  // 这行**以"第十二章"开头**、但超过 40 字（正文里回指章节就是这么写的）→ 不是标题
+  const longLine = '第十二章的书页被他翻烂了，他还是没找到那行小字，只好合上书，起身走到窗前，看雨一直下到天亮。';
+  ok('反例本身要够长（否则测不到长度这道闸）', longLine.length > 40, String(longLine.length));
+  eq('以章节名开头、但很长的那行不算章节（判定要求"整行就是标题"）',
+    titles((longLine + '\n').repeat(20)).length, 0);
+  const toc = ['第一章 雨夜', '第二章 茶馆', '第三章 决断', '', '第一章 雨夜', '', '正文正文。'.repeat(60)].join('\n');
+  const dToc = story.detectChapters(toc);
+  eq('目录页挤在一起的行被滤掉（只留真正的章节）', dToc.chapters.length, 1);
+  eq('并如实上报滤掉了几个（不假装原文只有一章）', dToc.skipped, 3);
+  eq('没有章节的文本如实说"没识别到"', story.detectChapters('就是一段普通文字，没有任何标题。').found, false);
+  eq('空文本不炸', story.detectChapters('').chapters.length, 0);
+
+  // 块 → 章：不用偏移量，靠标题字符串定位
+  const novel = ['第一章 雨夜', '', '顾寒推门而入。'.repeat(30), '', '第二章 茶馆', '', '林晚等到天黑。'.repeat(30), '', '第三章 决断', '', '天亮时他走了。'.repeat(30)].join('\n');
+  const det = story.detectChapters(novel);
+  const sp = story.splitChunks(novel, { maxChars: 300, maxChunks: 24 });
+  const asg = story.assignChapters(sp.chunks, det.chapters);
+  ok('每块都归到了某一章', asg.by_chunk.every((x) => x.chapter >= 0), JSON.stringify(asg.by_chunk));
+  eq('各章字数合计 = 原文总长（不重不漏）',
+    asg.by_chapter.reduce((n, c) => n + c.chars, 0), novel.length);
+  ok('一块横跨多章时如实报 spans（不假装每块都干净地属于一章）',
+    asg.by_chunk.some((x) => x.spans > 1), JSON.stringify(asg.by_chunk.map((x) => x.spans)));
+  eq('没有章节时每块都是"无章"', story.assignChapters(sp.chunks, []).by_chunk.every((x) => x.chapter === -1), true);
+  eq('没有章节时 found=false', story.assignChapters(sp.chunks, []).found, false);
+
+  // 关键回归：块尾恰好落在标题上时，下一块的开头正文必须归给**那个标题**，不是上一块占比最大的章
+  // 承接逻辑用**手写的块**来钉，不依赖切块器的装箱细节（分隔符算几个字会随实现变，
+  // 拿"手工算出来的边界"当用例，等于把测试绑死在装箱算术上 —— 这一版就先栽在这上面）。
+  const CHS = [{ index: 0, title: '第一章 甲' }, { index: 1, title: '第二章 乙' }];
+  const asg2 = story.assignChapters([
+    { text: `第一章 甲\n\n${'甲'.repeat(50)}\n\n第二章 乙` }, // 标题落在块尾
+    { text: '乙'.repeat(50) },                                   // 这一块的正文只能靠承接认领
+  ], CHS);
+  eq('标题落在块尾时，下一块的正文归给**那个标题**（不是上一块占比最大的章）',
+    asg2.by_chunk[1].chapter, 1);
+  ok('第二章的字数接近它自己的长度，而不是只剩标题那几个字',
+    asg2.by_chapter[1].chars >= 50, String(asg2.by_chapter[1].chars));
+  eq('横跨两章的块如实报 spans=2', asg2.by_chunk[0].spans, 2);
+  // `chunk_count` 的口径是"**涉及**到几块"，不是"独占几块"：一块横跨两章就算在两章里。
+  // 这是刻意的 —— 问题定位要求"凡涉及的章都要报"（只报主导章会把问题报在错的章上，对照 BW）。
+  eq('每章带上自己的段数（由纯函数给出，调用方不再自己数一遍）',
+    JSON.stringify(asg2.by_chapter.map((c) => c.chunk_count)), JSON.stringify([1, 2]));
+  eq('chunk_count 与 chunks 长度自洽（不出现两个口径）',
+    asg2.by_chapter.every((c) => c.chunk_count === c.chunks.length), true);
+  eq('横跨两章的那一块同时算在第一章与第二章名下（问题才定位得到）',
+    asg2.by_chapter.filter((c) => c.chunks.includes(0)).length, 2);
+}
+
 group('卡片溯源（批 8 补 20：这张卡是从原文哪儿读出来的）');
 {
   const story = require('./lib/story.js');

@@ -93,11 +93,14 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs" id="nov-copy" title="把卡片回注文本复制到剪贴板（粘进任意模板变量）">${icon('copy', 13)}复制回注</button>
             <button class="btn btn-xs btn-primary" id="nov-toscript" title="把卡片带入「故事脚本」的模板变量，不用手工复制粘贴">${icon('arrowRight', 13)}带入剧本</button>
             <button class="btn btn-xs" id="nov-outline" title="把剧情卡按原文顺序排成拍子、按幕次收口切成集（纯本地判定，不花钱，可反复调）">${icon('grid', 13)}分集大纲</button>
+
+            <button class="btn btn-xs" id="nov-chap" title="按章节看这份原文：每章有多少字、抽出几张卡、哪几章一段都没接住（纯本地判定，不花钱）">${icon('book', 13)}章节目录</button>
             <button class="btn btn-xs" id="nov-cover" title="查一遍这段原文哪些段落没抽出卡片：是「确实没信息」还是「模型没接住」（纯本地判定，不花钱）">${icon('search', 13)}抽取覆盖</button>
             <button class="btn btn-xs" id="nov-audit" title="查一遍同名卡、缺字段、别名撞名、没入资产库这些会毁掉一致性的问题（纯本地判定，不花钱）">${icon('check', 13)}一致性体检</button>
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
           </div>
           <div id="nov-outline-box"></div>
+          <div id="nov-chap-box"></div>
           <div id="nov-cover-box"></div>
           <div id="nov-audit-box"></div>
           <div id="nov-kinds" class="chips wrap" style="margin-bottom:10px"></div>
@@ -368,9 +371,25 @@ export default async function novel(container, params = {}) {
     imgs = (r.ok ? (r.data || []) : []).filter((i) => i.project_id === projectId && (i.url || i.remote_url));
   }
 
+  // 块号 → 章节标题（批 8 补 21）：卡片出处优先说"第几章"，段号只是兜底。
+  // 声明放在**第一个用它的函数之前**：放在下面（章节目录那一段）能跑，但那是靠"调用都发生在模块体末尾"
+  // 这个巧合，往后谁把 loadCards 提前调一次就是 TDZ 白屏（uitest 那边已经为同类问题红过三次）。
+  let chunkChapter = {};
+
   async function loadCards() {
     const box = container.querySelector('#nov-cards');
     await loadImages(); // 卡片编辑器里要挂参考图，素材先取到（拿不到就是空列表，不阻断卡片显示）
+    // 章节映射要在**渲染之前**拿到：卡片出处那一行直接写"第 2 章"，而不是先写"第 3 段"再被改写
+    // （渲染后再补一次会让已经展开的溯源面板、编辑态被重绘掉）。纯本地、一次模型都不调。
+    if (sourceId) {
+      const cr = await api.storyChapters(sourceId);
+      if (cr.ok) {
+        chunkChapter = {};
+        (cr.data.chapters || []).forEach((c) => (c.chunks || []).forEach((i) => { if (chunkChapter[i] == null) chunkChapter[i] = c.title; }));
+      }
+    } else {
+      chunkChapter = {};
+    }
     const r = await api.storyCards({ sourceId: sourceId || undefined, projectId: sourceId ? undefined : projectId });
     if (!r.ok) { box.innerHTML = errBox(r.error, '卡片没取到', r.trace); return; }
     cards = r.data || [];
@@ -434,7 +453,7 @@ export default async function novel(container, params = {}) {
           ${(d.notes || []).length ? `<div class="hint-xs" style="margin-top:6px;color:var(--warn)">${d.notes.map(esc).join('；')}</div>` : ''}
           ${(d.excerpts || []).length ? d.excerpts.map((x) => `
             <div style="margin-top:8px">
-              <div class="hint-xs"><b>${esc(x.label)}</b> · 共 ${countLabel(x.chars)}${x.hits.length ? ` · 命中 ${esc(x.hits.join('、'))}` : ' · 这段里没找到这个名字'}</div>
+              <div class="hint-xs">${x.chapter_title ? `<b>${esc(x.chapter_title)}</b> · ` : ''}<b>${esc(x.label)}</b>${x.spans_chapters > 1 ? '<span style="opacity:.7">（这一段跨了多章）</span>' : ''} · 共 ${countLabel(x.chars)}${x.hits.length ? ` · 命中 ${esc(x.hits.join('、'))}` : ' · 这段里没找到这个名字'}</div>
               <div class="src-quote">${hl(x.segments)}${x.truncated ? '<span class="hint-xs">…（前后还有内容，只显示命中附近）</span>' : ''}</div>
             </div>`).join('') : `<div class="hint-xs" style="margin-top:6px">没有可展示的原文片段。</div>`}
         </div>`;
@@ -724,6 +743,56 @@ export default async function novel(container, params = {}) {
    * 于是"部分失败 8 段"常年挂着，用户很快就学会无视它；而真正丢数据的那种最隐蔽，
    * 在界面上跟"这段确实没信息"长得一模一样。这里把三者分开，并给出**能点的下一步**。
    */
+  async function runChapters() {
+    const box = container.querySelector('#nov-chap-box');
+    if (!sourceId) { box.innerHTML = ''; toast.err('先在左侧选中一份原著'); return; }
+    if (!box.innerHTML) {
+      box.innerHTML = `<div class="card" style="margin-bottom:10px">${skeleton('row', 3)}</div>`;
+    }
+    const r = await api.storyChapters(sourceId);
+    if (!r.ok) { box.innerHTML = errBox(r.error, '章节目录没取到', r.trace); return; }
+    const d = r.data;
+    if (!d.found) {
+      box.innerHTML = `
+        <div class="card" style="margin-bottom:10px;padding:12px">
+          <div class="row" style="gap:6px;align-items:center">
+            <b>章节目录</b><div class="spacer"></div>
+            <button class="btn btn-xs" id="nov-chap-close">收起</button>
+          </div>
+          <div class="hint-xs" style="margin-top:6px">${esc(d.note || '没有识别到章节标题。')}</div>
+        </div>`;
+      const cb0 = box.querySelector('#nov-chap-close');
+      if (cb0) cb0.onclick = () => { box.innerHTML = ''; };
+      return;
+    }
+    chunkChapter = {};
+    (d.chapters || []).forEach((c) => (c.chunks || []).forEach((i) => { if (chunkChapter[i] == null) chunkChapter[i] = c.title; }));
+    const rows = (d.chapters || []).map((c) => {
+      // 只有"真丢数据"才报警：模型说"这段没信息"是正常结局（对照补 18/补 19）
+      const lost = (c.dropped || 0) + (c.failed || 0);
+      return `
+      <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)">
+        <span class="chip ${lost ? 'red' : c.card_count ? 'green' : 'gray'}" style="flex:none">${c.card_count} 张卡</span>
+        <div style="flex:1;min-width:0">
+          <div class="hint-xs"><b>${esc(c.title)}</b> · ${countLabel(c.chars)} · ${c.chunk_count} 段</div>
+          ${lost ? `<div class="hint-xs" style="color:var(--warn)">这一段里有 ${lost} 段没接住（模型返回了条目却被丢掉，或调用失败）——去「抽取覆盖」看是哪几段</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="card" style="margin-bottom:10px;padding:12px">
+        <div class="row wrap" style="gap:6px;align-items:center">
+          <b>章节目录：共 ${(d.chapters || []).length} 章，${d.with_cards} 章抽到了卡片</b>
+          <div class="spacer"></div>
+          <button class="btn btn-xs" id="nov-chap-close">收起</button>
+        </div>
+        <div class="hint-xs" style="margin-top:4px">出处按章显示（作者想的是"第几章"，"第几段"是切块的副产物）${d.skipped ? `；另有 ${d.skipped} 个疑似目录行被忽略` : ''}${d.truncated ? '；章节过多已截断' : ''}。</div>
+        ${rows}
+      </div>`;
+    const cb = box.querySelector('#nov-chap-close');
+    if (cb) cb.onclick = () => { box.innerHTML = ''; };
+  }
+
   async function runCoverage() {
     const box = container.querySelector('#nov-cover-box');
     if (!sourceId) { box.innerHTML = ''; toast.err('先在左侧选中一份原著'); return; }
@@ -779,6 +848,11 @@ export default async function novel(container, params = {}) {
       await loadSources();
     };
   }
+
+  container.querySelector('#nov-chap').onclick = () => {
+    if (!projectId) { toast.err('先在右上角选一个项目'); return; }
+    runChapters();
+  };
 
   container.querySelector('#nov-cover').onclick = () => {
     if (!projectId) { toast.err('先在右上角选一个项目'); return; }
@@ -851,7 +925,6 @@ export default async function novel(container, params = {}) {
                 </label>`).join('')}
             </div>` : `<div class="note">本项目还没有图片素材——参考图可以留空，也可以先去「图片生成」出一张场景/道具图再回来挂上。</div>`}
           </div>` : ''}
-          <div class="hint-xs">来源：${c.origin === 'bible' ? '全局归并' : `第 ${(c.chunk_index ?? 0) + 1} 段`} · 出现 ${c.mentions || 1} 次 · 证据段 ${(c.evidence || []).map((i) => i + 1).join('/') || '—'}</div>
         </div>`;
     }
     const bits = fields.filter((f) => c[f]).slice(0, 4)
@@ -871,6 +944,7 @@ export default async function novel(container, params = {}) {
         ${c.summary ? `<div class="hint" style="margin-bottom:6px">${esc(c.summary)}</div>` : ''}
         ${bits ? `<div class="row wrap" style="gap:10px">${bits}</div>` : ''}
         ${(c.aliases || []).length ? `<div class="hint-xs">别名：${esc(c.aliases.join('、'))}</div>` : ''}
+        <div class="hint-xs">来源：${c.origin === 'bible' ? '全局归并' : esc(chunkChapter[c.chunk_index] || `第 ${(c.chunk_index ?? 0) + 1} 段`)} · 出现 ${c.mentions || 1} 次 · 证据段 ${(c.evidence || []).map((i) => i + 1).join('/') || '—'}</div>
         <div id="nov-src-${esc(c.id)}" data-src-slot="${esc(c.id)}" hidden></div>
       </div>`;
   }

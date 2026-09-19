@@ -1867,6 +1867,67 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('章节识别与章节级溯源（批 8 补 21：段号是切块的副产物）');
+{
+  const pj = await api('POST', '/api/projects', { name: '章节测试剧' });
+  const PID = pj.data.id;
+  // 每章正文都给足（章节之间挨太近会被判成目录行，那是刻意的）
+  const body = (t) => `${t}\n\n${'顾寒推门而入，林晚抬头看雨。'.repeat(14)}`;
+  const text = [body('第一章 雨夜'), body(`第二章 茶馆 __NPC__`), body('第三章 决断')].join('\n\n');
+  // 这个开关是 mock 的**全局状态**，必须原样还回去：直接置 true 会让后面补 18 那组
+  // 再也拿不到"被丢弃"的段，5 条既有断言一起红（本轮真踩到）
+  const npcPrev = globalThis.__npcFixed;
+  globalThis.__npcFixed = false; // 让第二章那段被"类别不认识"丢掉 → 才能验"逐块结局只计一次"
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '章节·原著', text, reduce: false, max_chars: 300 });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  globalThis.__npcFixed = npcPrev;
+  const SID = an.data.source.id;
+
+  const r = await api('GET', `/api/story/chapters?source_id=${SID}`);
+  eq('章节目录可用', r.status, 200);
+  eq('识别到章节（不再只说"第 34 段"）', r.data.found, true);
+  eq('章节数与标题都对', JSON.stringify(r.data.chapters.map((c) => c.title)),
+    JSON.stringify(['第一章 雨夜', '第二章 茶馆 __NPC__', '第三章 决断']));
+  const sum = r.data.chapters.reduce((n, c) => n + c.chars, 0);
+  ok('各章字数加起来接近原文总长（不重不漏）', sum <= text.length && sum >= text.length - 60, `${sum}/${text.length}`);
+  ok('每章都带段号区间与字数（界面要能点过去）',
+    r.data.chapters.every((c) => c.chunk_count >= 1 && c.chunks.length >= 1 && c.chars > 0), JSON.stringify(r.data.chapters.map((c) => c.chunks)));
+  ok('报出哪几章抽到了卡片', r.data.with_cards >= 1, String(r.data.with_cards));
+
+  // 关键不变量：被丢的那一段必须报在**它真正所在的那一章**上。
+  // （曾经为了"避免重复计数"改成只记主导章，结果标记在第二章、问题却报在第一章 —— 用户去找什么也找不到。）
+  const cov = await api('GET', `/api/story/coverage?source_id=${SID}`);
+  const droppedChunks = (cov.data.chunks || []).filter((x) => x.state === 'dropped').length;
+  ok('确实有一段被丢掉了（否则下面几条是空转）', droppedChunks >= 1, String(droppedChunks));
+  const npcChapter = r.data.chapters.find((c) => /__NPC__/.test(c.title));
+  ok('标记所在的那一章报出了"没接住"（问题要报在对的章上）', (npcChapter || {}).dropped >= 1,
+    JSON.stringify(r.data.chapters.map((c) => [c.title, c.dropped])));
+  ok('每一章报的"没接住"不超过它自己的段数（不夸大）',
+    r.data.chapters.every((c) => (c.dropped || 0) <= c.chunk_count), JSON.stringify(r.data.chapters.map((c) => [c.chunk_count, c.dropped])));
+  ok('每章都带上自己的段数（界面要显示"几段"）',
+    r.data.chapters.every((c) => c.chunk_count >= 1), JSON.stringify(r.data.chapters.map((c) => c.chunk_count)));
+
+  // 溯源面板要能说"第几章"
+  const card = (await api('GET', `/api/story/cards?project_id=${PID}`)).data[0];
+  const cs = await api('GET', `/api/story/card-source?card_id=${card.id}`);
+  ok('卡片溯源带上了章节标题（出处优先说章节）',
+    (cs.data.excerpts || []).some((e) => e.chapter_title && e.chapter >= 0), JSON.stringify(cs.data.excerpts.map((e) => e.chapter_title)));
+  ok('并如实报"这一段跨了几章"', (cs.data.excerpts || []).every((e) => typeof e.spans_chapters === 'number'));
+
+  // 没有章节的原文要如实说，而不是硬编章节号
+  const plain = await api('POST', '/api/story/analyze', { project_id: PID, title: '无章节·原著', text: '就是一段普通文字。'.repeat(60), reduce: false });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${plain.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const p2 = await api('GET', `/api/story/chapters?source_id=${plain.data.source.id}`);
+  eq('没有章节的原文 found=false', p2.data.found, false);
+  ok('并说明"不是所有文本都分章"（界面据此退回按段显示）', /没有识别到章节/.test(p2.data.note || ''), p2.data.note);
+  eq('没有章节时章列表为空', p2.data.chapters.length, 0);
+
+  const missing = await api('GET', '/api/story/chapters?source_id=nope');
+  eq('原著不存在时 404', missing.status, 404);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('卡片溯源（批 8 补 20：这张卡是从原文哪儿读出来的）');
 {
   const pj = await api('POST', '/api/projects', { name: '溯源测试剧' });

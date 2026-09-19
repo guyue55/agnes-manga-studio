@@ -198,6 +198,8 @@ export const api = {
 
   // 抽取覆盖体检（批 8 补 18）：纯本地判定，零模型调用
   storyCoverage: (sourceId) => req('GET', `/api/story/coverage?source_id=${encodeURIComponent(sourceId)}`),
+  // 章节目录：把"第 34 段"翻译成"第 12 章"，并回答"哪几章什么都没抽到"（纯本地）
+  storyChapters: (sourceId) => req('GET', `/api/story/chapters?source_id=${encodeURIComponent(sourceId)}`),
   // 卡片溯源：把"证据段 N"变成能直接读的原文片段（纯本地，随时可点、不花钱）
   storyCardSource: (cardId) => req('GET', `/api/story/card-source?card_id=${encodeURIComponent(cardId)}`),
 

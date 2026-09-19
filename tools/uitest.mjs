@@ -1263,13 +1263,30 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     // 预检必须把场景/道具卡的参考图也算进去，否则"带了几张"是假的
     && /count\(s\.story_card_ids, cardById, cardUrls\)/.test(boardsSrc));
 
-  // 这一片（批 8 补 18/19/20）共用的源码文本：**只在这里声明一次**。
-  // 之前每个小组各声明一次，往中间插新组就会踩"先用后声明"（ReferenceError），已踩两次。
+  // 这一片（批 8 补 18/19/20/21）共用的源码文本：**全部声明在这里**，后面任何一组都不许再声明。
+  // 每个小组各声明一次的做法已经踩了三次"先用后声明"（ReferenceError）—— 往中间插一组就红一次。
   const novelSrc17 = read(path.join(PUB, 'js', 'pages', 'novel.js'));
   const constsSrc17 = read(path.join(PUB, 'js', 'consts.js'));
+  const apiSrc20 = read(path.join(PUB, 'js', 'api.js'));
+
+  // ── 章节识别与章节级溯源（批 8 补 21）──
+  ok('章节目录走纯本地端点（随时可点、不花钱）',
+    /storyChapters: \(sourceId\) => req\('GET', `\/api\/story\/chapters\?source_id=/.test(apiSrc20));
+  ok('原著页有「章节目录」入口', /id="nov-chap"/.test(novelSrc17) && /章节目录/.test(novelSrc17));
+  ok('出处优先说"第几章"，段号只做兜底（作者想的是章节，段号是切块的副产物）',
+    /chunkChapter\[c\.chunk_index\] \|\| `第 \$\{\(c\.chunk_index \?\? 0\) \+ 1\} 段`/.test(novelSrc17));
+  ok('章节映射在**渲染之前**取到（否则先写"第 3 段"再被改写，展开的面板会被重绘掉）',
+    /章节映射要在\*\*渲染之前\*\*拿到/.test(novelSrc17));
+  ok('chunkChapter 的声明在首次使用它的函数之前（放后面能跑，但那是靠调用顺序的巧合）',
+    novelSrc17.indexOf('let chunkChapter') < novelSrc17.indexOf('async function loadCards'));
+  ok('只有"真丢数据"才报警，不把"模型说这段没信息"也报成问题',
+    /const lost = \(c\.dropped \|\| 0\) \+ \(c\.failed \|\| 0\)/.test(novelSrc17) && /去「抽取覆盖」看是哪几段/.test(novelSrc17));
+  ok('没识别到章节时如实说明，不硬编章节号', /没有识别到章节标题/.test(novelSrc17));
+  ok('目录行被忽略这件事如实上报（不假装原文只有一章）', /疑似目录行被忽略/.test(novelSrc17));
+  ok('溯源面板显示章节标题', /x\.chapter_title \? `<b>\$\{esc\(x\.chapter_title\)\}<\/b>/.test(novelSrc17));
+  ok('一段跨多章时如实标注', /这一段跨了多章/.test(novelSrc17));
 
   // ── 卡片溯源（批 8 补 20）──
-  const apiSrc20 = read(path.join(PUB, 'js', 'api.js'));
   ok('卡片溯源走纯本地端点（随时可点、不花钱）',
     /storyCardSource: \(cardId\) => req\('GET', `\/api\/story\/card-source\?card_id=/.test(apiSrc20));
   ok('卡片行有"看原文"入口（只给"证据段 3"这种段号，用户核对就得自己数段）',
