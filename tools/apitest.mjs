@@ -1833,6 +1833,71 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('角色参考图进出图输入（批 8 补 13：传了参考图就该真的用上）');
+{
+  const pj = await api('POST', '/api/projects', { name: '参考图测试剧' });
+  const PID = pj.data.id;
+  // 一张公网图 + 一张本地图：公网那张才可能进到上游，本地那张要如实上报"用不上"
+  const pub = await api('POST', '/api/images', { project_id: PID, name: '公网参考图', remote_url: 'https://example.com/face.png', url: 'https://example.com/face.png', usage_type: 'character' });
+  const loc = await api('POST', '/api/images', { project_id: PID, name: '本地参考图', url: '/assets/local/face.png', usage_type: 'character' });
+  const ch = await api('POST', '/api/characters', {
+    project_id: PID, name: '参考图角色', appearance: '长发及腰', is_locked: true,
+    reference_image_ids: [pub.data.id, loc.data.id],
+  });
+  eq('角色存下了参考图', (ch.data.reference_image_ids || []).length, 2);
+  const sb = await api('POST', '/api/storyboards', { project_id: PID, episode_number: 1, shot_number: 1, scene_description: '甲', image_prompt: 'a girl', character_ids: [ch.data.id] });
+
+  // ① 出图时自动带上绑定角色的参考图（公网那张）
+  lastImageCreate = null;
+  const r1 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb.data.id, prompt: 'a girl' });
+  eq('出图 200', r1.status, 200);
+  const sent = (lastImageCreate && lastImageCreate.image) || [];
+  ok('自动把公网参考图作为出图输入发给上游', Array.isArray(sent) && sent.includes('https://example.com/face.png'), JSON.stringify(sent));
+  ok('本地文件不发（Agnes 抓不到），并且**如实上报**用不上几张',
+    !sent.includes('/assets/local/face.png') && r1.data.reference_images.local_skipped === 1,
+    JSON.stringify(r1.data.reference_images));
+  eq('上报用上了几张参考图', r1.data.reference_images.used, 1);
+  ok('上报是哪几个角色的参考图（用户知道是谁的脸在起作用）',
+    (r1.data.reference_images.characters || []).includes('参考图角色'), JSON.stringify(r1.data.reference_images.characters));
+  ok('入库的提示词仍只存镜头内容（参考图是在使用点注入的，不写进 image_prompt）',
+    !String(r1.data.asset.generation_prompt).includes('example.com') && r1.data.asset.generation_prompt === 'a girl, 出场角色——参考图角色：长发及腰',
+    r1.data.asset.generation_prompt);
+
+  // ② 溯源要记**实际发出**的输入（记 body.image 的话，自动带上的参考图就查不到了）
+  const task = (await api('GET', `/api/tasks?project_id=${PID}`)).data.find((t) => t.task_type === 'image' && t.storyboard_id === sb.data.id);
+  ok('生成任务里记下实际发出的参考图', (task.input_images || []).includes('https://example.com/face.png'), JSON.stringify(task.input_images));
+
+  // ③ 显式传的参考图排在前面（用户当场指定的优先）
+  lastImageCreate = null;
+  await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb.data.id, prompt: 'a girl', image: 'https://example.com/explicit.png' });
+  const sent2 = (lastImageCreate && lastImageCreate.image) || [];
+  eq('显式参考图排第一', sent2[0], 'https://example.com/explicit.png');
+  eq('显式 + 自动一起发（去重后共两张）', sent2.length, 2);
+
+  // ④ 没绑角色 / 角色没有参考图 → 不发 image 参数（不能凭空塞一个空数组）
+  const ch2 = await api('POST', '/api/characters', { project_id: PID, name: '无参考图角色', appearance: '短发' });
+  const sb2 = await api('POST', '/api/storyboards', { project_id: PID, episode_number: 1, shot_number: 2, scene_description: '乙', image_prompt: 'a boy', character_ids: [ch2.data.id] });
+  lastImageCreate = null;
+  const r4 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb2.data.id, prompt: 'a boy' });
+  ok('没有参考图时**不发** image 参数（空数组会改变上游的生成模式）',
+    !(lastImageCreate && lastImageCreate.image) && r4.data.reference_images.used === 0,
+    JSON.stringify(lastImageCreate && lastImageCreate.image));
+
+  // ⑤ 参考图有上限（多了互相打架，也拖慢生成）
+  const many = [];
+  for (let i = 0; i < 6; i++) {
+    const a = await api('POST', '/api/images', { project_id: PID, name: `参考${i}`, remote_url: `https://example.com/r${i}.png`, url: `https://example.com/r${i}.png` });
+    many.push(a.data.id);
+  }
+  const ch3 = await api('POST', '/api/characters', { project_id: PID, name: '多参考图角色', appearance: '长发', reference_image_ids: many });
+  const sb3 = await api('POST', '/api/storyboards', { project_id: PID, episode_number: 1, shot_number: 3, scene_description: '丙', image_prompt: 'a cat', character_ids: [ch3.data.id] });
+  lastImageCreate = null;
+  const r5 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb3.data.id, prompt: 'a cat' });
+  eq('参考图有上限（默认 4 张）', ((lastImageCreate && lastImageCreate.image) || []).length, 4);
+  eq('上报的 used 与实际发出的一致', r5.data.reference_images.used, 4);
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('剧本/分镜过期体检（批 8 补 12：输入变了要能被发现，没变不能乱喊）');
 {
   const pj = await api('POST', '/api/projects', { name: '过期体检测试剧' });

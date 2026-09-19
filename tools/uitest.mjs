@@ -1230,6 +1230,22 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 角色参考图进出图输入（批 8 补 13）──
+  ok('参考图在使用点注入（入库的提示词仍只存镜头内容）',
+    /function characterRefImages\(chars, opts = \{\}\)/.test(routesSrc)
+    && /const inputImages = \[\.\.\.new Set\(\[\.\.\.explicit, \.\.\.ref\.urls\]\)\]/.test(routesSrc));
+  ok('只有公网 URL 才发给上游（本地 /assets/… Agnes 抓不到），且如实上报用不上几张',
+    /\^https\?:\\\/\\\/\/i\.test\(u\)/.test(routesSrc) && /local_skipped: ref\.local/.test(routesSrc));
+  ok('参考图有上限（多了互相打架也拖慢生成）',
+    /num\(opts\.max, 4\)/.test(routesSrc) && /\.slice\(0, 4\)/.test(routesSrc));
+  ok('溯源记的是**实际发出**的输入（记 body.image 就查不到自动带上的参考图）',
+    /input_content: \{ prompt, size, image: inputImages\[0\] \|\| null, reference_images: ref\.urls \}/.test(routesSrc)
+    && /input_images: inputImages,/.test(routesSrc));
+  ok('前端如实报"带上了几张参考图、是谁的"，本地文件用不上时明确警告',
+    /已带上 \$\{ri\.used\} 张角色参考图/.test(boardsSrc) && /ri\.local_skipped/.test(boardsSrc));
+  ok('批量出图在**花钱之前**预检参考图（先说清哪几张会真的进到出图输入）',
+    /async function imageRefPrecheck\(shots\)/.test(boardsSrc) && /其中 \$\{refPre\.used\} 张角色参考图会作为出图输入/.test(boardsSrc));
+
   // ── 剧本/分镜过期体检（批 8 补 12）──
   ok('过期体检是纯本地端点、并返回逐集状态与计数',
     /on\('GET', '\/api\/story\/staleness'/.test(routesSrc)

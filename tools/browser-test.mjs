@@ -1845,6 +1845,62 @@ try {
       }
     }
 
+    group('角色参考图进出图输入（批 8 补 13：传了参考图就该真的用上）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before13 = await J('/api/settings');
+      const pj13 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '参考图验收剧' }) });
+      const pid = pj13.id;
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      let sentImages = null; // 上游实际收到的 image 参数
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        if (u.pathname === '/pixel.png') { res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': PNG.length }); return res.end(PNG); }
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (u.pathname === '/v1/images/generations') {
+            let b = {}; try { b = JSON.parse(body); } catch { /* 原样通过 */ }
+            sentImages = b.image || null;
+            return send(200, { data: [{ url: `http://127.0.0.1:${mock.address().port}/pixel.png` }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'ref-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        // 一张公网参考图（能被 Agnes 抓）——角色库把参考图当封面显示，但它此前从没进过出图调用
+        const refImg = await J('/api/images', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, name: '公网参考图', remote_url: 'https://example.com/face.png', url: 'https://example.com/face.png', usage_type: 'character' }) });
+        const ch = await J('/api/characters', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, name: '参考图角色', appearance: '长发及腰', is_locked: true, reference_image_ids: [refImg.id] }) });
+        await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, episode_number: 1, shot_number: 1, scene_description: '甲', image_prompt: 'a girl standing', character_ids: [ch.id], duration_seconds: 3 }) });
+
+        await cdp.eval(`localStorage.removeItem('agnes.cost.skipUntil'); location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-img]');`), '参考图验收镜头行', 12000);
+        await cdp.eval(`document.querySelector('[data-img]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('.modal-foot [data-yes]');`), '出图计费确认', 8000);
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        // 等**具体**那句话，而不是"页面里出现过参考图"：toast 几秒后会自动消失，
+        // 泛匹配会先命中别的字样、再读到一个空 toast（本轮踩过：断言时好时坏）
+        const toastSeen = await waitFor(() => cdp.eval(`return /已带上 1 张角色参考图/.test(document.body.innerText);`), '出图结果提示（含参考图张数）', 20000)
+          .then(() => true).catch(() => false);
+        ok('出图时自动把绑定角色的公网参考图发给上游（此前它只被当封面显示）',
+          Array.isArray(sentImages) && sentImages.includes('https://example.com/face.png'), JSON.stringify(sentImages));
+        ok('提示里说明"带上了几张参考图、是谁的"（用户知道参考图真的生效了）', toastSeen);
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before13) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('过期体检契约（批 8 补 12：输入变了要能看见，默认范围据此收窄）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

@@ -810,7 +810,13 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
     // 付费确认期间再点不得叠出第二层弹窗（占位提前到确认之前）
     submitBusy = true;
     try {
-      if (!(await costConfirm({ what: '图片', count: shots.length }))) return;
+      // 参考图预检：先说清"这次有几张参考图会真的进到出图输入"，再说钱
+      const refPre = await imageRefPrecheck(shots);
+      if (!(await costConfirm({
+        what: '图片', count: shots.length,
+        note: refPre.used ? `其中 ${refPre.used} 张角色参考图会作为出图输入（同一张脸的最强约束）。` : '',
+      }))) return;
+      if (refPre.local) toast.warn(`有 ${refPre.local} 张角色参考图是本地文件，Agnes 抓不到（需要公网 URL），这些不会进到出图输入。`, 7000);
       const r = await api.batchImages({
         items: shots.map((s) => ({
           storyboard_id: s.id,
@@ -828,6 +834,31 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
     } finally {
       submitBusy = false;
     }
+  }
+
+  /**
+   * 出图前的参考图预检（批 8 补 13）：真正的注入在服务端使用点做，这里只为**花钱之前**说清楚。
+   * 判定与后端一致：只有公网 http(s) URL 才算数（本地 /assets/… Agnes 抓不到）。
+   */
+  async function imageRefPrecheck(shots) {
+    const r = await api.characters(projectId);
+    if (!r.ok) return { used: 0, local: 0 };
+    const byId = new Map(r.data.map((c) => [c.id, c]));
+    const urls = new Set();
+    let local = 0;
+    for (const s of shots) {
+      for (const id of (s.character_ids || [])) {
+        const c = byId.get(id);
+        if (!c) continue;
+        for (const iid of (c.reference_image_ids || [])) {
+          const a = window.__imgMap?.[iid];
+          if (!a) continue;
+          const u = a.remote_url || a.url || '';
+          if (/^https?:\/\//.test(u)) urls.add(u); else local++;
+        }
+      }
+    }
+    return { used: urls.size, local };
   }
 
   /** R2/R3 统一判定：镜头关联图能否作为图生视频输入（必须公网 URL；本地 /assets/… Agnes 抓不到） */
@@ -926,7 +957,14 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
       });
       if (r.ok) {
         variationSeen.set(s.id, seen + 1);
-        toast.ok(seen > 0 ? `图片已生成（第 ${seen + 1} 张，已自动换个机位/时段，避免与上一张雷同）` : '图片已生成并关联到分镜');
+        // 参考图是"同一张脸"的最强约束：用上了要说，用不上更要说
+        // （本地文件 Agnes 抓不到 —— 不说的话用户会以为参考图生效了）
+        const ri = r.data?.reference_images || {};
+        const base = seen > 0 ? `图片已生成（第 ${seen + 1} 张，已自动换个机位/时段，避免与上一张雷同）` : '图片已生成并关联到分镜';
+        toast.ok(ri.used ? `${base}；已带上 ${ri.used} 张角色参考图（${(ri.characters || []).join('、')}）` : base);
+        if (ri.local_skipped) {
+          toast.warn(`有 ${ri.local_skipped} 张角色参考图是本地文件，Agnes 抓不到（需要公网 URL），这次没有作为出图输入。`, 7000);
+        }
         load();
       } else toast.err(r.error);
     } finally {
