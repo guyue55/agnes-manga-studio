@@ -83,6 +83,8 @@ export default async function novel(container, params = {}) {
           <div class="row" style="margin-bottom:10px">
             <div class="card-title" style="margin:0">${icon('layers', 15)}卡片工作台</div>
             <div class="spacer"></div>
+            <button class="btn btn-xs" id="nov-copy" title="把卡片回注文本复制到剪贴板（粘进任意模板变量）">${icon('copy', 13)}复制回注</button>
+            <button class="btn btn-xs btn-primary" id="nov-toscript" title="把卡片带入「故事脚本」的模板变量，不用手工复制粘贴">${icon('arrowRight', 13)}带入剧本</button>
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
           </div>
           <div id="nov-kinds" class="chips wrap" style="margin-bottom:10px"></div>
@@ -388,17 +390,35 @@ export default async function novel(container, params = {}) {
       toast.ok(r.data.deduped ? '这个角色已经在资产库里了（已跳过）' : '已写进角色库——去角色库挂参考图、上锁外貌');
       loadCards();
     });
-    on(box, '[data-copy]', 'click', async (e) => {
-      const kinds = dataOf(e.currentTarget, 'copy');
-      const r = await api.storyPrompt({ sourceId: sourceId || undefined, projectId: sourceId ? undefined : projectId, kinds: kinds ? [kinds] : [] });
-      if (!r.ok) { toast.err(r.error); return; }
-      if (!r.data.text) { toast('这一类还没有卡片可回注', 'info'); return; }
-      try {
-        await navigator.clipboard.writeText(r.data.text);
-        toast.ok(`已复制 ${r.data.count} 张卡片的回注文本（${countLabel(r.data.text.length)}）——粘贴进剧本/分镜模板的变量框即可`);
-      } catch { toast.err('复制失败——浏览器没给剪贴板权限，请手动选中'); }
-    });
   }
+
+  /** 当前作用域：选了某个分组就只带这一类，否则带全部 */
+  function scopeKinds() { return kindFilter ? [kindFilter] : []; }
+  function scopeLabel() { return kindFilter ? storyKindLabel(kindFilter) : '全部卡片'; }
+
+  // 复制回注文本：粘进任意模板变量（跨页带入不适用时的通用出口）
+  container.querySelector('#nov-copy').onclick = async () => {
+    const kinds = scopeKinds();
+    const r = await api.storyPrompt({ sourceId: sourceId || undefined, projectId: sourceId ? undefined : projectId, kinds });
+    if (!r.ok) { toast.err(r.error); return; }
+    if (!r.data.text) { toast('还没有可回注的卡片——先解析一份原著', 'info'); return; }
+    try {
+      await navigator.clipboard.writeText(r.data.text);
+      toast.ok(`已复制${scopeLabel()}的回注文本（${r.data.count} 张卡 / ${countLabel(r.data.text.length)}）——粘贴进剧本或分镜模板的变量框即可`);
+    } catch { toast.err('复制失败——浏览器没给剪贴板权限，请手动选中'); }
+  };
+
+  // 带入剧本：跳到故事脚本页并把文本落到合适的模板变量（消费端在 scripts.js 的 applyBible）
+  container.querySelector('#nov-toscript').onclick = () => {
+    if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
+    if (!cards.length) { toast.err('这份原著还没有卡片可带入'); return; }
+    const kinds = scopeKinds();
+    const q = new URLSearchParams({ project: projectId, tab: 'episode_script', bible: sourceId });
+    if (kinds.length) q.set('kinds', kinds.join(','));
+    // 用 hash 传参而不是共享内存：可刷新、可分享、可回退（app.js 的路由本来就读这些参数）
+    location.hash = `#/scripts?${q.toString()}`;
+    toast(`正在把${scopeLabel()}带入「单集脚本」——没有对应字段时会落在第一个空着的长文本框`, 'info', 5000);
+  };
 
   function cardHtml(c) {
     const editing = c.id === editingId;

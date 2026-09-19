@@ -1168,7 +1168,29 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /c\.kind === 'character' \? `<button class="btn btn-xs" data-tochar=/.test(novel));
   ok('回注文本由服务端渲染（前端不重复实现 cardsToPrompt）',
     /api\.storyPrompt\(/.test(novel) && !/function cardsToPrompt/.test(novel));
-  ok('复制成功文案说清"粘到哪里"（减少人工试错）', /粘贴进剧本\/分镜模板的变量框/.test(novel));
+  ok('复制成功文案说清"粘到哪里"（减少人工试错）', /粘贴进剧本或分镜模板的变量框/.test(novel));
+  // 批 8 补：一键带入（把"复制→切页→找字段→粘贴"四步压成一步）
+  ok('原著页有"带入剧本"入口（不再只有复制粘贴）', /id="nov-toscript"/.test(novel) && /#\/scripts\?\$\{q\.toString\(\)\}/.test(novel));
+  ok('带入参数走 hash（可刷新/可分享/可回退）',
+    /new URLSearchParams\(\{ project: projectId, tab: 'episode_script', bible: sourceId \}\)/.test(novel));
+  ok('带入作用域跟随分组筛选（选了人物卡就只带人物卡）', /function scopeKinds\(\) \{ return kindFilter \? \[kindFilter\] : \[\]; \}/.test(novel));
+  ok('复制回注按钮真的渲染了（此前 data-copy 处理器是死代码）',
+    /id="nov-copy"/.test(novel) && !/data-copy/.test(novel));
+  ok('scripts.js 消费 bible 参数并落到模板变量', /async function applyBible\(\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));
+  ok('带入后从 URL 抹掉参数（刷新不重复覆盖用户后来的修改）',
+    /syncViewParams\(\{ bible: '', kinds: '' \}\)/.test(read(path.join(PUB, 'js', 'pages', 'scripts.js'))));
+  // 落位表：纯函数，直接断言
+  const C = await import(pathToFileURL(path.join(PUB, 'js', 'consts.js')).href);
+  const vals = new Map([['本集大纲', ''], ['人物', '已写好的内容']]);
+  eq('落位优先取"名字匹配且为空"的字段', C.pickBibleVar(['人物', '本集大纲'], ['plot', 'world'], vals), { name: '本集大纲', matched: true });
+  eq('名字匹配但都非空时按名字落位（不静默丢内容）',
+    C.pickBibleVar(['人物'], ['character'], vals), { name: '人物', matched: true });
+  eq('没有名字匹配时兜底到第一个空着的长文本框', C.pickBibleVar(['目标集数', '本集大纲'], ['prop'], new Map([['本集大纲', '']])), { name: '本集大纲', matched: false });
+  eq('既无匹配又无空长文本框时返回 null（调用方必须告知用户，不许静默丢）',
+    C.pickBibleVar(['目标集数'], ['prop'], new Map()), null);
+  eq('变量名归一化：{{人物卡}}/{{人物设定}} 等价', C.bibleKindsForVar('人物卡'), ['character']);
+  eq('变量名归一化不误伤具体名字（本集大纲属于 plot）', C.bibleKindsForVar('本集大纲'), ['plot', 'world']);
+  ok('灵敏度对照：不认识的变量名不落位', C.bibleKindsForVar('目标集数').length === 0);
   ok('批量入资产库前告知跳过语义（幂等，不制造重复角色）', /已在库里的会自动跳过/.test(novel));
 }
 

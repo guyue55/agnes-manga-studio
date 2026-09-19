@@ -1698,6 +1698,71 @@ try {
       await J(`/api/storyboards/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ camera_move: '' }) });
     }
 
+    group('原著→剧本一键带入契约（批 8 补：跨页带入落到模板变量）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+      const before = await J('/api/settings');
+      // 只为了让"分块抽取"能拿到一份卡片 JSON：mock 上游，不碰真实 Key
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'character', name: '带入验收角色', role: '主角', identity: '验收用角色', appearance: '青衫' },
+              { kind: 'plot', name: '带入验收剧情', stage: '起', conflict: '验收冲突', outcome: '验收结果' },
+            ] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      let src = null;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'bible-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '带入验收原著', text: '带入验收角色走进茶馆，冲突发生。', reduce: false }) });
+        ok('带入验收：解析受理', !!an.jobId, JSON.stringify(an).slice(0, 120));
+        let j = null;
+        for (let i = 0; i < 40; i++) { await sleep(250); j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        ok('带入验收：卡片已抽出', j && j.status === 'done' && j.ok >= 1, JSON.stringify({ s: j && j.status, ok: j && j.ok }));
+        src = an.source && an.source.id;
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${src}'; return true;`);
+        await waitFor(() => cdp.eval(`document.body.innerText.includes('带入验收角色')`), '原著解析页显示卡片', 12000);
+        ok('原著解析页按 source_id 深链直接展示卡片（可刷新/可分享）',
+          await cdp.eval(`document.body.innerText.includes('带入验收角色') && document.body.innerText.includes('带入验收剧情')`));
+
+        // 一键带入：不再需要"复制→切页→找字段→粘贴"四步
+        await cdp.eval(`document.querySelector('#nov-toscript').click(); return true;`);
+        await waitFor(() => cdp.eval(`location.hash.startsWith('#/scripts')`), '跳转到故事脚本页', 8000);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#fields textarea');`), '单集脚本页签就绪', 12000);
+        const filled = await waitFor(() => cdp.eval(`return (document.querySelector('#fields textarea')||{}).value || '';`)
+          .then((v) => (String(v).includes('带入验收角色') ? v : false)), '卡片文本落入模板变量', 10000).then((v) => v || '').catch(() => '');
+        ok('带入后模板变量里就是卡片文本（含人物卡与剧情卡）',
+          String(filled).includes('带入验收角色') && String(filled).includes('带入验收剧情'), String(filled).slice(0, 80));
+        const strip = await cdp.eval(`return (document.querySelector('#upstream')||{}).innerText || '';`);
+        ok('带入后提示条说明来源与落点（可见才可确认）',
+          strip.includes('原著解析') && strip.includes('本集大纲'), strip.replace(/\n/g, ' ').slice(0, 100));
+        ok('带入参数已从 URL 抹掉（刷新不会重复覆盖用户后来的修改）',
+          !(await cdp.eval(`location.hash.includes('bible=')`)));
+        // 撤销带入要还原成带入前的内容，不能一律清空（跨页带入可能覆盖用户已写好的字段）
+        // 可选链：带入没落位时提示条不存在，这里要"干净地红"而不是 click of null 崩掉整组
+        await cdp.eval(`document.querySelector('#up-undo')?.click(); return true;`);
+        await sleep(300);
+        ok('撤销带入把字段还原（带入前是空的，还原后仍为空）',
+          (await cdp.eval(`return (document.querySelector('#fields textarea')||{}).value || '';`)) === '');
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: before.agnes_api_key || '', agnes_api_base_url: before.agnes_api_base_url || '' }) });
+        if (src) await fetch(`http://127.0.0.1:${port}/api/story/sources/${src}`, { method: 'DELETE' });
+      }
+    }
+
     group('剧本链路契约（批 4：就地编辑 → 带入下一步 → 门禁 → 计数）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

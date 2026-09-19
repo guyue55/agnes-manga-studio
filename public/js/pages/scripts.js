@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices,
-  nextScriptStep, stepNo,
+  nextScriptStep, stepNo, pickBibleVar, UPSTREAM_LABELS,
 } from '../consts.js';
 import {
   charCount, countLabel, limitState, promptLength, checkPromptVars, promptGate, isLongVar,
@@ -188,14 +188,16 @@ export default async function scripts(container, params) {
     const el = container.querySelector('#upstream');
     if (!el) return;
     if (!upstream) { el.innerHTML = ''; return; }
-    const fromLabel = SCRIPT_TYPES.find((t) => t.value === upstream.from)?.label || upstream.from;
+    const fromLabel = SCRIPT_TYPES.find((t) => t.value === upstream.from)?.label || UPSTREAM_LABELS[upstream.from] || upstream.from;
     el.innerHTML = `<div class="note gold upstream-strip">
       ${icon('arrowRight', 13)} 已从「${esc(fromLabel)}」带入 ${esc(countLabel(upstream.chars))} 到字段「${esc(upstream.field)}」——确认无误后再生成
       <button class="btn btn-xs" id="up-undo" style="margin-left:8px">撤销带入</button>
     </div>`;
     const b = el.querySelector('#up-undo');
     if (b) b.onclick = () => {
-      fields.set(upstream.field, '');
+      // 变更须知：撤销要**还原成带入之前的内容**，不能一律清空 ——
+      // 跨页带入（原著解析）可能覆盖用户已经写好的字段，清空等于把他的话删了。
+      fields.set(upstream.field, upstream.prev || '');
       upstream = null;
       renderFields();
       toast('已撤销带入', 'info');
@@ -628,4 +630,42 @@ export default async function scripts(container, params) {
 
   await loadTemplates();
   await loadSaved();
+  await applyBible();
+
+  /**
+   * 批 8 补：跨页带入 —— 原著解析页点「带入剧本」会带 `bible=<source_id>&kinds=...` 过来，
+   * 这里把回注文本填进合适的模板变量，并复用既有的"已带入"提示条（可见 + 可撤销）。
+   * 消费后立刻从 URL 抹掉，避免刷新/分享链接时重复带入覆盖用户后来的修改。
+   */
+  async function applyBible() {
+    if (!params.bible) return;
+    const kinds = String(params.kinds || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const tpl = tplOf(TAB_TPL[tab]);
+    const source = params.bible;
+    syncViewParams({ bible: '', kinds: '' });
+    if (!tpl) { toast.err('当前步骤还没有提示词模板，没法带入——去设置页新建一个'); return; }
+    const r = await api.storyPrompt({ sourceId: source, kinds });
+    if (!r.ok) { toast.err(r.error); return; }
+    if (!r.data.text) { toast('这份原著里没有可带入的卡片', 'info'); return; }
+    const vars = varsOf(tpl);
+    const pick = pickBibleVar(vars, kinds, fields);
+    if (!pick) {
+      await notice({
+        title: '没有可以落位的字段',
+        lines: [
+          `已经取出 <b>${esc(countLabel(r.data.text.length))}</b> 卡片文本，但「${esc(tpl.name)}」模板里的长文本框都已有内容。`,
+          '可以先清空其中一个（或点结果区的「撤销带入」还原），再回来点一次「带入剧本」；也可以直接复制粘贴。',
+        ],
+        okText: '知道了',
+      });
+      return;
+    }
+    const prev = fields.get(pick.name) || '';
+    fields.set(pick.name, r.data.text);
+    upstream = { from: 'novel', field: pick.name, chars: r.data.text.length, prev };
+    renderFields();
+    toast.ok(pick.matched
+      ? `已把原著卡片带入字段「${pick.name}」——确认无误后再生成`
+      : `模板里没有专门的原著字段，已带入第一个空着的长文本框「${pick.name}」`);
+  }
 }

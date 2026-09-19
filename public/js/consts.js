@@ -95,6 +95,65 @@ export const STORY_CARD_FIELD_LABELS = {
   when: '时间', order_note: '顺序说明',
 };
 export function storyKindLabel(k) { return STORY_CARD_LABELS[k] || k; }
+
+/**
+ * 原著卡片 → 故事脚本模板变量的落位表（批 8 补：把"复制粘贴"变成"一键带入"）。
+ *
+ * 变更须知：键是**模板变量名**（用户可在设置页自由改名），值是卡片类别。
+ * 之所以按变量名匹配而不是按位置：模板是用户可编辑的资产，位置会变、名字相对稳定；
+ * 匹配不上时不是静默失败，而是走"第一个空着的长文本框"兜底并在提示条里说明落到了哪。
+ * 名字里的"卡/设定/信息"等后缀会被归一化掉，所以 `{{人物卡}}`、`{{人物设定}}`、`{{人物}}` 等价。
+ */
+export const BIBLE_VAR_KINDS = {
+  人物: ['character'], 角色: ['character'],
+  地点: ['location'], 场景: ['location'],
+  道具: ['prop'],
+  剧情: ['plot'], 情节: ['plot'], 本集大纲: ['plot', 'world'], 剧情梗概: ['plot', 'world'],
+  故事想法: ['world', 'plot'], 故事设定: ['world'], 原著设定: ['world', 'character', 'location', 'prop', 'plot', 'timeline'],
+  信息: ['world'], 世界观: ['world'], 时间线: ['timeline'], 时间轴: ['timeline'],
+};
+
+/** 变量名归一化：去掉"卡/设定/信息/列表"等装饰词，便于与 BIBLE_VAR_KINDS 对齐 */
+export function bibleVarKey(name) {
+  return String(name || '').replace(/[\s（）()【】\[\]]/g, '').replace(/(卡片|卡|设定|信息|列表|清单)$/g, '');
+}
+
+/** 该变量名对应的卡片类别（不认识返回空数组） */
+export function bibleKindsForVar(name) {
+  const k = bibleVarKey(name);
+  if (BIBLE_VAR_KINDS[k]) return BIBLE_VAR_KINDS[k];
+  for (const [key, kinds] of Object.entries(BIBLE_VAR_KINDS)) {
+    if (k.includes(key) || key.includes(k)) return kinds;
+  }
+  return [];
+}
+
+/**
+ * 从模板变量里挑一个落点。纯函数（values 传"当前已填的值"），便于离线断言。
+ * 优先级：① 名字匹配且当前为空 → ② 名字匹配（覆盖） → ③ 第一个空着的长文本框 → ④ 无。
+ * 第 ④ 种情况返回 null，调用方必须**明确告诉用户没落位**，不许静默丢掉带入的内容。
+ */
+export function pickBibleVar(vars, kinds, values = new Map()) {
+  const list = Array.isArray(vars) ? vars : [];
+  const want = Array.isArray(kinds) && kinds.length ? kinds : null;
+  const matched = list.filter((v) => {
+    const ks = bibleKindsForVar(v);
+    return ks.length && (!want || ks.some((k) => want.includes(k)));
+  });
+  const empty = (v) => !String(values.get ? (values.get(v) || '') : (values[v] || '')).trim();
+  const hit = matched.find(empty) || matched[0];
+  if (hit) return { name: hit, matched: true };
+  const fallback = list.find((v) => isLongVarName(v) && empty(v));
+  return fallback ? { name: fallback, matched: false } : null;
+}
+
+/** 长文本变量判定（与 textstats.isLongVar 同源，这里只用于挑兜底落点，故不引入循环依赖） */
+function isLongVarName(name) {
+  return /大纲|脚本|内容|梗概|故事|想法|描述|设定|提示词|原文|文本|台词|分镜|要求|风格/.test(String(name || ''));
+}
+
+/** 跨页带入时"上游"显示名（scripts.js 的提示条用；不在 SCRIPT_TYPES 里的来源靠它翻译） */
+export const UPSTREAM_LABELS = { novel: '原著解析' };
 export const STORY_ROLE_OPTIONS = ['主角', '配角', '反派', '龙套'];
 export const STORY_STAGE_OPTIONS = ['起', '承', '转', '合'];
 
