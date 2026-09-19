@@ -42,6 +42,13 @@ export default async function scripts(container, params) {
   const results = new Map(); // tab -> { text, pristine }
   // R16：本页签当前"已带入"的上游（来自上一步的确认产物）
   let upstream = null; // { from, field, chars }
+  // 批 8 补 8：分集上下文。集号 + 前情提要 + 本集大纲都从**本地**分集骨架取（一次模型都不调），
+  // 所以"逐集生成"可以反复跑、反复调「每集至少几拍」而不花钱。
+  let epNo = 1;                      // 当前集号（单集生成与保存都用它）
+  let epPlan = null;                 // { episode_count, per_episode }
+  let prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
+  let priorOn = true;                // 生成时是否带上前情提要
+  let batchCancel = false;           // 逐集生成的取消旗标
   // fields 是跨页签共享的一张表（历史行为：同名变量在页签间延续）。
   // 带入下一步正是靠这个语义把上游写进下游模板的变量里，不另造一套存储。
   const fields = new Map();
@@ -58,6 +65,14 @@ export default async function scripts(container, params) {
       <div>
         <div class="segmented" id="tabs" style="grid-template-columns:repeat(5,1fr);margin-bottom:18px">
           ${SCRIPT_TYPES.map((t) => `<button data-tab="${t.value}" class="${t.value === tab ? 'on' : ''}">${esc(t.label)}</button>`).join('')}
+        </div>
+        <div class="card" id="ep-card" style="margin-bottom:18px">
+          <div class="row" style="margin-bottom:8px">
+            <div class="card-title" style="margin:0">${icon('grid', 15)}分集</div>
+            <div class="spacer"></div>
+            <span class="hint-xs" id="ep-plan"></span>
+          </div>
+          <div id="ep-body"><div class="hint-xs">正在读取分集骨架…</div></div>
         </div>
         <div class="card">
           <div class="row" style="margin-bottom:10px">
@@ -86,8 +101,11 @@ export default async function scripts(container, params) {
     </div>`;
 
   const picker = container.querySelector('#p-picker');
-  picker.onchange = () => { projectId = picker.value; results.clear(); clearResult(); loadSaved(); };
-  container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); };
+  picker.onchange = () => {
+    projectId = picker.value; results.clear(); clearResult(); loadSaved();
+    epNo = 1; loadEpisodes();
+  };
+  container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); loadEpisodes(); };
   container.querySelector('#tabs').querySelectorAll('[data-tab]').forEach((b) => {
     b.onclick = () => {
       stashResult();                       // 先把当前页签的产物存起来（含未保存的编辑）
@@ -109,6 +127,218 @@ export default async function scripts(container, params) {
 
   function tplOf(type) {
     return templates.find((t) => t.template_type === type) || null;
+  }
+
+  /** 取分集骨架（本地计算、不调模型）：拿到集数后才能逐集生成 */
+  async function loadEpisodes() {
+    epPlan = null;
+    prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
+    if (projectId) {
+      const r = await api.storyEpisodes({ project_id: projectId });
+      if (r.ok && r.data.episode_count) epPlan = { episode_count: r.data.episode_count, per_episode: r.data.per_episode };
+    }
+    if (epPlan && epNo > epPlan.episode_count) epNo = epPlan.episode_count;
+    renderEpCard();
+  }
+
+  /** 渲染分集卡：没有分集骨架时给出去原著解析的路，而不是一个点不动的按钮 */
+  function renderEpCard() {
+    const box = container.querySelector('#ep-body');
+    const planEl = container.querySelector('#ep-plan');
+    if (!box) return;
+    if (!projectId) {
+      if (planEl) planEl.textContent = '';
+      box.innerHTML = '<div class="hint-xs">先在右上角选择项目</div>';
+      return;
+    }
+    const n = epPlan ? epPlan.episode_count : 0;
+    if (planEl) planEl.textContent = n ? `共 ${n} 集 · 每集至少 ${epPlan.per_episode} 拍` : '还没有分集骨架';
+    if (!n) {
+      box.innerHTML = `<div class="hint-xs">这份项目还没有分集骨架（要先有<b>剧情卡</b>）：到
+        <a href="#/novel?project=${encodeURIComponent(projectId)}" style="color:var(--gold-light)">原著解析</a>
+        粘贴/上传小说 → 解析出卡片 → 「分集大纲」。有了骨架，这里才能逐集生成、也才有前情提要。</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="row wrap" style="gap:8px;align-items:center">
+        <span class="hint-xs">第</span>
+        <input class="input" id="ep-no" type="number" min="1" max="${n}" value="${epNo}" style="width:74px" aria-label="集数" />
+        <span class="hint-xs">集</span>
+        <button class="btn btn-xs" id="ep-load">${icon('download', 12)}载入本集大纲</button>
+        <label class="row" style="gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="ep-prior"${priorOn ? ' checked' : ''} />
+          <span class="hint-xs">带上前情提要</span>
+        </label>
+        <div class="spacer"></div>
+        <button class="btn btn-xs" id="gen-eps" title="按分集骨架逐集生成并保存（每集一次模型调用）">${icon('wand', 12)}逐集生成</button>
+      </div>
+      <div class="hint-xs" id="ep-status" style="margin-top:8px"></div>
+      <div id="ep-progress"></div>`;
+    const no = box.querySelector('#ep-no');
+    no.onchange = () => { epNo = Math.max(1, Math.min(n, Number(no.value) || 1)); no.value = epNo; syncEpStatus(); };
+    box.querySelector('#ep-load').onclick = () => loadEpisodeBrief(epNo);
+    box.querySelector('#ep-prior').onchange = (e) => { priorOn = !!e.target.checked; syncEpStatus(); };
+    box.querySelector('#gen-eps').onclick = openBatch;
+    syncEpStatus();
+  }
+
+  /** 前情状态条：让"这一集带了多少前情、省了哪几集"在生成前就可见 */
+  function syncEpStatus() {
+    const el = container.querySelector('#ep-status');
+    if (!el) return;
+    if (!prior.text) {
+      el.innerHTML = epNo > 1
+        ? `第 ${epNo} 集还没载入前情提要——点「载入本集大纲」会连前情一起取回（本地计算，不花钱）`
+        : '第 1 集没有前情（它是开头）';
+      return;
+    }
+    el.innerHTML = `已载入第 ${epNo} 集：前情 ${prior.episodes.length} 集 / ${prior.chars} 字`
+      + `${prior.omitted.length ? `（更早的 ${prior.omitted.length} 集已省略：${esc(prior.omitted.join('、'))}）` : ''}`
+      + `${priorOn ? '' : ' · <b>当前未勾选</b>，生成时不会带上'}`;
+  }
+
+  /**
+   * 载入第 N 集：把该集拍表填进模板的"大纲"变量，并取回前情提要。
+   * 这一步**不调模型**，所以随便点、随便换集都不会产生费用。
+   */
+  async function loadEpisodeBrief(ep) {
+    const tpl = tplOf(TAB_TPL[tab]);
+    if (!tpl) { toast.err('这个类型还没有模板'); return null; }
+    epNo = Math.max(1, Number(ep) || 1);
+    const r = await api.storyEpisodeBrief({ project_id: projectId, episode: epNo, per_episode: epPlan ? epPlan.per_episode : undefined });
+    if (!r.ok) { toast.err(r.error); return null; }
+    prior = {
+      text: r.data.prior || '', episodes: r.data.prior_episodes || [], omitted: r.data.prior_omitted || [],
+      chars: r.data.prior_chars || 0, truncated: !!r.data.prior_truncated,
+    };
+    if (!r.data.exists) {
+      toast.err(`第 ${epNo} 集还没有拍：先在原著页确认分集骨架`);
+      syncEpStatus();
+      return null;
+    }
+    const pick = pickBibleVar(varsOf(tpl), ['plot'], fields);
+    if (pick) {
+      fields.set(pick.name, r.data.brief);
+      const el = [...container.querySelectorAll('[data-var]')].find((x) => x.getAttribute('data-var') === pick.name);
+      if (el) el.value = r.data.brief;
+      syncCounters();
+    }
+    syncEpStatus();
+    toast.ok(`已载入第 ${epNo} 集大纲${prior.episodes.length ? ` + 前情 ${prior.episodes.length} 集` : ''}${pick ? '' : '（没找到合适的大纲变量，可手动粘贴）'}`);
+    return r.data;
+  }
+
+  /**
+   * 逐集生成（批 8 补 8）：一集一次模型调用，生成完**立刻按集保存**，
+   * 中途失败只记下这一集继续往下走 —— 不能因为第 7 集返回坏 JSON 就把 8〜20 集全丢掉。
+   */
+  function openBatch() {
+    const n = epPlan ? epPlan.episode_count : 0;
+    if (!n) return;
+    // 取值必须在**弹窗还活着的时候**：modal 关闭后 DOM 就被摘掉了，
+    // 关掉之后再去 querySelector('#b-from') 只会拿到 null —— 用户填的范围会被静默丢掉（退回全量）。
+    new Promise((resolve) => {
+      let settled = false;
+      const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
+      modal({
+        title: '逐集生成',
+        body: `<div class="note">将按分集骨架逐集生成，每集<b>调用一次模型</b>（共 <b id="b-n">${n}</b> 次），
+          生成完立即保存为一条脚本记录（标题带集号），可在右侧「已保存脚本」逐集查看。</div>
+          <div class="row wrap" style="gap:10px;margin-top:12px">
+            <div class="field" style="flex:1;min-width:110px"><label for="b-from">从第几集</label><input class="input" id="b-from" type="number" min="1" max="${n}" value="${Math.min(epNo, n)}" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label for="b-to">到第几集</label><input class="input" id="b-to" type="number" min="1" max="${n}" value="${n}" /></div>
+          </div>
+          <label class="row" style="gap:8px;align-items:center;margin-top:12px;cursor:pointer">
+            <input type="checkbox" id="b-prior"${priorOn ? ' checked' : ''} />
+            <span class="hint-xs">带上前情提要（越往后越重要：每集都能看见前面发生了什么，本地计算、不额外花钱）</span>
+          </label>
+          <div class="hint-xs" style="margin-top:8px">中途可以取消：已经生成的集会保留，没轮到的不会调用。</div>`,
+          footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>开始生成</button>`,
+          onDismiss: () => settle(null), // ESC / 遮罩 / × 关闭都算取消，不静默挂起
+          onMount(root, close) {
+            root.querySelector('[data-no]').onclick = () => { settle(null); close(); };
+            root.querySelector('[data-yes]').onclick = () => {
+              const from = Math.max(1, Math.min(n, Number(root.querySelector('#b-from').value) || 1));
+              const to = Math.max(from, Math.min(n, Number(root.querySelector('#b-to').value) || n));
+              const withPrior = !!root.querySelector('#b-prior').checked;
+              settle({ from, to, withPrior });
+              close();
+            };
+          },
+        });
+    }).then((cfg) => { if (cfg) runBatch(cfg.from, cfg.to, cfg.withPrior); });
+  }
+
+  async function runBatch(from, to, withPrior) {
+    if (generating) { toast.err('正在生成中，等这一次结束再开始逐集生成'); return; }
+    const tpl = tplOf(TAB_TPL[tab]);
+    if (!tpl) return;
+    if (!state.settings.agnes_api_key) { toast.err('还没配置 Agnes API Key，请到「设置」页填写。'); return; }
+    const btn = container.querySelector('#gen-eps');
+    const box = container.querySelector('#ep-progress');
+    const total = to - from + 1;
+    const done = [];   // { ep, ok, error }
+    batchCancel = false;
+    generating = true;
+    if (btn) btn.disabled = true;
+    const paint = (cur, note) => {
+      if (!box) return;
+      const okN = done.filter((d) => d.ok).length;
+      const badN = done.length - okN;
+      box.innerHTML = `<div class="divider"></div>
+        <div class="row" style="gap:10px;align-items:center">
+          ${cur ? '<div class="spinner sm"></div>' : ''}
+          <span style="font-size:12.5px">${esc(note)}</span>
+          <div class="spacer"></div>
+          <span class="hint-xs">成功 ${okN} · 失败 ${badN} / 共 ${total}</span>
+          ${cur ? '<button class="btn btn-xs" id="b-stop">取消</button>' : ''}
+        </div>
+        ${done.length ? `<div class="hint-xs" style="margin-top:6px">${done.map((d) => `${d.ok ? '✓' : '✗'}第 ${d.ep} 集`).join(' · ')}</div>` : ''}`;
+      const stop = box.querySelector('#b-stop');
+      if (stop) stop.onclick = () => { batchCancel = true; stop.disabled = true; stop.textContent = '正在取消…'; };
+    };
+    for (let ep = from; ep <= to; ep++) {
+      if (batchCancel) { paint(null, '已取消'); break; }
+      paint(ep, `正在生成第 ${ep} 集…`);
+      try {
+        const brief = await loadEpisodeBrief(ep);
+        if (!brief) { done.push({ ep, ok: false, error: '这一集没有拍' }); continue; }
+        if (!withPrior) prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
+        await refreshRoster();
+        const r = await api.genText({
+          messages: buildMessages(tpl),
+          model: container.querySelector('#model').value,
+          project_id: projectId || null,
+          note: `${tpl.name} 第 ${ep} 集`,
+          json_mode: true,
+        });
+        if (!r.ok) { done.push({ ep, ok: false, error: r.error }); continue; }
+        const content = r.data.content || '';
+        const savedR = await api.createScript({
+          project_id: projectId,
+          script_type: tab,
+          episode_number: ep,
+          title: `${SCRIPT_TYPES.find((t) => t.value === tab)?.label || '脚本'} 第 ${ep} 集`,
+          content,
+          model_name: container.querySelector('#model')?.value || '',
+          generation_prompt: '',
+        });
+        if (!savedR.ok) { done.push({ ep, ok: false, error: savedR.error }); continue; }
+        // 结果区停在最后一集，用户可以直接看/改（逐集产物都已经存好了）
+        result = content; pristine = content; resultCtx = { projectId, tab }; stashResult(); renderResult();
+        done.push({ ep, ok: true });
+      } catch (e) {
+        done.push({ ep, ok: false, error: (e && e.message) || String(e) });
+      }
+    }
+    generating = false;
+    if (btn) btn.disabled = false;
+    const okN = done.filter((d) => d.ok).length;
+    const bad = done.filter((d) => !d.ok);
+    paint(null, batchCancel ? '已取消' : '逐集生成结束');
+    loadSaved();
+    if (bad.length) toast.err(`完成 ${okN} 集，${bad.length} 集失败：${bad.map((d) => `第 ${d.ep} 集（${d.error}）`).join('；')}`, 9000);
+    else toast.ok(`逐集生成完成：${okN} 集已保存`);
   }
 
   function varsOf(tpl) {
@@ -222,7 +452,9 @@ export default async function scripts(container, params) {
     let prompt = tpl.content || '';
     for (const [k, v] of fields) prompt = prompt.split(`{{${k}}}`).join(v || '');
     prompt = prompt.replace(/\{\{[^}]+\}\}/g, '（未填写）');
-    if (roster.text) prompt = `${roster.text}\n\n${prompt}`;
+    // 名册（谁）→ 前情（已经发生了什么）→ 任务本身（放最后，注意力最强）
+    const ctx = [roster.text, priorOn ? prior.text : ''].filter(Boolean);
+    if (ctx.length) prompt = `${ctx.join('\n\n')}\n\n${prompt}`;
     return [
       { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。请用中文回答。' },
       { role: 'user', content: prompt },
@@ -450,7 +682,8 @@ export default async function scripts(container, params) {
       const r = await api.createScript({
         project_id: projectId,
         script_type: tab,
-        title: `${SCRIPT_TYPES.find((t) => t.value === tab)?.label || '脚本'} - ${new Date().toLocaleDateString('zh-CN')}`,
+        episode_number: epNo,
+        title: `${SCRIPT_TYPES.find((t) => t.value === tab)?.label || '脚本'}${epNo > 1 ? ` 第 ${epNo} 集` : ''} - ${new Date().toLocaleDateString('zh-CN')}`,
         content: result,
         model_name: container.querySelector('#model')?.value || '',
         generation_prompt: '',
@@ -611,7 +844,7 @@ export default async function scripts(container, params) {
       <div class="card" style="margin-bottom:10px;padding:14px">
         <div class="row" style="align-items:flex-start">
           <div style="flex:1;min-width:0">
-            <div style="font-size:12.5px;font-weight:550">${esc(s.title)}</div>
+            <div style="font-size:12.5px;font-weight:550">${s.episode_number ? `<span class="chip" style="margin-right:6px">第 ${s.episode_number} 集</span>` : ''}${esc(s.title)}</div>
             <div style="font-size:11px;color:var(--text-4);margin-top:3px">${esc(relTime(s.created_at))}${s.model_name ? ` · ${esc(s.model_name)}` : ''}</div>
           </div>
           <button class="icon-btn" data-use="${esc(s.id)}" title="载入到结果区" style="background:rgba(255,255,255,0.07);color:var(--text-2)">${icon('edit', 13)}</button>
@@ -646,6 +879,7 @@ export default async function scripts(container, params) {
 
   await loadTemplates();
   await loadSaved();
+  await loadEpisodes();
   await applyBible();
 
   /**

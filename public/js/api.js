@@ -170,6 +170,15 @@ export const api = {
     return req('GET', `/api/story/episodes?${q.toString()}`);
   },
 
+  /** 单集拍表 + 前情提要（批 8 补 8）：逐集生成的本集大纲与连续性上下文，纯本地计算 */
+  storyEpisodeBrief: (q = {}) => {
+    // 这里**没有** qs 助手（本文件一贯用 URLSearchParams 拼查询串）：写 qs(...) 只会在运行时抛
+    // "qs is not defined"，静态检查与文本断言都看不见 —— 真机 browser-test 才抓得到
+    const u = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') u.set(k, String(v));
+    return req('GET', `/api/story/episode-brief?${u.toString()}`);
+  },
+
   // 一致性体检（批 8 补 3）：纯本地判定，随时可跑、不花钱
   storyAudit: (opts = {}) => {
     const q = new URLSearchParams();

@@ -1698,6 +1698,108 @@ try {
       await J(`/api/storyboards/${target.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ camera_move: '' }) });
     }
 
+    group('分集上下文与逐集生成契约（批 8 补 8：本集大纲 + 前情提要 + 一集一条落库）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before8 = await J('/api/settings');
+      const pj8 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '逐集验收剧' }) });
+      const pid = pj8.id;
+      // 八拍两幕：per_episode=3 时按幕收口切成 4+4（与 apitest 同一套 __LONGARC__ 形状）
+      const plotCards = [
+        ['逐集·起1', '起', 'C1'], ['逐集·承1', '承', 'C2'], ['逐集·转1', '转', 'C3'], ['逐集·合1', '合', 'O1'],
+        ['逐集·起2', '起', 'C4'], ['逐集·承2', '承', 'C5'], ['逐集·转2', '转', 'C6'], ['逐集·合2', '合', 'O2'],
+      ];
+      let lastUser8 = '';
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            lastUser8 = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: plotCards.map(([name, stage, conflict]) => ({ kind: 'plot', name, stage, conflict })) }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'episode-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+
+        // ① 没有分集骨架时：给的是去原著解析的路，而不是一个点不动的按钮
+        // 项目是**刚用 API 建的**，壳层的 state.projects 还是开机时那份 —— 不重新加载的话
+        // 路由会判"链接指向的项目不存在"并切到别的项目，后面所有断言都在另一个项目上跑（这一组栽过）
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#ep-body');`), '故事脚本页分集卡就绪', 12000);
+        await waitFor(() => cdp.eval(`return /还没有分集骨架/.test((document.querySelector('#ep-body')||{}).innerText||'');`), '空态提示', 8000);
+        const emptyState = await cdp.eval(`const b=document.querySelector('#ep-body'); return { txt: b.innerText, link: (b.querySelector('a')||{}).getAttribute ? b.querySelector('a').getAttribute('href') : '' };`);
+        ok('没有分集骨架时指路原著解析（不是死按钮）', /原著解析/.test(emptyState.txt) && /#\/novel\?project=/.test(emptyState.link), JSON.stringify(emptyState));
+
+        // ② 造一份原著（mock 上游，不碰真实 Key）→ 分集卡活过来
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '逐集验收原著', text: '逐集验收原文。'.repeat(30), reduce: false }) });
+        let j = null;
+        for (let i = 0; i < 40; i++) { await sleep(250); j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        ok('逐集验收：八拍已抽出', j && j.status === 'done', JSON.stringify({ s: j && j.status, ok: j && j.ok }));
+        // 分集骨架是**服务端**刚变的：同页同参再设一次 hash 不会重新初始化页面（AGENTS.md 注意事项 8）
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return /共 2 集/.test((document.querySelector('#ep-plan')||{}).innerText||'');`), '分集骨架就绪', 12000);
+        ok('分集卡报出集数与每集拍数下限', await cdp.eval(`return /共 2 集/.test(document.querySelector('#ep-plan').innerText);`));
+
+        // ③ 载入第 2 集：本集大纲落进模板变量，前情在生成前可见
+        await cdp.eval(`const n=document.querySelector('#ep-no'); n.value='2'; n.dispatchEvent(new Event('change')); return true;`);
+        await cdp.eval(`document.querySelector('#ep-load').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /前情 1 集/.test((document.querySelector('#ep-status')||{}).innerText||'');`), '前情状态可见', 10000);
+        const filled8 = await cdp.eval(`const t=document.querySelector('#fields textarea'); return t ? t.value : '';`);
+        ok('「载入本集大纲」把第 2 集的拍表落进模板变量', /第 2 集/.test(filled8) && /逐集·起2/.test(filled8), String(filled8).slice(0, 90));
+        ok('前情状态条说明带了多少集、多少字', await cdp.eval(`return /前情 1 集 \\/ \\d+ 字/.test(document.querySelector('#ep-status').innerText);`), await cdp.eval(`return document.querySelector('#ep-status').innerText;`));
+
+        // ④ 单集生成：请求体里真的有前情提要与本集大纲（这是"连续性"唯一能证明的地方）
+        lastUser8 = '';
+        await cdp.eval(`document.querySelector('#gen').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /逐集·起2/.test(document.body.innerText) || !!document.querySelector('#result-wrap .card');`), '单集生成完成', 20000);
+        await sleep(300);
+        ok('生成请求里带上了前情提要（本地算的，不额外花钱）', /【前情提要】/.test(lastUser8) && /【第 1 集】/.test(lastUser8), lastUser8.slice(0, 120));
+        ok('生成请求里带上了本集大纲', /第 2 集/.test(lastUser8) && /逐集·起2/.test(lastUser8), lastUser8.slice(0, 200));
+
+        // ⑤ 逐集生成：先确认范围，再一集一条落库
+        await cdp.eval(`document.querySelector('#gen-eps').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#b-from');`), '逐集生成弹窗', 8000);
+        const modalTxt = await cdp.eval(`return (document.querySelector('.modal')||{}).innerText||'';`);
+        ok('弹窗先讲清调用次数（花钱的事必须先说）', /调用一次模型/.test(modalTxt) && /共/.test(modalTxt), modalTxt.slice(0, 100));
+        // 只生成第 2 集：范围真的生效（关掉弹窗再取值会拿到 null，这一条正是那个坑的钉子）
+        await cdp.eval(`const f=document.querySelector('#b-from'); f.value='2'; const t=document.querySelector('#b-to'); t.value='2'; return true;`);
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        // 等"跑完"而不是等"成功 1"：范围没生效时进度条会显示成功 2，等一个不会出现的文案
+        // 只会得到超时，把"范围没生效"这条真因埋进超时信息里（对照 AD 第一次跑就是这样）
+        await waitFor(() => cdp.eval(`return /逐集生成结束|已取消/.test((document.querySelector('#ep-progress')||{}).innerText||'');`), '逐集生成结束', 30000);
+        const prog8 = await cdp.eval(`return (document.querySelector('#ep-progress')||{}).innerText||'';`);
+        ok('逐集生成只跑用户选的那一集（进度条如实报数）', /成功 1 · 失败 0 \/ 共 1/.test(prog8.replace(/\s+/g, ' ')), prog8.replace(/\s+/g, ' ').slice(0, 120));
+        const saved8 = await J(`/api/scripts?project_id=${pid}`);
+        const eps = saved8.filter((x) => x.script_type === 'episode_script');
+        ok('落库的也只有那一集（范围真的生效，不是只改了个显示）', eps.length === 1 && eps[0].episode_number === 2, JSON.stringify(eps.map((x) => x.episode_number)));
+        ok('落库的记录标题带集号', /第 2 集/.test(eps[0].title), eps[0].title);
+        await waitFor(() => cdp.eval(`return /第 2 集/.test((document.querySelector('#saved')||{}).innerText||'');`), '已保存列表标出集号', 8000);
+        ok('已保存列表把集号标出来（逐集产物一眼可辨）', await cdp.eval(`return /第 2 集/.test(document.querySelector('#saved').innerText);`));
+
+        // ⑥ 取消：把范围放到第 1 集，取消后不许有任何调用
+        const callsBefore8 = saved8.length;
+        await cdp.eval(`document.querySelector('#gen-eps').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#b-from');`), '逐集生成弹窗（取消用）', 8000);
+        await cdp.eval(`document.querySelector('.modal-foot [data-no]').click(); return true;`);
+        await sleep(600);
+        ok('取消后一集都不生成', (await J(`/api/scripts?project_id=${pid}`)).length === callsBefore8);
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before8) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('原著→剧本一键带入契约（批 8 补：跨页带入落到模板变量）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

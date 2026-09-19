@@ -1230,6 +1230,34 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 分集上下文与逐集生成（批 8 补 8）──
+  ok('单集拍表与前情提要都在后端纯函数里（前端不再抄一份渲染逻辑）',
+    /function episodeBriefText/.test(storySrc) && /function priorBrief/.test(storySrc)
+    && /PRIOR_MAX_DEFAULT/.test(storySrc) && !/function priorBrief/.test(scriptsSrc));
+  // 前端 api.js 是**所有页面**都 import 的共享模块：往里插一行插错位置，整个壳层起不来
+  // （uitest 只读文本，看不出语法坏；只有真机 browser-test 会红）。这里补一条能解析的棘轮。
+  ok('共享模块 api.js 语法可解析（插错位置会让整个壳层白屏）',
+    await import(pathToFileURL(path.join(ROOT, 'public/js/api.js')).href).then(() => true).catch(() => false));
+  ok('分集接口按集返回"本集大纲 + 前情"（本地计算，一次模型都不调）',
+    /'\/api\/story\/episode-brief'/.test(routesSrc) && /story\.priorBrief\(/.test(routesSrc)
+    && /story\.episodeBriefText\(/.test(routesSrc));
+  ok('剧本记录带集号（逐集生成才能一集一条地存下来）',
+    /episode_number: Math\.max\(0, num\(body\.episode_number, 0\)\)/.test(routesSrc)
+    && /episode_number: epNo/.test(scriptsSrc));
+  ok('剧本页有分集卡：载入本集大纲 / 带上前情 / 逐集生成',
+    /id="ep-load"/.test(scriptsSrc) && /id="ep-prior"/.test(scriptsSrc) && /id="gen-eps"/.test(scriptsSrc));
+  ok('没有分集骨架时给的是去原著解析的路，不是点不动的按钮',
+    /还没有分集骨架/.test(scriptsSrc) && /#\/novel\?project=/.test(scriptsSrc));
+  ok('逐集生成：先确认集数范围与调用次数，再逐集落库',
+    /逐集生成/.test(scriptsSrc) && /每集<b>调用一次模型<\/b>/.test(scriptsSrc)
+    && /async function runBatch\(from, to, withPrior\)/.test(scriptsSrc) && /api\.createScript\(\{/.test(scriptsSrc));
+  ok('逐集生成中途失败只记这一集、继续往下走（不把后面几集一起丢掉）',
+    /done\.push\(\{ ep, ok: false/.test(scriptsSrc) && /continue;/.test(scriptsSrc));
+  ok('逐集生成可取消（已生成的保留，没轮到的不会调用）',
+    /batchCancel = true/.test(scriptsSrc) && /if \(batchCancel\)/.test(scriptsSrc));
+  ok('前情提要在生成前可见（带了多少集、省了哪几集）',
+    /function syncEpStatus/.test(scriptsSrc) && /已省略/.test(scriptsSrc) && /prior\.chars/.test(scriptsSrc));
+
   // ── 画风写死（批 8 补 7）──
   ok('体检三源合一（卡片 / 镜头绑定 / 提示词画风），不再开第二个入口',
     /style_counts/.test(routesSrc) && /style_issues/.test(routesSrc) && /auditPromptStyle/.test(routesSrc)
@@ -1258,7 +1286,8 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('分镜页进页面就说明会不会带上名册（不留到生成完才发现名字对不上）',
     /id="roster-hint"/.test(boardsSrc) && /loadRoster\(''\)/.test(boardsSrc) && /个角色名册/.test(boardsSrc));
   ok('剧本生成也带名册（名字对齐要发生在最上游）',
-    /characterRoster,/.test(scriptsSrc) && /await refreshRoster\(\)/.test(scriptsSrc) && /if \(roster\.text\) prompt = `\$\{roster\.text\}/.test(scriptsSrc));
+    /characterRoster,/.test(scriptsSrc) && /await refreshRoster\(\)/.test(scriptsSrc)
+    && /const ctx = \[roster\.text/.test(scriptsSrc) && /ctx\.join\('\\n\\n'\)/.test(scriptsSrc));
   ok('剧本页在门禁计数之前刷新名册（显示的字数与发出的字数必须是同一份）',
     scriptsSrc.indexOf('await refreshRoster()') < scriptsSrc.indexOf('await gateBeforeGenerate(tpl)'));
   ok('润色也带名册（润色会重写全文，改名 = 下游全部失配）',

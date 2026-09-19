@@ -551,6 +551,48 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('单集拍表与前情提要（批 8 补 8：逐集生成时的连续性上下文）');
+{
+  const { planEpisodes, episodeBriefText, priorBrief, beatLine, PRIOR_MAX_DEFAULT } = require('./lib/story.js');
+  const cards = [];
+  for (let i = 1; i <= 12; i++) {
+    cards.push({ kind: 'plot', id: `c${i}`, source_id: 's1', name: `事件${i}`, stage: '起', summary: `梗概${i}`, conflict: `冲突${i}`, turn: `转折${i}`, outcome: `结果${i}`, involved: '林晚' });
+  }
+  const plan = planEpisodes(cards, { perEpisode: 4 });
+  eq('骨架按每集 4 拍切出 3 集', plan.episodes.length, 3);
+
+  // ① 单集拍表：就是全剧版里那一集的渲染（措辞同源，靠 beatLine）
+  const b2 = episodeBriefText(plan, 2);
+  ok('单集拍表带集号与拍数', b2.startsWith('第 2 集（'), b2.split('\n')[0]);
+  eq('单集拍表的拍数与该集一致', b2.split('\n').length - 1, plan.episodes[1].beat_count);
+  ok('单集拍表用 beatLine 渲染（与全剧版同源）', b2.includes(beatLine(plan.episodes[1].beats[0])), b2);
+  eq('集号字段是 index（写成 number 会静默匹配不到）', episodeBriefText(plan, 2) !== '', true);
+  eq('不存在的集返回空串', episodeBriefText(plan, 99), '');
+  eq('空输入安全', episodeBriefText(null, 1) + episodeBriefText(plan, 0), '');
+
+  // ② 前情提要：只带前面的集，且从最早的一端丢
+  const p1 = priorBrief(plan, 1);
+  eq('第 1 集没有前情', p1.text, '');
+  eq('第 1 集的前情集数为 0', p1.episodes.length, 0);
+  const p2 = priorBrief(plan, 2);
+  ok('第 2 集的前情里只有第 1 集', p2.text.includes('【第 1 集】') && !p2.text.includes('【第 2 集】'), p2.text);
+  eq('前情集号如实上报', p2.episodes.join(','), '1');
+  eq('没超预算就不算截断', p2.truncated, false);
+  ok('前情写明"不要重复叙述"（否则模型会把前情复述一遍当本集内容）', p2.text.includes('不要重复叙述'), p2.text);
+  ok('前情里带上每一拍的 beatLine', p2.text.includes(beatLine(plan.episodes[0].beats[0])), p2.text);
+
+  const p3 = priorBrief(plan, 3, { maxChars: 120 });
+  ok('超预算时从最早的一端丢（越近越相关）', p3.episodes.join(',') === '2', p3.episodes.join(','));
+  eq('丢掉的集如实上报', p3.omitted.join(','), '1');
+  eq('截断标记为真', p3.truncated, true);
+  ok('省略的集在正文里点明', p3.text.includes('已省略') && p3.text.includes('第 1 集'), p3.text);
+  ok('前情正文不含被省略那一集的内容', !p3.text.includes(beatLine(plan.episodes[0].beats[0])), p3.text);
+  ok('至少留一集（前情不能变成空话）', priorBrief(plan, 3, { maxChars: 1 }).episodes.length === 1, '');
+  eq('预算非法时回落到默认值', priorBrief(plan, 3, { maxChars: 'x' }).chars > 0, true);
+  eq('默认预算是正数', PRIOR_MAX_DEFAULT > 0, true);
+  eq('空输入安全', priorBrief(null, 3).text + priorBrief(plan, 0).text, '');
+}
+
 group('画风写死体检（批 8 补 7：提示词里不该写死系统要注入的东西）');
 {
   const { styleWordHits, auditPromptStyle, stripStyleWord, STYLE_WORDS } = require('./lib/story.js');

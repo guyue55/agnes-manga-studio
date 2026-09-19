@@ -1693,7 +1693,66 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   ok('错误文案列出了新支持的修复项',
     /bind_shot_target/.test((await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'nope' })).data.error || ''));
 
-  // ⑩ 画风写死：提示词里写了画风词 → 换画风会静默失效（纯本地判定，不花钱）
+  // ⑩ 单集拍表与前情提要 + 剧本集号（批 8 补 8：逐集生成的连续性上下文，纯本地）
+  {
+    // 卡片没有建卡端点（卡片由解析产出），所以照分集骨架那组的做法用 __LONGARC__ 走一次真解析
+    const pj = await api('POST', '/api/projects', { name: '逐集上下文测试剧' });
+    const EPID = pj.data.id;
+    const an = await api('POST', '/api/story/analyze', { project_id: EPID, title: '逐集验收', text: `__LONGARC__${'林晚在临江茶馆见到顾寒。'.repeat(40)}` });
+    let job = { status: '(未取到)' };
+    for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') { job = j; break; } }
+    eq('解析任务结束（逐集验收用）', job.status, 'done');
+    const src = (await api('GET', `/api/story/sources?project_id=${EPID}`)).data[0];
+    const q = `project_id=${EPID}&source_id=${src.id}&per_episode=3`;
+
+    const ep1 = await api('GET', `/api/story/episode-brief?${q}&episode=1`);
+    eq('单集接口 200', ep1.status, 200);
+    eq('按每集 3 拍切出 2 集', ep1.data.episode_count, 2);
+    eq('第 1 集存在', ep1.data.exists, true);
+    ok('第 1 集的大纲带集号与拍数', ep1.data.brief.startsWith('第 1 集（'), ep1.data.brief.split('\n')[0]);
+    ok('本集大纲就是全剧骨架里那一集（拍名一致）', ep1.data.brief.includes('长弧·起1'), ep1.data.brief);
+    eq('第 1 集没有前情（它是开头）', ep1.data.prior, '');
+    eq('第 1 集的前情集数为 0', ep1.data.prior_episodes.length, 0);
+
+    const ep2 = await api('GET', `/api/story/episode-brief?${q}&episode=2`);
+    ok('第 2 集的前情里是第 1 集的内容', ep2.data.prior.includes('【第 1 集】'), ep2.data.prior);
+    ok('前情里不含本集（第 2 集）的内容', !ep2.data.prior.includes('【第 2 集】'), ep2.data.prior);
+    eq('前情集号如实上报', ep2.data.prior_episodes.join(','), '1');
+    eq('前情字数如实上报', ep2.data.prior_chars, ep2.data.prior.length);
+    ok('前情写明"不要重复叙述"', ep2.data.prior.includes('不要重复叙述'));
+    eq('没超预算不算截断', ep2.data.prior_truncated, false);
+
+    const ep3 = await api('GET', `/api/story/episode-brief?${q}&episode=3`);
+    eq('不存在的集：exists 为假', ep3.data.exists, false);
+    eq('不存在的集给一句怎么做的提示（界面据此指路）', ep3.data.notes.length, 1);
+    const small = await api('GET', `/api/story/episode-brief?${q}&episode=2&prior_max=1`);
+    eq('预算过小时至少留一集而不是留空', small.data.prior_episodes.length, 1);
+    const dflt = await api('GET', `/api/story/episode-brief?${q}&episode=2&per_episode=abc`);
+    eq('非法拍数参数落回默认（与分集骨架同一条兜底）', dflt.data.per_episode, 4);
+
+    const calls0 = storyChatCalls;
+    await api('GET', `/api/story/episode-brief?${q}&episode=2`);
+    await sleep(300);
+    eq('单集接口一次模型都不调（与体检、分集同一条纪律）', storyChatCalls, calls0);
+
+    // 剧本记录带集号：逐集生成要能一集一条地存下来
+    const sc = (await api('POST', '/api/scripts', { project_id: EPID, script_type: 'episode_script', episode_number: 2, title: '逐集验收 第 2 集', content: '第 2 集正文' })).data;
+    eq('剧本存下集号', sc.episode_number, 2);
+    const listed = (await api('GET', `/api/scripts?project_id=${EPID}`)).data.find((x) => x.id === sc.id);
+    eq('列表里也带集号（界面靠它标"第 N 集"）', listed.episode_number, 2);
+    const up = await api('PUT', `/api/scripts/${sc.id}`, { episode_number: 5 });
+    eq('集号可改（挪错集能纠正）', up.data.episode_number, 5);
+    const noEp = (await api('POST', '/api/scripts', { project_id: EPID, script_type: 'story_concept', title: '不带集号', content: '全剧' })).data;
+    eq('不带集号时是 0（全剧/未指定），不是 NaN', noEp.episode_number, 0);
+    const badEp = (await api('POST', '/api/scripts', { project_id: EPID, script_type: 'story_concept', title: '坏集号', content: 'x', episode_number: 'abc' })).data;
+    eq('坏集号落回 0（不写 NaN 进数据）', badEp.episode_number, 0);
+    await api('DELETE', `/api/scripts/${sc.id}`);
+    await api('DELETE', `/api/scripts/${noEp.id}`);
+    await api('DELETE', `/api/scripts/${badEp.id}`);
+    await api('DELETE', `/api/projects/${EPID}?cascade=1`);
+  }
+
+  // ⑪ 画风写死：提示词里写了画风词 → 换画风会静默失效（纯本地判定，不花钱）
   {
     const before = await api('GET', `/api/story/audit?project_id=${PID}`);
     ok('体检报告里同时有画风侧的一组（三源各自计数）',
@@ -1743,7 +1802,7 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     await api('DELETE', `/api/storyboards/${st.id}`);
   }
 
-  // ⑪ 名字在角色库里找不到：这类镜头一定没有外貌注入，而且不报错（名册就是为它而生的）
+  // ⑫ 名字在角色库里找不到：这类镜头一定没有外貌注入，而且不报错（名册就是为它而生的）
   const unkShot = (await api('POST', '/api/storyboards', {
     project_id: PID, episode_number: 2, shot_number: 90, characters: '未登记少女、两人', image_prompt: 'x',
   })).data;
@@ -1763,7 +1822,7 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     audit4.data.shot_issues.some((x) => x.code === 'shot_char_unbound' && x.target_id === c9.id && x.shot_ids.includes(unkShot.id)),
     JSON.stringify(audit4.data.shot_issues.map((x) => [x.code, x.target_name])));
 
-  // ⑫ 修复也不花钱（同一条纪律的回归）
+  // ⑬ 修复也不花钱（同一条纪律的回归）
   const callsBefore2 = storyChatCalls;
   await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: [s1.id] });
   await sleep(300);
