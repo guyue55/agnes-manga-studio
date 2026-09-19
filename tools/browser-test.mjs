@@ -1845,6 +1845,109 @@ try {
       }
     }
 
+    group('追加解析契约（批 8 补 10：只解析新增章节 / 已有卡 id 不变）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before10 = await J('/api/settings');
+      const pj10 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '追加验收剧' }) });
+      const pid = pj10.id;
+      let appendUser = '';   // 追加那次调用发给模型的 user message（证明"只发新增的"）
+      let appendCalls = 0;
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            // 归并链与抽取链分开。判据要用**渲染后仍在**的字样：{{原文段落}} 这个占位符
+            // 会被替换成正文（渲染后并不存在"原文段落"四个字），而"已抽取的卡片清单"是模板里的固定文案
+            if (!/已抽取的卡片清单/.test(user)) {
+              appendCalls++;
+              appendUser = user;
+              return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'character', name: '追加验收角色', identity: '茶馆老板' },
+                { kind: 'location', name: '追加验收茶馆', atmosphere: '潮湿昏暗' },
+              ] }) } }] });
+            }
+            return send(200, { choices: [{ message: { content: JSON.stringify({ world: { name: '追加验收世界观', summary: '归并出的设定' }, plots: [{ name: '追加验收剧情', stage: '起' }] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'append-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+
+        // ① 先整本解析一份（这一步用 API，UI 走不走同一条路不影响本组的判据）
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '追加验收原著', text: '第一卷：临江茶馆。'.repeat(30) }) });
+        for (let i = 0; i < 40; i++) { await sleep(250); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        const cards1 = await J(`/api/story/cards?source_id=${an.source.id}`);
+        const before = cards1.map((c) => `${c.kind}:${c.name}#${c.id}`).sort();
+        ok('追加验收：首次解析落了一批卡', cards1.length > 0, String(cards1.length));
+
+        // ② 页面上追加：输入框只放新增章节，点「追加到选中的原著」
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-append');`), '原著页追加按钮', 12000);
+        // 选中这份来源：卡片列表里点它（页面的 sourceId 来自参数，但重新选中能确保左栏状态一致）
+        const marked = await cdp.eval(`const el=document.querySelector('[data-src="${an.source.id}"]'); return el ? getComputedStyle(el).borderColor : '';`);
+        ok('带 source_id 进来时左侧那份原著被标成选中（用户知道自己在往哪追加）', !!marked && marked !== 'rgba(0, 0, 0, 0)', marked);
+        await cdp.eval(`const t=document.querySelector('#nov-text'); t.value='第二卷：夜访密室。'.repeat(30); t.dispatchEvent(new Event('input')); return true;`);
+        // 前面几组可能点过"今天内不再提醒"（localStorage 是同一个 profile）——不关掉就没有计费弹窗可断言
+        await cdp.eval(`localStorage.removeItem('agnes.cost.skipUntil'); return true;`);
+        appendCalls = 0;
+        await cdp.eval(`document.querySelector('#nov-append').click(); return true;`);
+        // 先算钱再确认：这是"花钱的事先说清"的既有纪律
+        await waitFor(() => cdp.eval(`return /追加解析/.test((document.querySelector('.modal')||{}).innerText||'');`), '追加的计费确认弹窗', 10000);
+        const costTxt = await cdp.eval(`return (document.querySelector('.modal')||{}).innerText||'';`);
+        ok('追加前先算钱，并说明已有章节不重跑、已有卡片 id 不变',
+          /已有/.test(costTxt) && /不重跑/.test(costTxt) && /id 不变/.test(costTxt), costTxt.replace(/\s+/g, ' ').slice(0, 140));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /追加解析/.test((document.querySelector('#batch-bar')||{}).innerText||'') || /已开始追加解析/.test(document.body.innerText);`), '追加任务已提交', 12000);
+        for (let i = 0; i < 40; i++) { await sleep(300); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+
+        // ③ 只发新增的那一段（这才是"不为前面几十万字反复付费"的证据）
+        ok('追加只把新增章节发给模型（正文里没有第一卷的内容）',
+          /第二卷/.test(appendUser) && !/第一卷/.test(appendUser), appendUser.replace(/\s+/g, ' ').slice(-140));
+
+        // ④ 已有卡 id 一个都没变
+        const cards2 = await J(`/api/story/cards?source_id=${an.source.id}`);
+        const after = cards2.map((c) => `${c.kind}:${c.name}#${c.id}`).sort();
+        ok('追加后已有卡 id 一个都没变（分镜绑定不会悬空）', before.every((k) => after.includes(k)),
+          JSON.stringify({ before, after: after.filter((x) => !before.includes(x)) }));
+
+        // ⑤ 归并重跑同样不换 id（原来的"删了重建"每次归并都换一批 id）
+        const bibleBefore = cards2.filter((c) => c.origin === 'bible').map((c) => `${c.name}#${c.id}`).sort();
+        await J('/api/story/reduce', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_id: an.source.id }) });
+        const cards3 = await J(`/api/story/cards?source_id=${an.source.id}`);
+        const bibleAfter = cards3.filter((c) => c.origin === 'bible').map((c) => `${c.name}#${c.id}`).sort();
+        ok('归并重跑后信息卡/剧情卡 id 不变（界面与绑定都还指得准）',
+          bibleBefore.length > 0 && bibleBefore.join('|') === bibleAfter.join('|'),
+          JSON.stringify({ bibleBefore, bibleAfter }));
+
+        // ⑥ 没选原著时：明确说这是"新建"而不是静默追加
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-append');`), '原著页（未选来源）', 12000);
+        await cdp.eval(`const t=document.querySelector('#nov-text'); t.value='第三卷内容。'.repeat(10); t.dispatchEvent(new Event('input')); return true;`);
+        await cdp.eval(`document.querySelector('#nov-append').click(); return true;`);
+        await sleep(700);
+        const toastTxt = await cdp.eval(`return Array.from(document.querySelectorAll('.toast,.toast-wrap,#toasts')).map((x) => x.innerText).join('|');`);
+        ok('没选原著时明确提示"先在左侧选中要追加到哪一份"（不静默新建一份）',
+          /先在左侧选中要追加到哪一份原著/.test(toastTxt), toastTxt.replace(/\s+/g, ' ').slice(0, 120));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before10) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('原著→剧本一键带入契约（批 8 补：跨页带入落到模板变量）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

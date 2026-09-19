@@ -136,6 +136,8 @@ const mock = http.createServer((req, res) => {
           { kind: 'location', name: '临江茶馆', atmosphere: '喧闹潮湿' },
           { kind: 'npc', name: '这条类别不认识应当被丢弃' },
           ...(i === 2 ? [{ kind: 'prop', name: '青铜钥匙', owner: '林晚', usage: '开密室' }] : []),
+          // 追加解析测试要有一张**全新的卡**才验得了"新卡的块号落在新增区间"
+          ...(userMsg.includes('第二卷') ? [{ kind: 'prop', name: '夜访灯笼', owner: '林晚', usage: '照路' }] : []),
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
@@ -1828,6 +1830,65 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await sleep(300);
   eq('修复端点同样不调模型', storyChatCalls, callsBefore2);
 
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+group('追加解析（批 8 补 10：只解析新增章节 / 已有卡 id 不变 / 一张不删）');
+{
+  const pj = await api('POST', '/api/projects', { name: '追加解析测试剧' });
+  const PID = pj.data.id;
+  const wait = async (jobId) => {
+    for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${jobId}`)).data; if (j && j.status !== 'running') return j; }
+    return null;
+  };
+  // 第一次：整本解析（mock 会按提示词形状吐固定卡片）
+  const an1 = await api('POST', '/api/story/analyze', { project_id: PID, title: '追加·第一卷', text: '林晚在临江茶馆见到顾寒。'.repeat(30) });
+  eq('首次解析 200', an1.status, 200);
+  await wait(an1.data.jobId);
+  const srcId = an1.data.source.id;
+  const cards1 = (await api('GET', `/api/story/cards?source_id=${srcId}`)).data;
+  const before = cards1.map((c) => `${c.kind}:${c.name}#${c.id}`).sort();
+  ok('首次解析落了一批卡', cards1.length > 0);
+
+  // 追加：只对新增文本分块 —— 这是"不为前面几十万字反复付费"的硬证据
+  const callsBefore = storyChatCalls;
+  const ap = await api('POST', '/api/story/append', { project_id: PID, source_id: srcId, text: '第二卷：夜访密室。'.repeat(30) });
+  eq('追加解析 200', ap.status, 200);
+  eq('追加只解析新增文本（块数不含已有章节）', ap.data.appended_chunks, an1.data.chunk_count);
+  eq('块号接着已有的往后排（否则新卡指向错误的原文位置）', ap.data.chunk_offset, an1.data.chunk_count);
+  const j2 = await wait(ap.data.jobId);
+  ok('追加任务跑完', j2 && j2.status === 'done');
+  eq('追加的模型调用次数 = 新增段数 + 归并 1 次', storyChatCalls - callsBefore, ap.data.appended_chunks + 1);
+
+  const cards2 = (await api('GET', `/api/story/cards?source_id=${srcId}`)).data;
+  const after = cards2.map((c) => `${c.kind}:${c.name}#${c.id}`).sort();
+  ok('已有卡一张都没消失、id 也一个都没变（分镜绑定不会悬空）',
+    before.every((k) => after.includes(k)), JSON.stringify({ before, after }));
+  ok('追加后卡片数只增不减', cards2.length >= cards1.length);
+
+  // 块号必须接着已有的往后排：否则新卡的 evidence 会指向旧章节，
+  // "这条是从哪段读出来的"就骗人了（而返回体里的 chunk_offset 是自己算的，证明不了这一点）
+  const beforeIds = new Set(cards1.map((c) => c.id));
+  const fresh = cards2.filter((c) => !beforeIds.has(c.id));
+  ok('追加抽到的卡，块号落在新增区间内（不指向旧章节）',
+    fresh.length > 0 && fresh.every((c) => (c.chunk_index == null || c.chunk_index >= ap.data.chunk_offset)
+      && (c.evidence || []).every((i) => i >= ap.data.chunk_offset)),
+    JSON.stringify(fresh.map((c) => ({ n: c.name, ci: c.chunk_index, ev: c.evidence }))).slice(0, 200));
+
+  const src2 = (await api('GET', `/api/story/sources/${srcId}`)).data; // 列表不带全文，要看原文得取单条
+  eq('来源的块数接上了', src2.chunk_count, an1.data.chunk_count + ap.data.appended_chunks);
+  ok('来源的原文也接上了（归并看开头结尾、分集看全文都依赖它）',
+    (src2.text || '').includes('第二卷'), String(src2.chars) !== '0');
+  ok('来源字数变多', src2.chars > an1.data.source.chars);
+
+  // 参数校验：缺 source_id / 不属于本项目 / 空文本都要明确报错，而不是静默新建一份
+  eq('缺 source_id → 400', (await api('POST', '/api/story/append', { project_id: PID, text: 'x' })).status, 400);
+  eq('空文本 → 400', (await api('POST', '/api/story/append', { project_id: PID, source_id: srcId, text: '   ' })).status, 400);
+  eq('不存在的来源 → 404', (await api('POST', '/api/story/append', { project_id: PID, source_id: 'nope', text: 'x' })).status, 404);
+  const pj2 = await api('POST', '/api/projects', { name: '追加解析·别的项目' });
+  eq('跨项目的来源 → 400（不能把卡片灌进别的项目）',
+    (await api('POST', '/api/story/append', { project_id: pj2.data.id, source_id: srcId, text: 'x' })).status, 400);
+  await api('DELETE', `/api/projects/${pj2.data.id}?cascade=1`);
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 

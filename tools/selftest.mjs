@@ -551,6 +551,68 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('追加解析的卡片归并（批 8 补 10：长篇连载只解析新增章节）');
+{
+  const { mergeAppend } = require('./lib/story.js');
+  const ex = [
+    { id: 'c1', kind: 'character', name: '林晚', identity: '茶馆老板', aliases: ['晚晚'], order: 1, mentions: 2, evidence: [0], chunk_index: 0, source_id: 's1', project_id: 'p1' },
+    { id: 'c2', kind: 'plot', name: '茶馆初见', stage: '起', order: 2, evidence: [1], chunk_index: 1, source_id: 's1', project_id: 'p1' },
+    { id: 'c3', kind: 'location', name: '临江茶馆', atmosphere: '潮湿昏暗', order: 3, evidence: [1], chunk_index: 1, source_id: 's1', project_id: 'p1' },
+  ];
+  // 新增章节：同名人物（补外貌 + 新别名）、同名地点（更详细的氛围）、全新剧情
+  const inc = [
+    { kind: 'character', name: '林晚', appearance: '长发及腰', aliases: ['阿晚'], chunk_index: 5 },
+    { kind: 'location', name: '临江茶馆', atmosphere: '潮湿昏暗，江风穿堂而过，灯笼忽明忽暗', chunk_index: 5 },
+    { kind: 'plot', name: '夜访密室', stage: '承', chunk_index: 5 },
+  ];
+  const r = mergeAppend(ex, inc);
+  // 找不到就当空对象：钉子要**报红**，不能因为读 undefined 的属性把整份自检崩掉
+  // （崩掉会连带后面几十条钉子一起不跑，掩盖真正的问题范围）
+  const byName = (n) => r.cards.find((c) => c.name === n) || {};
+  ok('追加：同名卡不新建，收敛成一张', r.cards.filter((c) => c.name === '林晚').length === 1);
+  ok('追加：已有卡保留原 id（绑定与正在看的卡片都靠 id 认人）', byName('林晚').id === 'c1' && byName('临江茶馆').id === 'c3');
+  ok('追加：已有卡一张都不消失（删卡会让分镜绑定悬空）', ex.every((e) => r.cards.some((c) => c.id === e.id)) && r.cards.length === 4);
+  ok('追加：空字段被补上、别名取并集、更详细的描述取胜',
+    byName('林晚').appearance === '长发及腰'
+    && (byName('林晚').aliases || []).join(',') === '晚晚,阿晚'
+    && String(byName('临江茶馆').atmosphere || '').startsWith('潮湿昏暗，江风穿堂'));
+  ok('追加：出现次数与块号累计（不是覆盖）',
+    byName('林晚').mentions === 3 && (byName('林晚').evidence || []).join(',') === '0,5');
+  ok('追加：已有卡的 order 原样保留，新卡接在最大 order 之后（否则剧情卡顺序会乱）',
+    byName('茶馆初见').order === 2 && byName('临江茶馆').order === 3 && byName('夜访密室').order === 4);
+  ok('追加：账目对得上（touched 只含被本次改动的已有卡，fresh 只含新卡）',
+    (r.touched || []).length === 2 && r.fresh.length === 1 && r.touched.every((c) => c.id)
+    && r.fresh.every((c) => !c.id) && r.cards.length === 4 && r.merged === 2);
+  ok('追加：没被碰到的已有卡不在回写名单里（不必回写、也不该动它）',
+    !r.touched.some((c) => c.name === '茶馆初见') && r.cards.some((c) => c.id === 'c2'));
+  ok('追加：全新名字才新增（不同 kind 同名不算同一张）',
+    mergeAppend(ex, [{ kind: 'prop', name: '林晚', chunk_index: 5 }]).inserted === 1);
+
+  // 归并结果的落库：替换语义 + id 稳定（原来"删了重建"会让每次归并都换一批 id）
+  const { applyBibleCards } = require('./lib/story.js');
+  const oldBible = [
+    { id: 'b1', kind: 'world', name: '临江旧事', summary: '旧设定', order: 1 },
+    { id: 'b2', kind: 'plot', name: '茶馆初见', stage: '起', order: 2 },
+    { id: 'b3', kind: 'plot', name: '被删掉的支线', stage: '转', order: 3 },
+  ];
+  const incoming = [
+    { kind: 'world', name: '临江旧事', summary: '新设定更详细' },
+    { kind: 'plot', name: '茶馆初见', stage: '起' },
+    { kind: 'plot', name: '夜访密室', stage: '承' },
+  ];
+  const bp = applyBibleCards(oldBible, incoming);
+  ok('归并落库：同名就地更新并保住原 id（删了重建会让分镜绑定指向不存在的卡）',
+    bp.update.length === 2 && bp.update.find((c) => c.name === '临江旧事').id === 'b1'
+    && bp.update.find((c) => c.name === '茶馆初见').id === 'b2');
+  ok('归并落库：新名字才新增', bp.insert.length === 1 && bp.insert[0].name === '夜访密室');
+  ok('归并落库：这次结果里没有的旧卡才删（替换而不是叠加）',
+    bp.remove.length === 1 && bp.remove[0].id === 'b3');
+  ok('归并落库：order 听新结果（归并是重排，不是往后接）',
+    bp.update.map((c) => c.order).join(',') === '1,2' && bp.insert[0].order === 3);
+  ok('归并落库：重跑同一次结果不会产生任何新增或删除（幂等）',
+    (() => { const again = applyBibleCards([...bp.update, ...bp.insert], incoming); return again.insert.length === 0 && again.remove.length === 0; })());
+}
+
 group('单集拍表与前情提要（批 8 补 8：逐集生成时的连续性上下文）');
 {
   const { planEpisodes, episodeBriefText, priorBrief, beatLine, PRIOR_MAX_DEFAULT } = require('./lib/story.js');

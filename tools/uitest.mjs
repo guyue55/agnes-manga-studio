@@ -1230,6 +1230,23 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 追加解析（批 8 补 10）──
+  const novelSrc = fs.readFileSync(path.join(PUB, 'js/pages/novel.js'), 'utf8');
+  ok('原著页有「追加到选中的原著」入口，并真的发 append_to 那类载荷',
+    /id="nov-append"/.test(novelSrc) && /api\.storyAppend\(\{/.test(novelSrc) && /source_id: sourceId/.test(novelSrc));
+  ok('追加前先算钱，且说明"已有章节不重跑、已有卡片 id 不变"',
+    /what: '追加解析'/.test(novelSrc) && /不重跑/.test(novelSrc) && /id 不变/.test(novelSrc));
+  ok('没选原著时明确告诉用户这是新建而不是追加（不静默改语义）',
+    /先在左侧选中要追加到哪一份原著/.test(novelSrc));
+  ok('干跑提示区分"追加解析 N 段"与"分 N 段解析"',
+    /将<b>追加<\/b>解析/.test(novelSrc) && /将分 <b>\$\{p\.chunk_count\}<\/b> 段解析/.test(novelSrc));
+  ok('api.js 有 storyAppend，且指向 /api/story/append',
+    /storyAppend: \(payload\) => req\('POST', '\/api\/story\/append'/.test(fs.readFileSync(path.join(PUB, 'js/api.js'), 'utf8')));
+  ok('后端 /api/story/append 存在，且走 mergeAppend（不删已有卡）',
+    /'\/api\/story\/append'/.test(routesSrc) && /story\.mergeAppend\(existing/.test(routesSrc));
+  ok('归并落库不再"删了重建"（改成就地 upsert，id 才稳定）',
+    /story\.applyBibleCards\(oldBible, rows\)/.test(routesSrc) && !/removeWhere\('story_cards', \(r2\) => r2\.source_id === source\.id && r2\.origin === 'bible'\)/.test(routesSrc));
+
   // ── 逐集生成分镜（批 8 补 9）──
   ok('单集生成与逐集生成共用同一个内核（各写一份提示词迟早会漂移）',
     /async function shotsFromText\(text, ep\)/.test(boardsSrc)

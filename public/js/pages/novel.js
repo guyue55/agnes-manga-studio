@@ -69,6 +69,7 @@ export default async function novel(container, params = {}) {
           <div class="row wrap">
             <button class="btn" id="nov-plan">${icon('search', 14)}先算一算</button>
             <button class="btn btn-primary" id="nov-run" style="flex:1;min-width:150px">${icon('sparkles', 14)}开始解析</button>
+            <button class="btn" id="nov-append" style="flex:1;min-width:150px" title="只解析新增的章节并进已有卡片：已有卡一张不删、id 不变（分镜绑定不会悬空）">${icon('plus', 14)}追加到选中的原著</button>
           </div>
           <div id="nov-plan-box"></div>
           <div id="batch-bar" style="margin-top:10px"></div>
@@ -153,14 +154,49 @@ export default async function novel(container, params = {}) {
     const cover = p.covered_chars === p.total_chars
       ? `覆盖全文 ${countLabel(p.total_chars)}`
       : `<b class="warn">只覆盖前 ${countLabel(p.covered_chars)} / ${countLabel(p.total_chars)}</b>`;
+    const appendTo = sourceId ? (sources || []).find((x) => x.id === sourceId) : null;
     box.innerHTML = `
       <div class="note ${p.truncated ? 'orange' : 'gold'}" style="margin-top:10px">
-        将分 <b>${p.chunk_count}</b> 段解析，共调用模型 <b>${p.calls}</b> 次（含全局归并 1 次）· ${cover}
+        ${appendTo ? `将<b>追加</b>解析 <b>${p.chunk_count}</b> 段（已有 ${appendTo.chunk_count || 0} 段、${appendTo.card_count || 0} 张卡<b>不动</b>）`
+    : `将分 <b>${p.chunk_count}</b> 段解析`}，共调用模型 <b>${p.calls}</b> 次（含全局归并 1 次）· ${cover}
         ${p.truncated ? `<br>原文超出单次解析上限（最多 ${p.max_chunks} 段），本次<b>只会解析前面的部分</b>；想全覆盖请分段提交。` : ''}
       </div>`;
   }
 
   // ── 真跑 ────────────────────────────────────────────────
+  // 追加解析（批 8 补 10）：长篇连载越写越长，整本重解析等于为前面几十万字反复付费，
+  // 已有卡还会被重建（id 全变 → 分镜绑定全悬空）。这条只解析新增章节。
+  container.querySelector('#nov-append').onclick = async () => {
+    const text = textEl.value.trim();
+    if (!projectId) { toast.err('先在右上角选择项目'); return; }
+    if (!sourceId) { toast.err('先在左侧选中要追加到哪一份原著（没选就是新建一份）'); return; }
+    if (!text) { toast.err('先把新增的章节粘贴进来'); return; }
+    const r0 = await api.storyPlan({ text });
+    if (!r0.ok) { toast.err(r0.error); return; }
+    plan = r0.data;
+    renderPlanBox();
+    const src = (sources || []).find((x) => x.id === sourceId) || {};
+    const go = await costConfirm({
+      count: plan.calls,
+      what: '追加解析',
+      note: `只解析新增的 ${plan.chunk_count} 段（${countLabel(plan.covered_chars)}），已有 ${src.chunk_count || 0} 段不重跑、已有卡片 id 不变。`,
+    });
+    if (!go) return;
+    const btn = container.querySelector('#nov-append');
+    setBusy(btn, true, '提交中');
+    const r = await api.storyAppend({
+      project_id: projectId, source_id: sourceId,
+      title: titleEl.value.trim() || undefined, text,
+    });
+    setBusy(btn, false);
+    if (!r.ok) { toast.err(r.error); return; }
+    localStorage.setItem(JOB_KEY, r.data.jobId);
+    kindFilter = '';
+    toast.ok(`已开始追加解析：新增 ${r.data.appended_chunks} 段（原有 ${r.data.existing_cards} 张卡保留）`, 'info');
+    pollJob(r.data.jobId);
+    loadSources();
+  };
+
   container.querySelector('#nov-run').onclick = async () => {
     const text = textEl.value.trim();
     if (!projectId) { toast.err('先在右上角选择项目——卡片要挂在项目上才能驱动剧本和分镜'); return; }

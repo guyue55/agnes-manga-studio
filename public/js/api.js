@@ -156,6 +156,9 @@ export const api = {
   },
   storyCardToCharacter: (id, payload) => req('POST', `/api/story/cards/${id}/to-character`, payload),
   storyImportCharacters: (payload) => req('POST', '/api/story/cards/import-characters', payload),
+  /** 追加解析（批 8 补 10）：只解析新增章节并进已有卡片，已有卡 id 不变、一张不删 */
+  storyAppend: (payload) => req('POST', '/api/story/append', payload, { timeoutMs: TIMEOUT.gen }),
+
   storyReduce: (sourceId) => req('POST', '/api/story/reduce', { source_id: sourceId }, { timeoutMs: TIMEOUT.gen }),
 
   // 镜头绑定自动匹配（批 8 补 5）：纯本地匹配（不调模型）。dryRun 用来"先看会绑什么再决定"
