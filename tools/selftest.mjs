@@ -551,6 +551,73 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('角色名册与「出场人物」拆分（批 8 补 6：名字对齐是绑定命中的前提）');
+{
+  const { characterRoster } = await import(pathToFileURL(path.join(ROOT, 'public/js/consts.js')).href);
+  const { splitShotCharacters, auditShotBindings } = require('./lib/story.js');
+  const chars = [
+    { name: '林晚', alias: '晚晚、林老板', appearance: '黑色长直发垂至腰间，丹凤眼，左眉尾有一颗小痣，皮肤偏冷白', outfit: '白色衬衫', is_locked: true },
+    { name: '顾寒', alias: ['阿寒'], appearance: '黑甲', is_locked: false },
+    { name: '   ', appearance: '没有名字的行不该进名册' },
+  ];
+
+  // ① 名册：只给名字与一行长相，且明确"用本名""长相别写进提示词"
+  {
+    const r = characterRoster(chars, { text: '林晚走进茶馆' });
+    eq('无名角色不进名册', r.count, 2);
+    eq('名字列表给调用方复用', r.names.join(','), '林晚,顾寒');
+    ok('明确要求用本名', r.text.includes('必须使用下列本名'), r.text.slice(0, 60));
+    ok('明确要求把代称换成本名', r.text.includes('女主'), r.text.slice(0, 80));
+    ok('别名两种形态（"、"字符串 / 数组）都进名册',
+      r.text.includes('（别名：晚晚、林老板）') && r.text.includes('（别名：阿寒）'), r.text.split('\n')[1]);
+    ok('长相只给一行且明确禁止写进提示词',
+      r.text.includes('不要写进 image_prompt / video_prompt'), r.text.slice(-90));
+    ok('提到过的角色排在前面（本集最可能出场的先给模型看）',
+      r.text.split('\n')[1].includes('林晚'), r.text.split('\n')[1]);
+    ok('长长相被截断（名册不能把请求体撑爆）',
+      r.text.includes('…'), r.text.split('\n')[1]);
+  }
+  eq('没有角色时返回空文本（调用方原样跳过，不产生空块）', characterRoster([]).text, '');
+  eq('空输入安全', characterRoster(null).count, 0);
+  eq('无名角色单独一条也不进名册', characterRoster([{ name: '  ' }]).count, 0);
+  {
+    const r = characterRoster(chars, { limit: 1 });
+    eq('超上限只列前 N 个', r.count, 1);
+    eq('被截掉的数量如实上报', r.truncated, 1);
+    ok('截断时给出"不要新造名字"的兜底要求', r.text.includes('不要新造名字'), r.text.slice(-120));
+  }
+
+  // ② 「出场人物」拆分：分隔符 / 单字 / 泛称 / 去重
+  eq('顿号逗号斜杠分号空格都算分隔符',
+    splitShotCharacters('林晚、顾寒,苏婉儿/阿寒；两人 少女').join('|'), '林晚|顾寒|苏婉儿|阿寒|少女');
+  eq('泛称不进候选（否则体检会刷屏）',
+    splitShotCharacters('两人、三人、众人、路人、群演、旁白').length, 0);
+  eq('单字名不进候选（撞词概率太高）', splitShotCharacters('雪、雨、林晚').join('|'), '林晚');
+  eq('重复名字只留一个', splitShotCharacters('林晚、林晚').join('|'), '林晚');
+  eq('整体括号包起来的剥掉括号', splitShotCharacters('（画外）').join('|'), '画外');
+  eq('空输入安全', splitShotCharacters(undefined).length, 0);
+
+  // ③ 体检：名字在角色库里找不到 → 报出来（这类镜头一定没有外貌注入）
+  {
+    const shots = [
+      { id: 's1', shot_number: 1, characters: '林晚、少女' },
+      { id: 's2', shot_number: 2, characters: '少女、女主' },
+      { id: 's3', shot_number: 3, characters: '林晚、两人' },
+      { id: 's4', shot_number: 4, characters: '晚晚' },   // 别名：算认识，不该报
+    ];
+    const r = auditShotBindings(shots, { characters: chars, cards: [] });
+    const unk = r.issues.filter((x) => x.code === 'shot_char_unknown');
+    eq('代称被聚合成一条条（按名字，而不是按镜头）', unk.map((x) => x.target_name).join(','), '少女,女主');
+    eq('聚合里带上全部相关镜头', unk[0].shot_ids.join(','), 's1,s2');
+    eq('只算"可优化"（可能是临时角色，也可能只是代称）', unk[0].level, 'info');
+    eq('不提供一键修复（该改名还是该建角色是人的判断）', unk[0].fixable, false);
+    ok('详情讲清后果与两条出路',
+      unk[0].detail.includes('不会有外貌注入') && unk[0].detail.includes('自动匹配绑定'), unk[0].detail);
+    ok('别名算"认识"，不报', !unk.some((x) => x.target_name === '晚晚'));
+    ok('泛称不报', !unk.some((x) => x.target_name === '两人'));
+  }
+}
+
 group('镜头绑定匹配与体检纯函数（批 8 补 5：名字识别 / 两档置信度 / 按目标聚合）');
 {
   const { matchShotBindings, bindNames, auditShotBindings } = require('./lib/story.js');

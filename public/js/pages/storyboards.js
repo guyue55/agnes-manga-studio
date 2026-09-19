@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
-  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS,
+  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS, characterRoster,
   effectiveVideoSeconds, VIDEO_DURATION_RANGE,
   CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
@@ -46,6 +46,7 @@ export default async function storyboards(container, params) {
       <div class="card-title">${icon('wand', 15)}从脚本一键生成分镜表</div>
       <textarea class="textarea mono" id="script-in" aria-label="脚本内容" rows="4" placeholder="粘贴单集脚本或分镜脚本内容，点「生成分镜」由 Agnes 拆成镜头表…"></textarea>
       <div class="hint-xs" id="script-in-stat" style="margin-top:6px"></div>
+      <div class="hint-xs" id="roster-hint" style="margin-top:4px"></div>
       <div class="row wrap" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" id="gen-sb">${icon('wand', 14)}生成第 ${episode} 集分镜</button>
         <button class="btn btn-sm" id="add-shot">${icon('plus', 14)}手动添加镜头</button>
@@ -97,6 +98,7 @@ export default async function storyboards(container, params) {
   container.querySelector('#gen-sb').onclick = genFromScript;
   container.querySelector('#add-shot').onclick = () => editShot(null);
   container.querySelector('#sb-autobind').onclick = autoBind;
+  loadRoster(''); // 进页面就把"会不会带上名册"讲清楚，而不是等生成完才发现名字对不上
   container.querySelector('#gen-img-prompts').onclick = () => batchPrompts('image');
   container.querySelector('#gen-vid-prompts').onclick = () => batchPrompts('video');
   container.querySelector('#batch-img').onclick = () => batchImages();
@@ -464,15 +466,18 @@ export default async function storyboards(container, params) {
     genBusy = true;
     setBusy(btn, true, '分镜生成中');
     try {
+      // 角色名册（批 8 补 6）：模型不知道项目里已有哪些角色，写出来的「出场人物」常常对不上资产库
+      // （"女主""少女"混着来），结果是绑定全落空、谁都没有外貌注入。名册从源头把名字对齐。
+      const roster = await loadRoster(text);
       const r = await api.genText({
         messages: [
-          { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。提示词只写镜头内容，不要写整体画风或媒介词（anime style、oil painting 等）——画风由系统在使用点统一注入。' },
+          { role: 'system', content: '你是专业的AI漫剧分镜导演。只输出 JSON，不要输出任何解释文字。每个镜头必须包含所有字段，英文图片/视频提示词要专业、详细。提示词只写镜头内容，不要写整体画风或媒介词（anime style、oil painting 等），也不要写人物长相——画风与人物长相都由系统在使用点统一注入，写进提示词会与注入的那份打架。characters(出场人物) 必须使用角色名册里的本名。' },
           {
             role: 'user',
             content: `请将以下脚本内容转换为分镜表。输出一个 JSON 对象，格式：{"shots": [ ...每个元素是一个镜头... ]}，每个镜头包含：
 shot_number(数字)、shot_type(景别)、scene_description(画面描述)、characters(出场人物)、action(动作)、dialogue(台词)、narration(旁白)、sound_effect(音效)、duration_seconds(时长数字)、image_prompt(英文图片提示词)、video_prompt(英文视频提示词)、negative_prompt(英文负面提示词)。
 
-${text}`,
+${roster.text ? `${roster.text}\n\n` : ''}${text}`,
           },
         ],
         project_id: projectId,
@@ -524,9 +529,10 @@ ${text}`,
           project_id: projectId, storyboard_ids: rows.map((r) => r.id), strong_only: true,
         });
         const n = ab.ok ? ab.data.updated : 0;
+        const named = roster.count ? `（已按 ${roster.count} 个角色的本名生成）` : '';
         toast.ok(n
-          ? `已生成 ${r2.data.inserted} 个镜头，并按「出场人物」自动绑定 ${n} 个镜头的角色/场景（可点掉）`
-          : `已生成 ${r2.data.inserted} 个镜头`);
+          ? `已生成 ${r2.data.inserted} 个镜头${named}，并按「出场人物」自动绑定 ${n} 个镜头的角色/场景（可点掉）`
+          : `已生成 ${r2.data.inserted} 个镜头${named}`);
         container.querySelector('#script-in').value = '';
         load();
       } else toast.err(r2.error);
@@ -534,6 +540,23 @@ ${text}`,
       genBusy = false;
       setBusy(btn, false);
     }
+  }
+
+  /**
+   * 取角色名册并渲染提示条。名字对齐是"一致性"最便宜的一环：
+   * 模型照着本名写「出场人物」，第 8 补 5 的自动绑定才能命中，外貌注入才真的发生。
+   */
+  async function loadRoster(text) {
+    const box = container.querySelector('#roster-hint');
+    if (!projectId) { if (box) box.textContent = ''; return { count: 0, text: '' }; }
+    const r = await api.characters(projectId);
+    const roster = r.ok ? characterRoster(r.data, { text: text || '' }) : { count: 0, text: '' };
+    if (box) {
+      box.innerHTML = roster.count
+        ? `${icon('check', 12)} 生成时会带上 ${roster.count} 个角色名册（名字 + 别名，长相不进提示词）——让分镜里的「出场人物」直接用本名，自动绑定才命中${roster.truncated ? `；另有 ${roster.truncated} 个角色名册过长未列出` : ''}`
+        : '项目里还没有角色档案：生成出来的「出场人物」将无法自动绑定，也就不会有外貌注入（先到「角色库」建角色，或把原著解析出的人物卡一键入资产库）';
+    }
+    return roster;
   }
 
   // ── 自动匹配绑定（批 8 补 5）────────────────────────────

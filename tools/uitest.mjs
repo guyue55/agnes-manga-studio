@@ -1229,6 +1229,26 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   }
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
+  const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 角色名册（批 8 补 6）──
+  ok('consts.js 导出角色名册构造器（纯函数，两个生成入口共用同一份口径）',
+    /export function characterRoster\(chars, opts = \{\}\)/.test(consts)
+    && /必须使用下列本名/.test(consts) && /不要写进 image_prompt \/ video_prompt/.test(consts));
+  ok('分镜生成把名册写进请求体（不是只在前端显示）',
+    /const roster = await loadRoster\(text\)/.test(boardsSrc) && /\$\{roster\.text \? `\$\{roster\.text\}\\n\\n` : ''\}\$\{text\}/.test(boardsSrc));
+  ok('分镜生成的系统提示禁止把长相写进提示词（长相只由使用点注入一次）',
+    /不要写人物长相/.test(boardsSrc) && /characters\(出场人物\) 必须使用角色名册里的本名/.test(boardsSrc));
+  ok('分镜页进页面就说明会不会带上名册（不留到生成完才发现名字对不上）',
+    /id="roster-hint"/.test(boardsSrc) && /loadRoster\(''\)/.test(boardsSrc) && /个角色名册/.test(boardsSrc));
+  ok('剧本生成也带名册（名字对齐要发生在最上游）',
+    /characterRoster,/.test(scriptsSrc) && /await refreshRoster\(\)/.test(scriptsSrc) && /if \(roster\.text\) prompt = `\$\{roster\.text\}/.test(scriptsSrc));
+  ok('剧本页在门禁计数之前刷新名册（显示的字数与发出的字数必须是同一份）',
+    scriptsSrc.indexOf('await refreshRoster()') < scriptsSrc.indexOf('await gateBeforeGenerate(tpl)'));
+  ok('润色也带名册（润色会重写全文，改名 = 下游全部失配）',
+    /const prompt = roster\.text \? `\$\{roster\.text\}\\n\\n\$\{base\}` : base/.test(scriptsSrc));
+  ok('体检把"名字在角色库里找不到"单独报一类（名册的验收环）',
+    /shot_char_unknown/.test(storySrc) && /UNKNOWN_NAME_STOP/.test(storySrc) && /splitShotCharacters/.test(storySrc));
+
   // ── 镜头绑定自动匹配与镜头侧体检（批 8 补 5）──
   ok('api.js 有自动匹配方法与正确路径',
     /storyboardsAutoBind: \(body\)/.test(apiSrc) && /'\/api\/storyboards\/auto-bind'/.test(apiSrc));

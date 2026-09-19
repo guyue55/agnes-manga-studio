@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices,
-  nextScriptStep, stepNo, pickBibleVar, UPSTREAM_LABELS,
+  nextScriptStep, stepNo, pickBibleVar, UPSTREAM_LABELS, characterRoster,
 } from '../consts.js';
 import {
   charCount, countLabel, limitState, promptLength, checkPromptVars, promptGate, isLongVar,
@@ -204,11 +204,25 @@ export default async function scripts(container, params) {
     };
   }
 
+  /**
+   * 角色名册（批 8 补 6）：模型不知道项目里已有哪些角色，于是同一部剧里"女主/苏婉儿/婉儿"混着写，
+   * 下游的镜头绑定谁也匹配不上、谁都没有外貌注入（同一张脸在几十个镜头里各长一样，且不报错）。
+   * 把名册写进请求体是从源头对齐名字。**只有名字进提示词**，长相由系统在使用点统一注入。
+   */
+  let roster = { count: 0, text: '' };
+  async function refreshRoster() {
+    if (!projectId) { roster = { count: 0, text: '' }; return roster; }
+    const r = await api.characters(projectId);
+    roster = r.ok ? characterRoster(r.data, { text: [].concat(...[...fields.values()]).join('\n') }) : { count: 0, text: '' };
+    return roster;
+  }
+
   /** 变量替换后的实际请求体：计数与发送共用同一份，避免"显示的字数"和"发出的字数"两套算法 */
   function buildMessages(tpl) {
     let prompt = tpl.content || '';
     for (const [k, v] of fields) prompt = prompt.split(`{{${k}}}`).join(v || '');
     prompt = prompt.replace(/\{\{[^}]+\}\}/g, '（未填写）');
+    if (roster.text) prompt = `${roster.text}\n\n${prompt}`;
     return [
       { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。请用中文回答。' },
       { role: 'user', content: prompt },
@@ -249,6 +263,7 @@ export default async function scripts(container, params) {
       toast.err('还没配置 Agnes API Key，请到「设置」页填写。');
       return;
     }
+    await refreshRoster(); // 先取最新名册：门禁计数与真正发出的请求体必须包含同一份内容
     if (!(await gateBeforeGenerate(tpl))) return;
     const messages = buildMessages(tpl);
 
@@ -497,7 +512,8 @@ export default async function scripts(container, params) {
     generating = true;
     const st = container.querySelector('#gen-status');
     st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px">正在${esc(tpl.name)}…</span></div>`;
-    const prompt = (tpl.content || '').replace(/\{\{[^}]+\}\}/g, result);
+    const base = (tpl.content || '').replace(/\{\{[^}]+\}\}/g, result);
+    const prompt = roster.text ? `${roster.text}\n\n${base}` : base;
     let r;
     try {
       r = await api.genText({

@@ -1948,6 +1948,81 @@ try {
       }
     }
 
+    group('角色名册契约（批 8 补 6：名册进提示词 → 模型照本名写 → 自动绑定命中）');
+    {
+      // 这一组要证的是**因果链**而不是"我拼了字符串"：mock 从真实请求体里把名册抠出来，
+      // 再用名册里的本名回一个分镜表 —— 只有名册真的到了模型面前，后面那步自动绑定才可能命中。
+      let sawRoster = null;
+      let sawSystem = '';
+      let sawLookRule = false;
+      const mock = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          const u = new URL(req.url, 'http://x');
+          if (!u.pathname.endsWith('/chat/completions')) { res.writeHead(404); res.end('{}'); return; }
+          let cb = {};
+          try { cb = JSON.parse(body); } catch { /* 坏请求体就当空 */ }
+          const msgs = Array.isArray(cb.messages) ? cb.messages : [];
+          sawSystem = String((msgs.find((m) => m.role === 'system') || {}).content || '');
+          sawLookRule = sawSystem.includes('不要写人物长相');
+          const user = String((msgs.find((m) => m.role === 'user') || {}).content || '');
+          const hit = user.match(/【本剧角色名册】[\s\S]*?\n- ([^\n（|]+)/);
+          sawRoster = hit ? hit[1].trim() : null;
+          const name = sawRoster || '未知名册';
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '```json\n' + JSON.stringify([
+            { shot_number: 1, shot_type: '中景', characters: name, scene_description: '名册验收：她走进门', action: '走进门', image_prompt: 'a woman walks in', video_prompt: 'slow dolly in' },
+            { shot_number: 2, shot_type: '特写', characters: `${name}、少女`, scene_description: '名册验收：她回头', action: '回头', image_prompt: 'close up', video_prompt: 'static' },
+          ]) + '\n```' } }] }));
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const post = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      let pid = null; let cid = null; let ids = [];
+      const before = await J('/api/settings');
+      try {
+        pid = (await J('/api/projects')).find((x) => x.name === '浏览器验收剧').id;
+        await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=${pid}&episode=7`, { method: 'DELETE' });
+        cid = (await post('/api/characters', { project_id: pid, name: '名册验收角色', alias: '小册', appearance: '银发红瞳，左眼下有一道旧疤', outfit: '黑色长风衣', is_locked: true })).id;
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'roster-key' }) });
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=7'; return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#gen-sb');`), '分镜页就绪', 12000);
+        const hint = await waitFor(() => cdp.eval(`return (document.querySelector('#roster-hint')||{}).innerText||'';`), '名册提示出现', 8000).catch(() => '');
+        ok('进页面就说清"会带上角色名册"（不是等生成完才发现名字对不上）',
+          String(hint).includes('1 个角色名册'), String(hint).slice(0, 120));
+        await cdp.eval(`const t=document.querySelector('#script-in'); t.value='名册验收：她走进门，回头看了一眼。'; t.dispatchEvent(new Event('input',{bubbles:true})); return true;`);
+        await cdp.eval(`document.querySelector('#gen-sb').click(); return true;`);
+        // 等"分镜行出现"而不是等本名出现：等待条件不能依赖被测的那个事实，
+        // 否则名册一旦没进请求体，这里会先超时，真正该红的那条断言反而没机会报（对照 Y 实测）
+        await waitFor(() => cdp.eval(`return /名册验收：她走进门/.test(document.body.innerText);`), '生成结果落库', 15000);
+        await sleep(600);
+        ok('请求体里真的带了角色名册（不是只拼在前端变量里）', sawRoster === '名册验收角色', String(sawRoster));
+        ok('系统提示明确"不要写人物长相"（长相只由使用点注入一次，写两遍会打架）', sawLookRule, sawSystem.slice(0, 60));
+        const rows = await J(`/api/storyboards?project_id=${pid}&episode=7`);
+        ids = rows.map((r) => r.id);
+        const r1 = rows.find((r) => r.shot_number === 1);
+        ok('模型照本名写「出场人物」→ 生成后自动绑定命中', (r1.character_ids || []).includes(cid), JSON.stringify({ chars: r1.characters, ids: r1.character_ids }));
+        const r2 = rows.find((r) => r.shot_number === 2);
+        ok('名册之外的名字（"少女"）不会被误绑', !(r2.character_ids || []).some((x) => x !== cid), JSON.stringify(r2.character_ids));
+        // 验收环：名册之外的代称会在体检里被点出来（预防 + 检测成对）
+        const audit = await J(`/api/story/audit?project_id=${pid}`);
+        const unk = (audit.shot_issues || []).filter((x) => x.code === 'shot_char_unknown');
+        ok('体检点出"名字在角色库里找不到"的代称（名册的验收环）',
+          unk.some((x) => x.target_name === '少女'), JSON.stringify(unk.map((x) => x.target_name)));
+        ok('体检不误报名册里的本名', !unk.some((x) => x.target_name === '名册验收角色'), JSON.stringify(unk.map((x) => x.target_name)));
+      } finally {
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agnes_api_base_url: before.agnes_api_base_url || '', agnes_api_key: before.agnes_api_key || '' }) });
+        mock.close();
+        if (pid) await fetch(`http://127.0.0.1:${port}/api/storyboards?project_id=${pid}&episode=7`, { method: 'DELETE' });
+        if (cid) await fetch(`http://127.0.0.1:${port}/api/characters/${cid}`, { method: 'DELETE' });
+        await cdp.send('Page.reload', {}); await sleep(700);
+      }
+    }
+
     group('镜头绑定自动匹配契约（批 8 补 5：干跑确认 → 落库 → 体检兜底 → 按目标修复）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

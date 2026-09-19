@@ -1566,7 +1566,7 @@ group('任务 CRUD 与批量取消');
 }
 
 // ── 批 8：原著解析（分块 map + 全局 reduce + 卡片反向驱动）────────
-group('镜头绑定自动匹配与镜头侧体检（批 8 补 5：两档置信度 / 只并集不覆盖 / 按目标修复）');
+group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档置信度 / 只并集不覆盖 / 按目标修复 / 名字对不上）');
 {
   const pj = await api('POST', '/api/projects', { name: '绑定匹配测试剧' });
   const PID = pj.data.id;
@@ -1693,7 +1693,27 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5：两档置信�
   ok('错误文案列出了新支持的修复项',
     /bind_shot_target/.test((await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'nope' })).data.error || ''));
 
-  // ⑩ 修复也不花钱（同一条纪律的回归）
+  // ⑩ 名字在角色库里找不到：这类镜头一定没有外貌注入，而且不报错（名册就是为它而生的）
+  const unkShot = (await api('POST', '/api/storyboards', {
+    project_id: PID, episode_number: 2, shot_number: 90, characters: '未登记少女、两人', image_prompt: 'x',
+  })).data;
+  const audit3 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const unk = audit3.data.shot_issues.filter((x) => x.code === 'shot_char_unknown');
+  ok('报出「出场人物」里角色库中没有的名字',
+    unk.some((x) => x.target_name === '未登记少女'), JSON.stringify(unk.map((x) => x.target_name)));
+  ok('泛称（两人）不报，避免刷屏', !unk.some((x) => x.target_name === '两人'));
+  ok('名字对不上不提供一键修复（该改名还是该建角色是人的判断）',
+    unk.every((x) => x.fixable === false));
+  // 验收环：把角色建出来，这一项就该消失（预防手段与检测手段成对）
+  const c9 = (await api('POST', '/api/characters', { project_id: PID, name: '未登记少女', appearance: '短发' })).data;
+  const audit4 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  ok('建了角色档案后这一项消失（体检不是永远报同样的话）',
+    !audit4.data.shot_issues.some((x) => x.code === 'shot_char_unknown' && x.target_name === '未登记少女'));
+  ok('建了档案之后同一个镜头变成"提到却没绑"（体检把问题交给下一步）',
+    audit4.data.shot_issues.some((x) => x.code === 'shot_char_unbound' && x.target_id === c9.id && x.shot_ids.includes(unkShot.id)),
+    JSON.stringify(audit4.data.shot_issues.map((x) => [x.code, x.target_name])));
+
+  // ⑪ 修复也不花钱（同一条纪律的回归）
   const callsBefore2 = storyChatCalls;
   await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'bind_shot_target', target_id: c1.id, shot_ids: [s1.id] });
   await sleep(300);
