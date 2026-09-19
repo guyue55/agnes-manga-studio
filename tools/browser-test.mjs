@@ -1845,6 +1845,97 @@ try {
       }
     }
 
+    group('逐集分镜的过期替换契约（批 8 补 15：跳过的判据不能把过期集永远锁住）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before15 = await J('/api/settings');
+      const pj15 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '过期分镜验收剧' }) });
+      const pid = pj15.id;
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/已抽取的卡片清单/.test(user)) {
+              return send(200, { choices: [{ message: { content: JSON.stringify({
+                world: { name: '过期分镜世界观', summary: '设定' },
+                plots: [
+                  { name: '过期·起1', stage: '起', conflict: 'C1' }, { name: '过期·承1', stage: '承', conflict: 'C2' },
+                  { name: '过期·转1', stage: '转', conflict: 'C3' }, { name: '过期·合1', stage: '合', outcome: 'O1' },
+                  { name: '过期·起2', stage: '起', conflict: 'C4' }, { name: '过期·承2', stage: '承', conflict: 'C5' },
+                  { name: '过期·转2', stage: '转', conflict: 'C6' }, { name: '过期·合2', stage: '合', outcome: 'O2' },
+                ],
+              }) } }] });
+            }
+            // 拆镜链：每次返回同一个镜头，便于数"这一集有几个"
+            if (/分镜导演/.test(String((cb.messages || [{}])[0].content || ''))) {
+              return send(200, { choices: [{ message: { content: JSON.stringify({ shots: [
+                { shot_number: 1, shot_type: '中景', scene_description: '过期验收镜头', characters: '', action: '', dialogue: '', narration: '', sound_effect: '', duration_seconds: 3, image_prompt: 'expired shot', video_prompt: 'expired shot', negative_prompt: 'blurry' },
+              ] }) } }] });
+            }
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'plot', name: '过期·起1', stage: '起', conflict: 'C1' },
+            ] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'stale-shot-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '过期分镜原著', text: '过期分镜验收用的长弧线故事。'.repeat(30) }) });
+        for (let i = 0; i < 40; i++) { await sleep(250); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        // 第 1 集剧本 + 它的输入指纹（等价于逐集生成）
+        const b1 = await J(`/api/story/episode-brief?project_id=${pid}&source_id=${an.source.id}&per_episode=4&episode=1`);
+        const sc1 = await J('/api/scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, script_type: 'episode_script', episode_number: 1, title: '第 1 集', content: '第 1 集剧本正文', plan_digest: b1.input_digest }) });
+        // 第 1 集先有一份**按旧剧本生成**的分镜
+        await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: [{ project_id: pid, episode_number: 1, shot_number: 1, scene_description: '旧镜头', image_prompt: 'old shot', source_script_id: sc1.id }] }) });
+        const before = (await J(`/api/storyboards?project_id=${pid}&episode=1`)).length;
+        ok('过期分镜验收：第 1 集已有一份分镜', before === 1, String(before));
+
+        // 改剧本正文 → 由它生成的分镜过期
+        await J(`/api/scripts/${sc1.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '第 1 集剧本正文（改过）' }) });
+        const st = await J(`/api/story/staleness?project_id=${pid}`);
+        ok('剧本改过后，第 1 集分镜被判定为过期（界面据此不跳过它）',
+          (st.episodes || []).some((e) => e.episode_number === 1 && e.shot_state === 'stale'), JSON.stringify((st.episodes || []).map((e) => [e.episode_number, e.shot_state])));
+
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=1'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#gen-eps-sb');`), '分镜页（逐集生成按钮）', 12000);
+        await cdp.eval(`document.querySelector('#gen-eps-sb').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#bs-replace');`), '逐集生成分镜弹窗', 12000);
+        const body = await cdp.eval(`return (document.querySelector('.modal-body') || {}).innerText || '';`);
+        ok('弹窗点名"哪几集的剧本内容改过"（用户知道为什么会重生成这些集）',
+          /剧本内容改过/.test(body) && /第 1 集/.test(body), body.replace(/\s+/g, ' ').slice(0, 200));
+        ok('过期分镜的"先清空再重生成"默认勾上（不勾就会在旧分镜后面追加一份）',
+          await cdp.eval(`return !!document.querySelector('#bs-replace') && document.querySelector('#bs-replace').checked;`));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /逐集生成结束/.test(document.querySelector('#batch-bar') ? document.querySelector('#batch-bar').innerText : '');`), '逐集生成结束', 25000);
+        const after = await J(`/api/storyboards?project_id=${pid}&episode=1`);
+        ok('过期集被重生成，且旧分镜被替换掉（不是叠加成两份）',
+          after.length === 1 && after[0].scene_description === '过期验收镜头', JSON.stringify(after.map((r) => r.scene_description)));
+        // 逐集结果在 #batch-bar（每集一行），**汇总结论在 toast** —— 两处都要读
+        const bar = await cdp.eval(`return (document.querySelector('#batch-bar') || {}).innerText || '';`);
+        ok('逐集结果标出这一集是"已替换过期分镜"',
+          /已替换过期分镜/.test(bar.replace(/\s+/g, ' ')), bar.replace(/\s+/g, ' ').slice(0, 160));
+        const toastTxt = await cdp.eval(`return Array.from(document.querySelectorAll('.toast,.toast-wrap,#toasts')).map((x) => x.innerText).join('|');`);
+        ok('汇总里报出"替换了几个过期镜头"（"删了又生成"必须能看见）',
+          /替换 1 个过期镜头/.test(toastTxt.replace(/\s+/g, ' ')), toastTxt.replace(/\s+/g, ' ').slice(0, 200));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before15) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('负面提示词契约（批 8 补 14：图片链此前完全没读它）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

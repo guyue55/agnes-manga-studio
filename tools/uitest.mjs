@@ -1246,6 +1246,17 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('批量出图在**花钱之前**预检参考图（先说清哪几张会真的进到出图输入）',
     /async function imageRefPrecheck\(shots\)/.test(boardsSrc) && /其中 \$\{refPre\.used\} 张角色参考图会作为出图输入/.test(boardsSrc));
 
+  // ── 逐集分镜用过期体检（批 8 补 15）──
+  ok('逐集生成分镜接上过期体检（纯本地、不调模型）',
+    /const stale = await api\.storyStaleness\(\{ project_id: projectId, per_episode: plan\.data\.per_episode \}\)/.test(boardsSrc));
+  ok('源剧本改过的集**不跳过**（跳过的判据是"已有分镜"，而过期集恰恰有分镜）',
+    /const isStale = cfg\.staleEps && cfg\.staleEps\.has\(ep\);/.test(boardsSrc)
+    && /if \(cfg\.skipExisting && countByEp\.get\(ep\) && !isStale\)/.test(boardsSrc));
+  ok('过期分镜可先清空再重生成，且清空按**项目 + 集**限定（服务端强制两个参数，避免误删）',
+    /await api\.clearStoryboards\(projectId, ep\)/.test(boardsSrc) && /id="bs-replace"/.test(boardsSrc));
+  ok('替换了多少个过期镜头要如实报出来（否则"删了又生成"看起来像什么都没发生）',
+    /替换 \$\{replacedN\} 个过期镜头/.test(boardsSrc) && /已替换过期分镜/.test(boardsSrc));
+
   // ── 负面提示词并入出图提示词（批 8 补 14）──
   // 本组不在批 7 那个块里，agnes.js 的源码要自己读一份（同名变量在别的块里）
   const agnes14 = read(path.join(ROOT, 'lib', 'agnes.js'));

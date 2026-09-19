@@ -503,6 +503,16 @@ export default async function storyboards(container, params) {
       const k = Number(r.episode_number) || 1;
       countByEp.set(k, (countByEp.get(k) || 0) + 1);
     }
+    // 过期体检（批 8 补 12 的能力，批 8 补 15 在这里用起来）：纯本地、零模型调用。
+    // 为什么必须在**这个**弹窗里用：默认勾着"已有分镜的集跳过"，而"源剧本改过"的集恰恰**有**分镜 ——
+    // 于是它被永远跳过：剧本改了，分镜还是旧的，用户越点越放心。这类"防护变成陷阱"最容易漏。
+    const stale = await api.storyStaleness({ project_id: projectId, per_episode: plan.data.per_episode });
+    const staleEps = new Set();
+    if (stale.ok) {
+      for (const e of (stale.data.episodes || [])) {
+        if (e.shot_state === 'stale' && byEp.has(e.episode_number)) staleEps.add(e.episode_number);
+      }
+    }
     const eps = [...byEp.keys()].sort((a, b) => a - b);
     const cfg = await new Promise((resolve) => {
       let settled = false;
@@ -513,6 +523,7 @@ export default async function storyboards(container, params) {
           （不会串集），生成后同样按「出场人物」自动绑定角色/场景。</div>
           <div class="hint-xs" style="margin-top:8px">现有分集剧本：${eps.map((e) => `第 ${e} 集`).join('、')}（共 ${eps.length} 集，分集骨架 ${n} 集）</div>
           ${[...countByEp.keys()].length ? `<div class="hint-xs" style="margin-top:4px">已有分镜的集：${[...countByEp.entries()].sort((a, b) => a[0] - b[0]).map(([e, c]) => `第 ${e} 集(${c})`).join('、')}</div>` : ''}
+          ${staleEps.size ? `<div class="note" style="margin-top:8px">${staleEps.size} 集的<b>剧本内容改过</b>（第 ${[...staleEps].sort((a, b) => a - b).join('、')} 集），现有分镜是按旧剧本生成的 —— 这些集<b>不跳过</b>，勾选下面的选项会在重生成前先清空它们的旧分镜。</div>` : ''}
           <div class="row wrap" style="gap:10px;margin-top:12px">
             <div class="field" style="flex:1;min-width:110px"><label for="bs-from">从第几集</label><input class="input" id="bs-from" type="number" min="1" max="${n}" value="${eps[0]}" /></div>
             <div class="field" style="flex:1;min-width:110px"><label for="bs-to">到第几集</label><input class="input" id="bs-to" type="number" min="1" max="${n}" value="${eps[eps.length - 1]}" /></div>
@@ -520,6 +531,10 @@ export default async function storyboards(container, params) {
           <label class="row" style="gap:8px;align-items:center;margin-top:12px;cursor:pointer">
             <input type="checkbox" id="bs-skip" checked />
             <span class="hint-xs">已经有分镜的集跳过（默认勾选：重跑不会把同一集的分镜翻倍）</span>
+          </label>
+          <label class="row" style="gap:8px;align-items:center;margin-top:6px;cursor:pointer">
+            <input type="checkbox" id="bs-replace" ${staleEps.size ? 'checked' : ''} />
+            <span class="hint-xs">过期分镜先清空再重生成（只影响上一条列出的那几集；不勾就会在旧分镜后面追加一份）</span>
           </label>
           <div class="hint-xs" style="margin-top:8px">没有剧本的集会如实跳过、不会调用模型；中途可以取消，已经生成的集保留。</div>`,
         footer: `<button class="btn" data-no>取消</button><button class="btn btn-primary" data-yes>开始生成</button>`,
@@ -531,6 +546,8 @@ export default async function storyboards(container, params) {
               from: Math.max(1, Math.min(n, Number(root.querySelector('#bs-from').value) || 1)),
               to: Math.max(1, Math.min(n, Number(root.querySelector('#bs-to').value) || n)),
               skipExisting: !!root.querySelector('#bs-skip').checked,
+              replaceStale: !!root.querySelector('#bs-replace').checked,
+              staleEps,
             });
             close();
           };
@@ -562,7 +579,7 @@ export default async function storyboards(container, params) {
           <span class="hint-xs">成功 ${okN} · 跳过 ${skipN} · 失败 ${badN}</span>
           ${cur ? '<button class="btn btn-xs" id="bs-stop">取消</button>' : ''}
         </div>
-        ${done.length ? `<div class="hint-xs" style="margin-top:6px">${done.map((d) => `${d.ok ? '✓' : (d.skipped ? '–' : '✗')}第 ${d.ep} 集`).join(' · ')}</div>` : ''}
+        ${done.length ? `<div class="hint-xs" style="margin-top:6px">${done.map((d) => `${d.ok ? '✓' : (d.skipped ? '–' : '✗')}第 ${d.ep} 集${d.replaced ? '（已替换过期分镜）' : ''}`).join(' · ')}</div>` : ''}
       </div>`;
       const stop = box.querySelector('#bs-stop');
       if (stop) stop.onclick = () => { batchStop = true; stop.disabled = true; stop.textContent = '正在取消…'; };
@@ -571,13 +588,22 @@ export default async function storyboards(container, params) {
       if (batchStop) { paint(null, '已取消'); break; }
       const sc = byEp.get(ep);
       if (!sc) { done.push({ ep, skipped: true, why: '没有剧本' }); continue; }
-      if (cfg.skipExisting && countByEp.get(ep)) {
+      // 源剧本改过的集**不跳过**（跳过的判据是"已有分镜"，而过期集恰恰有分镜）
+      const isStale = cfg.staleEps && cfg.staleEps.has(ep);
+      let replaced = 0;
+      if (cfg.skipExisting && countByEp.get(ep) && !isStale) {
         done.push({ ep, skipped: true, why: `已有 ${countByEp.get(ep)} 个镜头` });
         continue;
       }
+      if (isStale && countByEp.get(ep) && cfg.replaceStale) {
+        // 清空是**按项目 + 集**限定删除（服务端强制两个参数都给，避免跨项目误删）
+        const del = await api.clearStoryboards(projectId, ep);
+        if (!del.ok) { done.push({ ep, error: `清空旧分镜失败：${del.error}` }); continue; }
+        replaced = countByEp.get(ep);
+      }
       paint(ep, `正在生成第 ${ep} 集分镜…`);
       const out = await shotsFromText(sc.content, ep, sc.id);
-      if (out.ok) done.push({ ep, ok: true, inserted: out.inserted, bound: out.bound });
+      if (out.ok) done.push({ ep, ok: true, inserted: out.inserted, bound: out.bound, replaced });
       else done.push({ ep, error: out.error });
     }
     genBusy = false;
@@ -588,7 +614,10 @@ export default async function storyboards(container, params) {
     const skipped = done.filter((d) => d.skipped);
     paint(null, batchStop ? '已取消' : '逐集生成结束');
     if (okN) await load();
+    const replacedN = done.reduce((a, d) => a + (d.replaced || 0), 0);
     const parts = [`完成 ${okN} 集 / ${shotsN} 个镜头`];
+    // 清空+重生成必须报出来：否则"删了 5 个又生成 5 个"看起来像什么都没发生
+    if (replacedN) parts.push(`替换 ${replacedN} 个过期镜头`);
     if (skipped.length) parts.push(`跳过 ${skipped.length} 集（${skipped.map((d) => `第 ${d.ep} 集：${d.why}`).join('；')}）`);
     if (bad.length) parts.push(`失败 ${bad.length} 集（${bad.map((d) => `第 ${d.ep} 集：${d.error}`).join('；')}）`);
     if (bad.length) toast.err(parts.join(' · '), 9000);
