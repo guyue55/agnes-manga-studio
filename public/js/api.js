@@ -183,6 +183,13 @@ export const api = {
   },
 
   // 剧本/分镜的过期体检（批 8 补 12）：纯本地判定，一次模型都不调
+  // 全链路进度（批 8 补 16）：纯本地统计，零模型调用
+  storyPipeline: (q = {}) => {
+    const p = new URLSearchParams();
+    Object.keys(q).forEach((k) => { if (q[k] !== undefined && q[k] !== '') p.set(k, q[k]); });
+    return req('GET', `/api/story/pipeline${p.toString() ? `?${p}` : ''}`);
+  },
+
   storyStaleness: (q = {}) => {
     const u = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') u.set(k, String(v));

@@ -551,6 +551,45 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('全链路进度体检（批 8 补 16：卡在哪一步、下一步点哪儿）');
+{
+  const { pipelineOverview } = require('./lib/story.js');
+  const keys = (r) => r.steps.map((x) => x.key).join('>');
+  const state = (r, k) => (r.steps.find((x) => x.key === k) || {}).state;
+
+  eq('七段链路的顺序就是创作顺序', keys(pipelineOverview({})), 'source>cards>episodes>scripts>shots>images>videos');
+  const empty = pipelineOverview({});
+  eq('空项目：第一步该做，其余都**待前置**（不是"该做了"）', state(empty, 'source') + '/' + state(empty, 'cards'), 'todo/blocked');
+  ok('空项目给出下一步就是第一步', empty.next_step === 'source' && !empty.ready);
+  eq('待前置的步骤如实标出被谁挡住', (empty.steps.find((x) => x.key === 'cards') || {}).gated_by, 'source');
+
+  // 前置没做时，后面的步骤点进去也做不了 —— 必须与"轮到你了"分开
+  ok('前置未完成时后面全是 blocked，绝不出现第二个 todo',
+    empty.steps.filter((x) => x.state === 'todo').length === 1 && empty.steps.filter((x) => x.state === 'blocked').length === 6);
+
+  const mid = pipelineOverview({ sources: 1, cards: 8, plotCards: 4, episodes: 3, scripts: 2, shots: 20, images: 5, videos: 0 });
+  eq('做了一半的段是 partial（不是 done 也不是 todo）', state(mid, 'scripts'), 'partial');
+  ok('下一步是**第一个**没做完的段，不是最后一个', mid.next_step === 'scripts', mid.next_step);
+  eq('done 的段如实算完成', state(mid, 'episodes'), 'done');
+  ok('notes 说清"差多少"（3 集骨架只有 2 集剧本）', mid.notes.some((n) => n.includes('3 集') && n.includes('2 集')), JSON.stringify(mid.notes));
+  ok('notes 说清"多少镜头还没出图"', mid.notes.some((n) => n.includes('15 个还没有分镜图')), JSON.stringify(mid.notes));
+
+  // 有卡片但没有剧情卡：分集骨架是按剧情卡排的 —— 这种"看着做了其实做不下去"要专门提示
+  const noPlot = pipelineOverview({ sources: 1, cards: 5, plotCards: 0, episodes: 0 });
+  ok('有卡片但没剧情卡时专门提示（否则用户会以为分集那步坏了）',
+    noPlot.notes.some((n) => n.includes('剧情卡')), JSON.stringify(noPlot.notes));
+
+  const full = pipelineOverview({ sources: 1, cards: 8, plotCards: 4, episodes: 3, scripts: 3, shots: 20, images: 20, videos: 20 });
+  ok('全做完时 ready=true 且没有下一步', full.ready && full.next_step === '', JSON.stringify({ r: full.ready, n: full.next_step }));
+  eq('全做完时没有 blocked/todo/partial', (full.counts.blocked || 0) + (full.counts.todo || 0) + (full.counts.partial || 0), 0);
+
+  // 脏数据不能让面板崩（统计值可能来自任意来源）
+  const dirty = pipelineOverview({ sources: 'x', cards: -5, episodes: null, scripts: undefined, shots: NaN, images: '3' });
+  ok('脏输入一律当 0（面板不能因为一个坏值整块崩掉）',
+    dirty.steps.every((x) => Number.isFinite(x.have) && x.have >= 0), JSON.stringify(dirty.steps.map((x) => x.have)));
+  eq('字符串数字照常认', state(dirty, 'images') === 'partial' || state(dirty, 'images') === 'done', true);
+}
+
 group('负面提示词并入正向提示词（批 8 补 14：一份措辞，三处同源）');
 {
   const { negativePhrase } = require('./lib/story.js');

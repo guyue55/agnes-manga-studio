@@ -1845,6 +1845,51 @@ try {
       }
     }
 
+    group('全链路进度契约（批 8 补 16：卡在哪一步、下一步点哪儿）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pj16 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '进度验收剧' }) });
+      const pid = pj16.id;
+      try {
+        // ① 空项目：第一步该做、其余待前置，且给一个直达按钮
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1000);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#pipe-pick');`), '工作台进度面板', 12000);
+        await cdp.eval(`const s = document.querySelector('#pipe-pick'); s.value = '${pid}'; s.dispatchEvent(new Event('change')); return true;`);
+        await waitFor(() => cdp.eval(`return /原著落库/.test(document.querySelector('#pipeline').innerText);`), '进度面板渲染', 10000);
+        const box = await cdp.eval(`return document.querySelector('#pipeline').innerText;`);
+        ok('七段链路一次列全（用户不用自己拼）',
+          ['原著落库', '解析出卡片', '分集骨架', '分集剧本', '分镜', '分镜图', '分镜视频'].every((x) => box.includes(x)),
+          box.replace(/\s+/g, ' ').slice(0, 220));
+        ok('"待前置"与"该做了"画得不一样（混在一起用户会照着点却发现做不了）',
+          box.includes('该做了') && box.includes('待前置'), box.replace(/\s+/g, ' ').slice(0, 220));
+        ok('给一个直达下一步的按钮', await cdp.eval(`return !!document.querySelector('#pipe-go');`));
+        ok('按钮说的是下一步该做什么，而不是含糊的"继续"',
+          /去完成「原著落库」/.test(box), box.replace(/\s+/g, ' ').slice(0, 160));
+
+        // ② 点进去直达那一步所在页面（带上项目，省掉再选一次）
+        await cdp.eval(`document.querySelector('#pipe-go').click(); return true;`);
+        await sleep(900);
+        const hash = await cdp.eval(`return location.hash;`);
+        ok('直达按钮跳到那一步所在的页面，并带上项目 id',
+          /^#\/novel\?/.test(hash) && hash.includes(pid), hash);
+
+        // ③ 有原著之后：第一段变完成、下一步推进（面板不是一张静态图）。
+        // 注意：原著记录只能由 /api/story/analyze 创建（没有独立的 POST /api/story/sources），
+        // 所以这里直接调接口造数据；模型那边没配 Key 会失败，但**原文已落库** —— 进度面板看的就是这个
+        await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '进度验收原著', text: '进度验收用的原文。'.repeat(20) }) }).catch(() => null);
+        await sleep(600);
+        const st = await J(`/api/story/pipeline?project_id=${pid}`);
+        ok('有原著后第一段完成、下一步推进到解析卡片',
+          st.steps[0].state === 'done' && st.next_step === 'cards', JSON.stringify({ a: st.steps[0].state, n: st.next_step }));
+        ok('还没解析出卡片时如实提示"解析出卡片"是下一步', st.steps[1].state === 'todo', st.steps[1].state);
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('逐集分镜的过期替换契约（批 8 补 15：跳过的判据不能把过期集永远锁住）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

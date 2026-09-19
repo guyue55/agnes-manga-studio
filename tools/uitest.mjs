@@ -793,11 +793,14 @@ group('共享符号使用必须先导入（防白屏）');
     for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\.\/(?:ui|consts)\.js'/g)) {
       m[1].split(',').forEach((x) => { const n = x.split(/\s+as\s+/).pop().trim(); if (n) imported.add(n); });
     }
+    // 先去掉注释再判：注释里写一句"on() 是逐个绑定"就会把这条钉子骗红（本轮真踩到）。
+    // 剥注释要**保守**：`//` 前不能是 `:`，否则 `http://…` 里的斜杠会被当成注释起点
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
     for (const { name, from } of shared) {
       if (imported.has(name)) continue;
       // 只判"函数调用"形态，且排除属性访问（foo.skeleton()）与 import 语句自身
       const re = new RegExp(`(?<![.\\w$])${name}\\s*\\(`);
-      if (re.test(src)) bad.push(`${path.basename(file)} 用了 ${name}() 但未从 ${from} 导入`);
+      if (re.test(code)) bad.push(`${path.basename(file)} 用了 ${name}() 但未从 ${from} 导入`);
     }
   }
   ok('页面调用共享函数前必须导入（否则整页白屏）', bad.length === 0, bad.join(' | '));
@@ -1245,6 +1248,18 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /已带上 \$\{ri\.used\} 张角色参考图/.test(boardsSrc) && /ri\.local_skipped/.test(boardsSrc));
   ok('批量出图在**花钱之前**预检参考图（先说清哪几张会真的进到出图输入）',
     /async function imageRefPrecheck\(shots\)/.test(boardsSrc) && /其中 \$\{refPre\.used\} 张角色参考图会作为出图输入/.test(boardsSrc));
+
+  // ── 全链路进度面板（批 8 补 16）──
+  const dashSrc = read(path.join(PUB, 'js', 'pages', 'dashboard.js'));
+  ok('工作台有七段链路进度面板（卡在哪一步一眼可见）',
+    /七段链路/.test(dashSrc) && /api\.storyPipeline\(\{ project_id: pipeProject \}\)/.test(dashSrc));
+  ok('"待前置"与"该做了"画得不一样（否则用户照着点却发现做不了）',
+    /done: 'green', partial: 'gold', todo: 'blue', blocked: 'gray'/.test(dashSrc)
+    && /x\.state === 'blocked' \? '' : 'on'/.test(dashSrc));
+  ok('下一步给一个直达按钮，并带上项目 id（省掉到那页再选一次项目）',
+    /去完成「\$\{esc\(d\.next_label\)\}」/.test(dashSrc) && /navigate\(nextStep\.page, \{ project: pipeProject \}\)/.test(dashSrc));
+  ok('失败态也有 CTA（空态必须能一键走下去）',
+    /empty\('项目加载失败', '修好后这里会显示创作进度', 'alert', \{ label: '重试', go: '#\/dashboard' \}\)/.test(dashSrc));
 
   // ── 逐集分镜用过期体检（批 8 补 15）──
   ok('逐集生成分镜接上过期体检（纯本地、不调模型）',

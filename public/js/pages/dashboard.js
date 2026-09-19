@@ -5,7 +5,7 @@
 import { icon, esc, relTime, fmtTime } from '../consts.js';
 import { api } from '../api.js';
 import { empty, spinner, skeleton, toast, errBox, clickableCard, imgWithFallback } from '../ui.js';
-import { head } from './helpers.js';
+import { head, projectPicker } from './helpers.js';
 import { state, navigate } from '../app.js';
 
 export default async function dashboard(container) {
@@ -22,6 +22,9 @@ export default async function dashboard(container) {
       <p>所有数据保存在本机，API Key 也只存在本机设置文件里。断网不影响编辑，只有调用 Agnes 生成那一步需要联网。</p>
     </div>
     <div id="stats" class="stat-grid" style="margin-bottom:22px">${skeleton('card', 4)}</div>
+
+    <div class="section-label">创作进度<span class="hint-xs" style="margin-left:8px;font-weight:400">从原著到成片，这条链有七段 —— 这里告诉你卡在哪一步、下一步点哪儿</span></div>
+    <div id="pipeline" style="margin-bottom:26px">${skeleton('card', 1)}</div>
 
     <div class="section-label">快速开始</div>
     <div class="quick" style="margin-bottom:26px">
@@ -60,6 +63,59 @@ export default async function dashboard(container) {
     };
   });
 
+  // 进度面板选中的项目（切页不保留：这是个"看一眼就走"的面板）
+  let pipeProject = '';
+
+  /**
+   * 创作进度（批 8 补 16）：七段链路各自在不同页面上，用户想知道"卡在哪一步、下一步点哪儿"必须自己拼。
+   * 服务端一次给全（纯本地统计、零模型调用），这里只负责渲染 + 一个直达下一步的按钮。
+   * `blocked`（前置还没做）与 `todo`（轮到你了）必须画得不一样 —— 混在一起用户会照着点却发现做不了。
+   */
+  async function renderPipeline(projects) {
+    const el = container.querySelector('#pipeline');
+    if (!projects.length) {
+      el.innerHTML = `<div class="card">${empty('还没有项目', '建一个项目后，这里会显示从原著到成片的七段进度', 'folder', { label: '去新建项目', go: '#/projects' })}</div>`;
+      const b = el.querySelector('[data-go]');
+      if (b) b.onclick = () => navigate('projects', { new: '1' });
+      return;
+    }
+    if (!projects.some((p) => p.id === pipeProject)) pipeProject = projects[0].id;
+    const r = await api.storyPipeline({ project_id: pipeProject });
+    if (!r.ok) {
+      el.innerHTML = `<div class="card">${errBox(`进度加载失败：${r.error || '网络错误'}`, undefined, r.trace)}</div>`;
+      const b = el.querySelector('[data-retry]');
+      if (b) b.onclick = () => renderPipeline(projects);
+      return;
+    }
+    const d = r.data;
+    const BADGE = { done: 'green', partial: 'gold', todo: 'blue', blocked: 'gray' };
+    const WORD = { done: '已完成', partial: '进行中', todo: '该做了', blocked: '待前置' };
+    const nextStep = (d.steps || []).find((x) => x.key === d.next_step);
+    el.innerHTML = `<div class="card">
+      <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="card-title" style="margin:0">${icon('film', 15)} 七段链路</div>
+        ${projectPicker(projects, pipeProject, { id: 'pipe-pick', small: true })}
+        <div class="spacer"></div>
+        ${d.ready
+          ? '<span class="badge green">整条链已跑完</span>'
+          : `<button class="btn btn-sm btn-primary" id="pipe-go">${icon('play', 13)}去完成「${esc(d.next_label)}」</button>`}
+      </div>
+      <div class="chips" style="margin-top:10px">
+        ${(d.steps || []).map((x) => `<span class="chip ${x.state === 'blocked' ? '' : 'on'}" title="${esc(`${x.label}：${WORD[x.state]}${x.need > 1 ? `（${x.have}/${x.need}）` : ''} —— ${x.action}`)}">
+          ${x.state === 'done' ? icon('check', 12) + ' ' : ''}${esc(x.label)}<span class="badge ${BADGE[x.state]}" style="margin-left:6px">${WORD[x.state]}${x.need > 1 ? ` ${x.have}/${x.need}` : ''}</span>
+        </span>`).join('')}
+      </div>
+      ${(d.notes || []).length ? `<div class="note" style="margin-top:10px">${(d.notes || []).map((n) => esc(n)).join('<br>')}</div>` : ''}
+    </div>`;
+    const pick = el.querySelector('#pipe-pick');
+    if (pick) pick.onchange = () => { pipeProject = pick.value; renderPipeline(projects); };
+    const go = el.querySelector('#pipe-go');
+    if (go && nextStep) {
+      // 直达下一步：带上项目 id，省掉用户到那一页再选一次项目
+      go.onclick = () => navigate(nextStep.page, { project: pipeProject });
+    }
+  }
+
   async function load() {
     const [st, pr, im, vd] = await Promise.all([
       api.stats(), api.projects(), api.images(), api.videos(),
@@ -79,6 +135,15 @@ export default async function dashboard(container) {
         stat('失败任务', s.failed_tasks, s.failed_tasks ? 'red' : ''),
         stat('收藏素材', s.favorited_assets, ''),
       ].join('');
+    }
+
+    if (pr.ok) await renderPipeline((pr.data || []).slice(0, 20));
+    else {
+      const el = container.querySelector('#pipeline');
+      el.innerHTML = `<div class="card">${empty('项目加载失败', '修好后这里会显示创作进度', 'alert', { label: '重试', go: '#/dashboard' })}</div>`;
+      // 绑在**渲染之后**（on() 是逐个绑定、不是委托）：就地重跑 load，不用真跳页
+      const b2 = el.querySelector('[data-go]');
+      if (b2) b2.onclick = () => load();
     }
 
     if (!pr.ok) {

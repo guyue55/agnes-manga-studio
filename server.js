@@ -338,7 +338,23 @@ async function handleRequest(req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       const raw = await readBody(req, 120 * 1024 * 1024).catch(() => null);
       if (raw === null) {
-        res.on('finish', () => req.destroy()); // B6：先送 413，再断剩余上传
+        /**
+         * B6 的遗留竞态（第 97 轮修）：原先在 `finish` 里直接 `req.destroy()`，
+         * 那是**发 RST**——客户端内核会把还没被应用读走的接收缓冲一并丢掉，
+         * 于是已经送出去的 413 响应体也可能被冲掉，客户端只看到 ECONNRESET，
+         * 前端又把"文件过大"误报成网络错误（apitest 偶发红，正是这个竞态）。
+         *
+         * 正确做法：请求还没收完时先 `resume()` **排干**在途数据，让连接以正常 FIN 收尾；
+         * 同时留一个上限 —— 不停手的客户端才断流，避免被无限上传拖住（DoS 边界不变）。
+         */
+        res.on('finish', () => {
+          if (req.complete || req.readableEnded) return; // 已经收完：正常关闭即可，destroy 反而发 RST
+          req.resume();
+          const t = setTimeout(() => req.destroy(), 5000);
+          if (t.unref) t.unref();
+          const done = () => clearTimeout(t);
+          req.on('end', done); req.on('close', done); req.on('error', done);
+        });
         return sendJson(res, 413, { ok: false, error: '请求体过大' });
       }
       const text = raw.toString('utf8').trim();

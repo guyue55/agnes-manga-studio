@@ -1861,6 +1861,54 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('全链路进度（批 8 补 16：一次问清卡在哪一步）');
+{
+  const pj = await api('POST', '/api/projects', { name: '进度体检测试剧' });
+  const PID = pj.data.id;
+  const st0 = (await api('GET', `/api/story/pipeline?project_id=${PID}`)).data;
+  eq('空项目：第一步该做', st0.steps[0].state, 'todo');
+  eq('空项目：第二步是"待前置"而不是"该做了"（点进去也做不了）', st0.steps[1].state, 'blocked');
+  eq('空项目下一步就是第一步', st0.next_step, 'source');
+
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '进度·原著', text: `__LONGARC__${'长弧线的故事。'.repeat(40)}` });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const SRC = an.data.source.id;
+  // 基线取在**解析跑完**之后：解析本身当然要调模型，之后的统计一次都不该调
+  const callsBeforePipe = storyChatCalls;
+  const st1 = (await api('GET', `/api/story/pipeline?project_id=${PID}`)).data;
+  eq('原著落库后第一段完成', st1.steps[0].state, 'done');
+  eq('解析出卡片后第二段完成', st1.steps[1].state, 'done');
+  eq('有剧情卡后分集骨架也算出来了', st1.steps[2].state, 'done');
+  ok('分集段报出实际集数（面板要说"3 集"而不是只打勾）', st1.steps[2].have >= 2, JSON.stringify(st1.steps[2]));
+  eq('下一步推进到"分集剧本"', st1.next_step, 'scripts');
+  ok('后续段如实标成待前置/该做，不假装完成',
+    st1.steps.slice(3).every((x) => x.state === 'todo' || x.state === 'blocked'), JSON.stringify(st1.steps.slice(3).map((x) => x.state)));
+
+  // 只给其中一集写剧本 → 剧本段 partial，而不是 done
+  const b1 = (await api('GET', `/api/story/episode-brief?project_id=${PID}&source_id=${SRC}&episode=1`)).data;
+  await api('POST', '/api/scripts', { project_id: PID, script_type: 'episode_script', episode_number: 1, title: '第 1 集', content: '第 1 集', plan_digest: b1.input_digest });
+  const st2 = (await api('GET', `/api/story/pipeline?project_id=${PID}`)).data;
+  const sc = st2.steps.find((x) => x.key === 'scripts');
+  eq('只写了一集 → partial（不是 done）', sc.state, 'partial');
+  eq('剧本段的分母是**集数**（不是剧本条数）', sc.need, st2.steps.find((x) => x.key === 'episodes').have);
+  ok('notes 说清还差几集', st2.notes.some((n) => n.includes('还没写')), JSON.stringify(st2.notes));
+
+  // 同一集重生成两次 → 仍然只算一集（否则分母会骗人）
+  await api('POST', '/api/scripts', { project_id: PID, script_type: 'episode_script', episode_number: 1, title: '第 1 集·新', content: '第 1 集 v2' });
+  const st3 = (await api('GET', `/api/story/pipeline?project_id=${PID}`)).data;
+  eq('同一集存了两条也只算一集（分母是"写好了几集"）', st3.steps.find((x) => x.key === 'scripts').have, 1);
+
+  // 分镜 → 出图 → 视频 三段各自推进
+  await api('POST', '/api/storyboards', { rows: [{ project_id: PID, episode_number: 1, shot_number: 1, scene_description: '甲', image_prompt: 'x' }] });
+  const st4 = (await api('GET', `/api/story/pipeline?project_id=${PID}`)).data;
+  ok('有分镜后分镜段不再是零', st4.steps.find((x) => x.key === 'shots').have === 1, JSON.stringify(st4.steps.find((x) => x.key === 'shots')));
+  eq('还没有图 → 出图段该做了', st4.steps.find((x) => x.key === 'images').state, 'todo');
+  ok('notes 说清还有几个镜头没出图', st4.notes.some((n) => n.includes('还没有分镜图')), JSON.stringify(st4.notes));
+
+  eq('进度统计同样是纯本地的：解析之后一次模型都没调', storyChatCalls, callsBeforePipe);
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('负面提示词进出图提示词（批 8 补 14：此前图片链完全没读它）');
 {
   const pj = await api('POST', '/api/projects', { name: '负面词测试剧' });
