@@ -1845,6 +1845,95 @@ try {
       }
     }
 
+    group('参考图缺口契约（批 8 补 19：同一个场景 20 张图都不一样）');
+    {
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'location', name: '临江茶馆', summary: '临江的茶馆' },
+                { kind: 'character', name: '林晚', role: '主角', appearance: '白衣' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'ref-key' }) });
+        pid = (await POST('/api/projects', { name: '参考图缺口验收剧' })).id;
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '缺口·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        const cards = await J(`/api/story/cards?project_id=${pid}`);
+        const LOC = cards.find((c) => c.kind === 'location');
+        const CH = await POST('/api/characters', { project_id: pid, name: '林晚', appearance: '白衣' });
+        for (const n of [1, 2]) {
+          await POST('/api/storyboards', { project_id: pid, episode_number: 1, shot_number: n, scene_description: `茶馆第${n}镜`,
+            image_prompt: `tea house ${n}`, story_card_ids: [LOC.id], character_ids: [CH.id] });
+        }
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-audit');`), '一致性体检按钮', 15000);
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /一致性体检/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '体检面板', 15000);
+        const panel = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText||'';`);
+        ok('体检点名"重复出现却没有参考图"（链路上原本没有任何报错）',
+          /参考图/.test(panel) && /临江茶馆/.test(panel), JSON.stringify(panel.slice(0, 300)));
+        ok('说清后果（每个镜头各生成一遍，长得不一样也不报错）', /长得不一样/.test(panel), JSON.stringify(panel.slice(0, 300)));
+        ok('说明为什么只列它（只出现一次的镜头不值得准备参考图）', /只出现一次/.test(panel), JSON.stringify(panel.slice(0, 400)));
+
+        // 机器修不了的问题必须给出口：点"去处理"要真的落到那张卡上
+        const clicked = await cdp.eval(`
+          const rows = [...document.querySelectorAll('#nov-audit-box [data-audit-go]')];
+          const hit = rows.find((b) => (b.closest('.row')||{}).innerText?.includes('临江茶馆'));
+          if (!hit) return false;
+          hit.click(); return true;
+        `);
+        ok('报告里的问题带"去处理"按钮（只报告不给去处 = 死胡同）', clicked);
+        await waitFor(() => cdp.eval(`return location.hash.includes('card_id=');`), '跳到那张卡', 10000);
+        await sleep(600);
+        const opened = await cdp.eval(`return !!document.querySelector('#nov-cards [data-cancel]');`);
+        ok('"去处理"真的打开了那张卡的编辑态（不是只换个页面让人自己找）', opened);
+        const marked = await cdp.eval(`
+          const el = document.querySelector('#nov-cards .card[data-card="${LOC.id}"]');
+          return el ? getComputedStyle(el).borderColor : '';
+        `);
+        ok('目标卡片被高亮（在一屏几十张卡里要能一眼看到）', !!marked && marked !== 'rgba(0, 0, 0, 0)', JSON.stringify(marked));
+
+        // 挂上一张公网参考图 → 问题消失（证明这个体检不是只报不解）
+        const img = await POST('/api/images', { project_id: pid, name: '茶馆参考', remote_url: 'https://example.com/t.png', url: 'https://example.com/t.png' });
+        await J(`/api/story/cards/${LOC.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reference_image_ids: [img.id] }) });
+        const after = await J(`/api/story/audit?project_id=${pid}`);
+        ok('挂上公网参考图后缺口消失（体检结论跟着真实数据走）',
+          !(after.ref_issues || []).some((x) => x.target_name === '临江茶馆'),
+          JSON.stringify((after.ref_issues || []).map((x) => x.target_name)));
+
+        // 角色那一条的去处是角色库页（参数名写错会静默落到别的项目上）
+        const charGo = (after.ref_issues || []).find((x) => x.target_name === '林晚');
+        ok('角色的去处是角色库页', !!charGo && charGo.go.page === 'characters', JSON.stringify(charGo && charGo.go));
+        await cdp.eval(`location.hash = '#/characters?project=${pid}&char_id=${CH.id}'; return true;`);
+        await sleep(900);
+        const charHit = await cdp.eval(`return !!document.querySelector('.char-card[data-id="${CH.id}"]');`);
+        ok('角色库页能定位到体检点名的角色（参数名对得上）', charHit);
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('抽取覆盖契约（批 8 补 18：是"没信息"还是"模型没接住"）');
     {
       // 自建上游 mock：让三段原文得到三种不同结局（正常 / 明确无信息 / 条目被丢弃）
@@ -2575,9 +2664,11 @@ try {
         src = an.source && an.source.id;
 
         await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${src}'; return true;`);
-        await waitFor(() => cdp.eval(`document.body.innerText.includes('带入验收角色')`), '原著解析页显示卡片', 12000);
+        // 等**卡片容器**而不是整页文本：左侧解析记录的预览里也有这段原文，
+        // 拿 document.body 判会在卡片还没渲染出来时就已经满足（真机跑满时偶发假通过/偶发超时）
+        await waitFor(() => cdp.eval(`(document.querySelector('#nov-cards')||{}).innerText?.includes('带入验收角色')`), '原著解析页显示卡片', 12000);
         ok('原著解析页按 source_id 深链直接展示卡片（可刷新/可分享）',
-          await cdp.eval(`document.body.innerText.includes('带入验收角色') && document.body.innerText.includes('带入验收剧情')`));
+          await cdp.eval(`const t = (document.querySelector('#nov-cards')||{}).innerText || ''; return t.includes('带入验收角色') && t.includes('带入验收剧情');`));
 
         // 一键带入：不再需要"复制→切页→找字段→粘贴"四步
         await cdp.eval(`document.querySelector('#nov-toscript').click(); return true;`);

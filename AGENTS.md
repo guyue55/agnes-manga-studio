@@ -79,6 +79,17 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   `blocked`（前置没做，点进去也做不了）与 `todo`（轮到你了）**严格分开** —— 混成一个"待办"，
   用户会照着点却发现按钮是灰的；`partial`（做了一半）也是独立状态（只看"有没有"不看"够不够"会误报 done）。
   分母口径按**集**去重（同一集重生成存多条，按条数算会虚高），出图段的 need 是**镜头数**（不是"有没有分镜"）
+- 参考图缺口体检（批 8 补 19）：补 13/补 17 把参考图接进了出图调用，但"接上了"不等于"有人挂" ——
+  一个场景在 20 个镜头里反复出现、一张参考图都没挂，20 张图长得都不一样，而链路上**没有任何报错**
+  （每张图单独看都"成功"）。`story.auditRefImageGaps` 纯本地并进一致性体检（`ref_issues` + `issues`）：
+  只看**会重复出现**的（≥2 个镜头，单镜头不值得准备参考图）、只看**真的会进图**的类型
+  （地点/道具走 `CARD_IMAGE_KINDS`、角色走资产库），并**区分"没挂"与"挂了但用不上"**
+  （本地文件上游抓不到 —— 这条比"没挂"更危险：用户以为已经做完了）。判定靠**注入的解析器**：
+  卡片上存的是图片 **id**，纯函数拿 id 当 URL 判会把已配好的卡片全误报成"用不上"（假警报比不检查更糟）。
+  问题项带 `go` 去处 + 面板「去处理」按钮 + 高亮目标卡片 —— 体检不能只有结论、没有出口；
+  跨页参数名要对得上（原著页 `project_id`/`source_id`，角色库页 `project`，且原著页**只在 URL 有
+  `source_id` 时才加载卡片列表**）。顺带把"公网 URL 才算数"收敛成**一份实现**（`story.isPublicUrl`，
+  uitest 钉死 routes.js 里不许再有内联 `^https?` 判定）
 - 抽取覆盖体检与补抽（批 8 补 18）：分块抽取跑几十段，模型对每段的回答有**三种含义完全不同的结局**，
   此前被压成同一个"失败"：「模型明确说这段没信息」（过场/景物，**正常**）、
   「模型返回了条目却被我们丢掉」（类别不认识/名字为空，**真丢数据**）、「调用失败」。
@@ -123,7 +134,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 624 / apitest 810 / uitest 1020 / browser-test 459），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 640 / apitest 823 / uitest 1026 / browser-test 468），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
@@ -331,4 +342,12 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
    引用不存在的助手（如 `api.js` 里并没有 `qs`）更是只在运行时抛，页面表现为"按钮点了没反应"。
    两类都只有 browser-test 抓得到（后者靠 `window.__uiRejects`）。uitest 已加"api.js 能 import"的语法棘轮，
    但它挡不住第二类 —— 结论不变：**共享模块的改动必须过真机**。
+   **同一个坑的第三种形态（批 8 补 19 真犯过）：往 `if (A) { … } else { … }` 中间插代码**。
+   给原著页加"深链定位卡片"时把新块插在了 `if (sourceId) await loadCards();` 与 `else { …占位… }` **之间**，
+   于是 `else` 挂到了新块的 `if (focusCardId)` 上 —— 结果**每次正常打开原著页**（没有 `card_id`）
+   都会用"还没有选中原著"盖掉刚加载出来的卡片。语法检查过、selftest/uitest/apitest 全绿，只有真机抓到。
+   教训：给已有的 `if/else` 追加逻辑时，**先把原分支补上花括号**再往后接，别插在中间。
+   另一条同类教训：`waitFor` 的条件要**指到具体容器**。`document.body.innerText.includes(X)` 看似稳，
+   可 X 往往在别处也出现（左侧解析记录的预览就是原文开头）—— 于是等待在卡片渲染**之前**就满足了，
+   表现为"跑得快时通过、机器一忙就超时"的偶发红（批 8 补 19 收紧到 `#nov-cards` 才稳定）。
 10. 大版本架构变化（如新增子目录模块、拆分 routes）后，若未及跑 `/understand`，至少手工修订上文层表与本节事实，图谱与文档以代码为准。

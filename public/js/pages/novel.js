@@ -20,7 +20,7 @@ import {
 import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, dataOf, options, imgWithFallback } from '../ui.js';
 import { charCount, countLabel, limitState } from '../textstats.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
-import { state, onEvent, syncViewParams } from '../app.js';
+import { state, onEvent, syncViewParams, navigate } from '../app.js';
 import { parseStoryText } from '../storyfile.js';
 
 const JOB_KEY = 'agnes.novel.job'; // 解析任务 id：刷新/切页回来能续上进度（与分镜批量的做法一致）
@@ -34,7 +34,8 @@ export default async function novel(container, params = {}) {
   let cards = [];
   let plan = null;                          // 干跑结果：null = 还没算过 / 原文变了就作废
   let job = null;
-  let editingId = null;                     // 正在就地编辑的卡片 id
+  let editingId = params.card_id || null;   // 正在就地编辑的卡片 id（体检的"去处理"会直接定位到这张）
+  const focusCardId = params.card_id || ''; // 从体检跳进来时要滚到并高亮的那张卡
   let armedDel = '';                        // 已按过一次删除的卡片 id（两击确认）
   let imgs = [];                            // 本项目图片素材（给地点卡/道具卡挂参考图用）
   let outline = null;                       // 分集骨架结果（null = 还没算过；改卡片/换原著后作废）
@@ -588,11 +589,19 @@ export default async function novel(container, params = {}) {
               <div class="hint-xs" style="margin-top:2px">${esc(it.detail)}</div>
             </div>
             ${it.fixable ? `<button class="btn btn-xs" data-audit-fix="${esc(it.fix_code || it.code)}" data-fix-idx="${i}" style="flex:0 0 auto">${FIX_LABEL[it.fix_code || it.code] || '一键修复'}</button>` : ''}
+            ${!it.fixable && it.go ? `<button class="btn btn-xs" data-audit-go="${i}" style="flex:0 0 auto">去处理</button>` : ''}
           </div>`).join('')}
       </div>`;
     // 修复项：只做机械且可解释的三件事，做完重新体检（用户能立刻看到结果变化）
     on(box, '[data-audit-again]', 'click', () => runAudit());
     on(box, '[data-audit-close]', 'click', () => { box.innerHTML = ''; });
+    // 需要人来选的问题（例：给重复出现的场景挑一张参考图）机器替不了，但必须给出口 ——
+    // 只报告不给去处的体检，用户看完只能自己猜该去哪一页（批 8 补 19）
+    on(box, '[data-audit-go]', 'click', (e) => {
+      const issue = issues[Number(dataOf(e.currentTarget, 'audit-go'))] || {};
+      if (!issue.go) return;
+      navigate(issue.go.page, issue.go.params || {});
+    });
     on(box, '[data-audit-fix]', 'click', async (e) => {
       const btn = e.currentTarget;
       // 变更须知：ui.js 的 dataOf 是**字面**取属性（`el.getAttribute('data-' + name)`），
@@ -881,12 +890,26 @@ export default async function novel(container, params = {}) {
 
   syncCount();
   await loadSources();
-  if (sourceId) await loadCards();
-  else {
+  if (sourceId) {
+    await loadCards();
+  } else {
     const box0 = container.querySelector('#nov-cards');
     box0.innerHTML = `<div class="card">${empty('还没有选中原著', '左侧点一条解析记录，或用上面的输入框开始解析', 'layers', { label: '去粘贴原文', act: 'focus-text' })}</div>`;
     const b0 = box0.querySelector('[data-act="focus-text"]');
     if (b0) b0.onclick = () => { textEl.scrollIntoView({ block: 'center' }); textEl.focus(); };
+  }
+  // 从一致性体检"去处理"跳进来：卡片工作台可能还停在别处，这里滚到那张卡并提示它为什么被点名。
+  // 注意别把它塞进上面的 if/else 中间 —— 那会让 else 挂到 focusCardId 上，
+  // 于是**每次正常打开原著页**（没有 card_id）都会用"还没有选中原著"盖掉刚加载出来的卡片
+  // （写这段时真的这么错过一次，只有真机浏览器测试抓得到：文本断言与语法检查全绿）。
+  if (focusCardId) {
+    const el = container.querySelector(`[data-card="${focusCardId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      el.style.borderColor = 'var(--accent)';
+    } else if (!sourceId) {
+      toast('这张卡属于另一份原著：先在左侧点选它所在的那份，再回来挂参考图', 'info', 6000);
+    }
   }
 
   return {

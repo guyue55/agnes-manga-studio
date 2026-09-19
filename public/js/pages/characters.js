@@ -18,6 +18,7 @@ import { state, softRefresh, syncViewParams } from '../app.js';
 export default async function characters(container, params) {
   let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
   let search = (params.q || '').trim().toLowerCase();
+  const focusCharId = params.char_id || ''; // 从一致性体检"去处理"跳进来时要定位的角色
   let list = [];
   let images = [];
 
@@ -154,6 +155,11 @@ export default async function characters(container, params) {
         });
       };
     });
+    // 从一致性体检"去处理"跳进来：滚到那个角色并高亮（体检报告里的问题必须能落到具体对象上）
+    if (focusCharId) {
+      const hit = el.querySelector(`.char-card[data-id="${focusCharId}"]`);
+      if (hit) { hit.scrollIntoView({ block: 'center' }); hit.style.borderColor = 'var(--accent)'; }
+    }
     // 点卡片主体 = 编辑（卡片上没有"查看大图"这类只读出口，编辑就是唯一去处）
     el.querySelectorAll('.char-card').forEach((card) => {
       card.onclick = (e) => {

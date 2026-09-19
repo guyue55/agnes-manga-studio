@@ -1673,8 +1673,8 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   ok('体检报出扫描到的镜头数', audit.data.shots_scanned >= 4, String(audit.data.shots_scanned));
   ok('体检里同时有卡片侧与镜头侧两组（各自计数）',
     !!audit.data.card_counts && !!audit.data.shot_counts, JSON.stringify(Object.keys(audit.data)));
-  eq('总数 = 卡片侧 + 镜头侧（不许只算一边）',
-    audit.data.counts.warn, audit.data.card_counts.warn + audit.data.shot_counts.warn);
+  eq('总数 = 卡片侧 + 镜头侧 + 参考图缺口侧（不许只算一边）',
+    audit.data.counts.warn, audit.data.card_counts.warn + audit.data.shot_counts.warn + audit.data.ref_counts.warn);
   // 把镜头 2 的绑定清掉，制造一条确定的漏绑
   await api('PUT', `/api/storyboards/${s2.id}`, { character_ids: [] });
   const audit2 = await api('GET', `/api/story/audit?project_id=${PID}`);
@@ -1791,8 +1791,8 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     ok('体检报告里同时有画风侧的一组（三源各自计数）',
       !!before.data.style_counts && !!before.data.card_counts && !!before.data.shot_counts,
       JSON.stringify(Object.keys(before.data)));
-    eq('总数 = 卡片侧 + 镜头侧 + 画风侧',
-      before.data.counts.warn, before.data.card_counts.warn + before.data.shot_counts.warn + before.data.style_counts.warn);
+    eq('总数 = 卡片侧 + 镜头侧 + 画风侧 + 参考图缺口侧',
+      before.data.counts.warn, before.data.card_counts.warn + before.data.shot_counts.warn + before.data.style_counts.warn + before.data.ref_counts.warn);
     const st = (await api('POST', '/api/storyboards', {
       project_id: PID, episode_number: 3, shot_number: 91,
       image_prompt: 'a girl, oil painting style, visible brush strokes, holding a sword',
@@ -1802,10 +1802,13 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     // 界面渲染的是合并后的 issues，不是那几个分组的字段：只把问题塞进 style_issues / shot_issues
     // 而忘了并进 issues，面板上一条都不显示，而按分组字段写的断言**全绿**（对照 AC 抓到的覆盖盲区）。
     // 注意这条必须放在"确实存在画风问题"之后 —— 早放的话 style_issues 是空的，等式恒成立、钉不住东西
-    ok('镜头侧与画风侧的问题都并进 issues（面板渲染的是 issues）',
+    ok('参考图缺口也并进 issues（面板渲染的是 issues，只在分组字段里等于没显示）',
+    Array.isArray((await api('GET', `/api/story/audit?project_id=${PID}`)).data.ref_issues));
+  ok('各分组的问题都并进 issues（面板渲染的是 issues，分组字段一个都不能落下）',
       a2.data.issues.some((x) => x.code === 'shot_style_baked')
-      && a2.data.issues.length === a2.data.card_issues.length + a2.data.shot_issues.length + a2.data.style_issues.length,
-      JSON.stringify({ issues: a2.data.issues.length, card: a2.data.card_issues.length, shot: a2.data.shot_issues.length, style: a2.data.style_issues.length }));
+      && a2.data.issues.length === ['card', 'shot', 'style', 'drift', 'ref']
+        .reduce((n, k) => n + (a2.data[`${k}_issues`] || []).length, 0),
+      JSON.stringify({ issues: a2.data.issues.length, card: a2.data.card_issues.length, shot: a2.data.shot_issues.length, style: a2.data.style_issues.length, drift: (a2.data.drift_issues || []).length, ref: (a2.data.ref_issues || []).length }));
     const baked = a2.data.style_issues.filter((x) => x.word === 'oil painting style, visible brush strokes');
     eq('报出提示词里写死的画风词（按词聚合）', baked.length, 1);
     eq('聚合里带上是哪个镜头', baked[0].shot_ids.includes(st.id), true);
@@ -1861,6 +1864,62 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await sleep(300);
   eq('修复端点同样不调模型', storyChatCalls, callsBefore2);
 
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+group('参考图缺口体检（批 8 补 19：同一个场景 20 张图都不一样）');
+{
+  const pj = await api('POST', '/api/projects', { name: '参考图缺口测试剧' });
+  const PID = pj.data.id;
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '缺口·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const LOC = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((c) => c.kind === 'location');
+  const CHAR = (await api('POST', '/api/characters', { project_id: PID, name: '林晚', appearance: '白衣' })).data;
+
+  // 同一个地点出现在 2 个镜头里、一张参考图都没挂 —— 这是"20 张图长得都不一样"的最小复现
+  const mkShot = (n) => api('POST', '/api/storyboards', {
+    project_id: PID, episode_number: 1, shot_number: n, scene_description: `茶馆第${n}镜`,
+    image_prompt: `tea house ${n}`, story_card_ids: [LOC.id], character_ids: [CHAR.id],
+  });
+  await mkShot(1); await mkShot(2);
+
+  const audit1 = (await api('GET', `/api/story/audit?project_id=${PID}`)).data;
+  const gapOf = (d, name) => (d.ref_issues || []).find((x) => x.target_name === name);
+  const locGap = gapOf(audit1, '临江茶馆');
+  const charGap = gapOf(audit1, '林晚');
+  ok('重复出现又没挂参考图的地点卡被点名（此前链路上没有任何报错）',
+    !!locGap && locGap.code === 'ref_image_missing', JSON.stringify((audit1.ref_issues || []).map((x) => x.code + ':' + x.target_name)));
+  ok('角色也一起体检（角色参考图是同一类缺口）', !!charGap && charGap.code === 'ref_image_missing', JSON.stringify(charGap || {}));
+  ok('问题并进了面板真正渲染的 issues（不能只在分组字段里）',
+    audit1.issues.some((x) => x.code === 'ref_image_missing'), JSON.stringify(audit1.issues.map((x) => x.code)));
+  ok('带上目标 id 与镜头号（界面才能定位到具体对象）',
+    locGap.target_id === LOC.id && (locGap.shot_numbers || []).length === 2, JSON.stringify(locGap));
+  ok('带上 go 去处（体检不能只有结论、没有出口）', !!locGap.go && locGap.go.page === 'novel', JSON.stringify(locGap.go));
+  eq('参考图缺口计入 warn 总数', audit1.counts.warn >= 2, true);
+  eq('可一键修复数为 0（挑哪张图是人的判断）', audit1.ref_counts.fixable, 0);
+
+  // 挂一张**公网**参考图 → 缺口消失（证明判定真的看图片能不能被上游抓到）
+  const pub = (await api('POST', '/api/images', { project_id: PID, name: '茶馆参考', remote_url: 'https://example.com/teahouse.png', url: 'https://example.com/teahouse.png' })).data.id;
+  await api('PUT', `/api/story/cards/${LOC.id}`, { reference_image_ids: [pub] });
+  const audit2 = (await api('GET', `/api/story/audit?project_id=${PID}`)).data;
+  ok('挂了能用的公网参考图后不再报（假警报比不检查更糟）', !gapOf(audit2, '临江茶馆'), JSON.stringify((audit2.ref_issues || []).map((x) => x.target_name)));
+
+  // 换成**本地文件** → 报成"一张都用不上"（比"没挂"更危险：用户以为已经做了）
+  const local = (await api('POST', '/api/images', { project_id: PID, name: '茶馆本地', remote_url: '', url: '/assets/local/tea.png' })).data.id;
+  await api('PUT', `/api/story/cards/${LOC.id}`, { reference_image_ids: [local] });
+  const audit3 = (await api('GET', `/api/story/audit?project_id=${PID}`)).data;
+  const locGap3 = gapOf(audit3, '临江茶馆');
+  eq('只挂本地文件 → 报"用不上"而不是"没挂"', locGap3.code, 'ref_image_local_only');
+  ok('说清是几张本地文件（用户才知道要换什么）', locGap3.ref_local === 1, JSON.stringify(locGap3));
+
+  // 指向已删图片 → 失效引用（第三种成因）
+  await api('DELETE', `/api/images/${local}`);
+  const audit4 = (await api('GET', `/api/story/audit?project_id=${PID}`)).data;
+  eq('图片被删后 → 报"失效引用"（三种成因分得开）', gapOf(audit4, '临江茶馆').code, 'ref_image_dangling');
+
+  // 只出现一次的镜头不该报（阈值：报它只会制造噪音）
+  const solo = await api('POST', '/api/story/cards/import', { project_id: PID, kind: 'prop', name: '只用一次的道具' });
+  eq('没有建卡端点（卡片只能由解析产出）——保证上面的造数路径不会悄悄失效', solo.status, 404);
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 

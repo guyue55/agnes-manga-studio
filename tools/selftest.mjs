@@ -551,6 +551,80 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('参考图缺口体检（批 8 补 19：同一个场景 20 张图都不一样）');
+{
+  const story = require('./lib/story.js');
+  ok('公网 URL 才算数（本地文件上游抓不到，与出图取图同一份实现）',
+    story.isPublicUrl('https://a/b.png') && story.isPublicUrl('HTTP://A/B.PNG')
+    && !story.isPublicUrl('/assets/x.png') && !story.isPublicUrl('') && !story.isPublicUrl(null));
+
+  const shots = [
+    { shot_number: 1, story_card_ids: ['c1'], character_ids: ['h1'] },
+    { shot_number: 2, story_card_ids: ['c1'], character_ids: ['h1'] },
+    { shot_number: 3, story_card_ids: ['c2'] },
+    { shot_number: 4, story_card_ids: ['c3'] },
+    { shot_number: 5, story_card_ids: ['c4'], character_ids: ['h2'] },
+    { shot_number: 6, story_card_ids: ['c4'], character_ids: ['h2'] },
+  ];
+  const cards = [
+    { id: 'c1', kind: 'location', name: '老宅' },
+    { id: 'c2', kind: 'location', name: '只出现一次' },
+    { id: 'c3', kind: 'world', name: '世界观' },
+    { id: 'c4', kind: 'prop', name: '旧怀表', reference_image_ids: ['img-local'] },
+  ];
+  const chars = [
+    { id: 'h1', name: '林晚', reference_image_ids: ['img-pub'] },
+    { id: 'h2', name: '顾寒', reference_image_ids: ['img-local'] },
+  ];
+  // 卡片上存的是**图片 id**，能不能用只有查过图库才知道 —— 所以判定靠注入的解析器
+  const fake = (map) => (ids) => {
+    const urls = []; let local = 0; let missing = 0;
+    for (const id of ids) {
+      const u = map[id];
+      if (u === undefined) missing++;
+      else if (/^https?:\/\//i.test(u)) urls.push(u);
+      else local++;
+    }
+    return { urls, local, missing };
+  };
+  const ASSETS = { 'img-pub': 'https://cdn/a.png', 'img-local': '/assets/local.png' };
+  const r = story.auditRefImageGaps({ cards, characters: chars, shots, resolveRefs: fake(ASSETS) });
+  const kinds = r.issues.map((x) => x.code + ':' + x.target_name);
+  ok('重复出现又没挂参考图的地点卡被点名', kinds.includes('ref_image_missing:老宅'), JSON.stringify(kinds));
+  ok('只出现一次的卡片不报（报它只会制造噪音）', !kinds.some((k) => k.includes('只出现一次')), JSON.stringify(kinds));
+  ok('不注入提示词的卡片类型不报（给它挂图本来就没用）', !kinds.some((k) => k.includes('世界观')), JSON.stringify(kinds));
+  ok('挂了能用的公网参考图就不报（假警报比不检查更糟：用户会去改本来正确的东西）',
+    !kinds.some((k) => k.includes('林晚')), JSON.stringify(kinds));
+  ok('挂了图但全是本地文件 → 单独报"一张都用不上"（比"没挂"更危险：用户以为已经做了）',
+    kinds.includes('ref_image_local_only:顾寒'), JSON.stringify(kinds));
+  ok('指向已删图片 → 报成"失效引用"而不是"没挂"（两种成因要分得开）',
+    story.auditRefImageGaps({
+      cards: [{ id: 'c1', kind: 'location', name: '老宅', reference_image_ids: ['gone'] }],
+      shots: [{ shot_number: 1, story_card_ids: ['c1'] }, { shot_number: 2, story_card_ids: ['c1'] }],
+      resolveRefs: fake(ASSETS),
+    }).issues[0].code === 'ref_image_dangling');
+  ok('同一类问题按影响镜头数从多到少排（先修影响最大的）',
+    r.issues.every((x, i) => i === 0 || (r.issues[i - 1].shot_numbers || []).length >= (x.shot_numbers || []).length),
+    JSON.stringify(r.issues.map((x) => x.shot_numbers.length)));
+  eq('问题项带上目标 id 与镜头号（界面才能定位到具体对象）',
+    JSON.stringify(r.issues.find((x) => x.target_name === '老宅').shot_numbers), JSON.stringify([1, 2]));
+  ok('问题项带 go 去处（体检不能只有结论、没有出口）',
+    r.issues.every((x) => x.go && x.go.page), JSON.stringify(r.issues.map((x) => x.go)));
+  ok('角色走角色库页、卡片走原著页（去处必须是能真正改到的地方）',
+    r.issues.find((x) => x.target_name === '顾寒').go.page === 'characters'
+    && r.issues.find((x) => x.target_name === '老宅').go.page === 'novel');
+  ok('角色库页的参数名是 project（写 project_id 会静默落到别的项目上）',
+    r.issues.find((x) => x.target_name === '顾寒').go.params.project !== undefined);
+  ok('卡片去处必须带 source_id（原著页只在 URL 有 source_id 时才加载卡片列表，否则落到空工作台）',
+    r.issues.find((x) => x.target_name === '老宅').go.params.source_id !== undefined
+    && Object.prototype.hasOwnProperty.call(r.issues.find((x) => x.target_name === '老宅').go.params, 'source_id'));
+  eq('可一键修复数为 0（挑哪张图是人的判断，机器替不了）', r.counts.fixable, 0);
+
+  const none = story.auditRefImageGaps({ cards: [], characters: [], shots: [] });
+  eq('没有镜头就没有问题（也不报错）', none.issues.length, 0);
+  eq('门槛是 2 个镜头起（单镜头不值得准备参考图）', story.REF_GAP_MIN_SHOTS, 2);
+}
+
 group('抽取覆盖体检（批 8 补 18：这段是"没信息"还是"模型没接住"）');
 {
   const story = require('./lib/story.js');

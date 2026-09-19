@@ -1241,7 +1241,13 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     && /const allRefs = \[\.\.\.new Set\(\[\.\.\.explicit, \.\.\.ref\.urls, \.\.\.refCards\.urls\]\)\]/.test(routesSrc)
     && /function storyCardRefImages\(cards, opts = \{\}\)/.test(routesSrc));
   ok('只有公网 URL 才发给上游（本地 /assets/… Agnes 抓不到），且如实上报用不上几张',
-    /\^https\?:\\\/\\\/\/i\.test\(u\)/.test(routesSrc) && /local_skipped: ref\.local/.test(routesSrc));
+    /story\.isPublicUrl\(u\)/.test(routesSrc) && /local_skipped: ref\.local/.test(routesSrc));
+  // "算不算数"只留一份实现：出图取图、卡片参考图、一致性体检三处共用同一个判据
+  ok('公网 URL 判定只有一份实现（各写一份必然走偏）',
+    /function isPublicUrl\(v\)/.test(read(path.join('lib', 'story.js')))
+    && (routesSrc.match(/isPublicUrl\(/g) || []).length >= 2
+    // 真正的棘轮：routes.js 里**不许**再出现内联的 http(s) 判定（用子串查，正则字面量在这层转义里太容易写错）
+    && !routesSrc.includes('^https?'));
   ok('参考图有上限（多了互相打架也拖慢生成）',
     /num\(opts\.max, 4\)/.test(routesSrc) && /\.slice\(0, 4\)/.test(routesSrc));
   ok('溯源记的是**实际发出**的输入（记 body.image 就查不到自动带上的参考图）',
@@ -1257,8 +1263,19 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     // 预检必须把场景/道具卡的参考图也算进去，否则"带了几张"是假的
     && /count\(s\.story_card_ids, cardById, cardUrls\)/.test(boardsSrc));
 
-  // ── 抽取覆盖体检与补抽（批 8 补 18）──
+  // ── 参考图缺口体检（批 8 补 19）──
   const novelSrc17 = read(path.join(PUB, 'js', 'pages', 'novel.js'));
+  ok('体检报告里"机器修不了"的问题也要给出口（只报告不给去处 = 死胡同）',
+    /data-audit-go="\$\{i\}"/.test(novelSrc17) && /navigate\(issue\.go\.page, issue\.go\.params/.test(novelSrc17));
+  ok('原著页能从链接直接定位到那张卡（"去处理"必须真的落到具体对象上）',
+    /params\.card_id \|\| null/.test(novelSrc17) && /data-card="\$\{focusCardId\}"/.test(novelSrc17));
+  const charSrc19 = read(path.join(PUB, 'js', 'pages', 'characters.js'));
+  ok('角色库页也能定位高亮（角色参考图是同一类缺口）',
+    /params\.char_id/.test(charSrc19) && /char-card\[data-id="\$\{focusCharId\}"\]/.test(charSrc19));
+  ok('参考图缺口按"影响镜头数"排（先修影响最大的）',
+    /issues\.sort\(\(a, b\) => \(b\.shot_numbers/.test(read(path.join('lib', 'story.js'))));
+
+  // ── 抽取覆盖体检与补抽（批 8 补 18）──
   const constsSrc17 = read(path.join(PUB, 'js', 'consts.js'));
   const apiSrc18 = read(path.join(PUB, 'js', 'api.js'));
   ok('覆盖体检走纯本地端点（随时可跑、不花钱）',
@@ -1376,7 +1393,7 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /只动外貌\/服饰\/别名三项/.test(novel));
   ok('后端漂移体检用纯函数、并进了 issues（面板渲染的是 issues）',
     /story\.auditCharacterDrift\(cards/.test(routesSrc) && /drift_issues/.test(routesSrc)
-    && /styleIssues\.issues, drift\.issues\)/.test(routesSrc));
+    && /styleIssues\.issues, drift\.issues, refGaps\.issues\)/.test(routesSrc));
   ok('同步修复只写外貌/服饰/别名，不碰角色定位与性格',
     /code === 'sync_character'/.test(routesSrc) && !/patch\.(role|personality|gender|age) =/.test(routesSrc));
 
