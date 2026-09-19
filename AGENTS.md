@@ -79,6 +79,14 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   `blocked`（前置没做，点进去也做不了）与 `todo`（轮到你了）**严格分开** —— 混成一个"待办"，
   用户会照着点却发现按钮是灰的；`partial`（做了一半）也是独立状态（只看"有没有"不看"够不够"会误报 done）。
   分母口径按**集**去重（同一集重生成存多条，按条数算会虚高），出图段的 need 是**镜头数**（不是"有没有分镜"）
+- 地点卡/道具卡参考图进出图输入（批 8 补 17）：人物卡有资产库（批 8 补 13 已接进出图），地点/道具卡却只有一行文字
+  → **同一个场景每张图都不一样**，且没有任何报错（与补 13 是同一类"存下来 ≠ 用上了"）。
+  地点卡/道具卡可就地挂参考图（多选缩略图，`CARD_IMAGE_KINDS = ['location','prop']`，前后端同源有 uitest 同构钉），
+  出图时自动带上；顺序固定 **显式 → 角色 → 场景道具**（总上限 4 张时**先保脸** —— 脸比景更难靠文字说准），
+  被上限挤掉的（`dropped`）与本地抓不到的（`local_skipped`）都如实上报，批量入口的预检也覆盖两类来源。
+  **`normalizeCard` 故意不产出 `reference_image_ids`**：归并落库走 `store.update`（Object.assign 合并），
+  键不在 patch 里就保留；一旦在字段缺失时吐一个 `[]`，重新解析/追加解析就会把用户挂的图**静默清空**
+  （selftest 钉死的是"形状"而不是"值"，对照 BG）
 - **413 超限路径的正确收尾**（批 8 补 16 真修）：`res.on('finish', () => req.destroy())` 发的是 **RST**，
   客户端内核会把还没被应用读走的接收缓冲一并丢掉 —— 已送出的 413 响应体也可能被冲掉，
   客户端只看到 `ECONNRESET`，前端把"文件过大"误报成网络错误。正确做法：请求没收完时先 `req.resume()` **排干**，
@@ -101,7 +109,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 592 / apitest 770 / uitest 1000 / browser-test 442），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 604 / apitest 786 / uitest 1008 / browser-test 451），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

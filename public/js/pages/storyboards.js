@@ -847,9 +847,9 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
       const refPre = await imageRefPrecheck(shots);
       if (!(await costConfirm({
         what: '图片', count: shots.length,
-        note: refPre.used ? `其中 ${refPre.used} 张角色参考图会作为出图输入（同一张脸的最强约束）。` : '',
+        note: refPre.used ? `其中 ${refPre.used} 张参考图会作为出图输入（角色 ${refPre.chars} 张、场景/道具 ${refPre.cards} 张；同一张脸/同一个场景的最强约束）。` : '',
       }))) return;
-      if (refPre.local) toast.warn(`有 ${refPre.local} 张角色参考图是本地文件，Agnes 抓不到（需要公网 URL），这些不会进到出图输入。`, 7000);
+      if (refPre.local) toast.warn(`有 ${refPre.local} 张参考图是本地文件，Agnes 抓不到（需要公网 URL），这些不会进到出图输入。`, 7000);
       const r = await api.batchImages({
         items: shots.map((s) => ({
           storyboard_id: s.id,
@@ -875,23 +875,32 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
    */
   async function imageRefPrecheck(shots) {
     const r = await api.characters(projectId);
-    if (!r.ok) return { used: 0, local: 0 };
+    if (!r.ok) return { used: 0, local: 0, chars: 0, cards: 0 };
     const byId = new Map(r.data.map((c) => [c.id, c]));
-    const urls = new Set();
+    // 批 8 补 17：场景/道具卡的参考图也会进出图输入，预检必须一起算 ——
+    // 少报的话"花钱前告诉你带了几张"就是假的（同批 8 补 13 的纪律）
+    const cardById = new Map(cardsOf().map((c) => [c.id, c]));
+    const charUrls = new Set(); const cardUrls = new Set();
     let local = 0;
-    for (const s of shots) {
-      for (const id of (s.character_ids || [])) {
-        const c = byId.get(id);
-        if (!c) continue;
-        for (const iid of (c.reference_image_ids || [])) {
+    const count = (ids, byMap, bucket) => {
+      for (const id of (ids || [])) {
+        const owner = byMap.get(id);
+        if (!owner) continue;
+        for (const iid of (owner.reference_image_ids || [])) {
           const a = window.__imgMap?.[iid];
           if (!a) continue;
           const u = a.remote_url || a.url || '';
-          if (/^https?:\/\//.test(u)) urls.add(u); else local++;
+          if (/^https?:\/\//.test(u)) bucket.add(u); else local++;
         }
       }
+    };
+    for (const s of shots) {
+      count(s.character_ids, byId, charUrls);
+      count(s.story_card_ids, cardById, cardUrls);
     }
-    return { used: urls.size, local };
+    // 去重后总数：同一张图既是角色参考又是场景参考时只发一次
+    const all = new Set([...charUrls, ...cardUrls]);
+    return { used: all.size, local, chars: charUrls.size, cards: cardUrls.size };
   }
 
   /** R2/R3 统一判定：镜头关联图能否作为图生视频输入（必须公网 URL；本地 /assets/… Agnes 抓不到） */
@@ -994,9 +1003,15 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
         // （本地文件 Agnes 抓不到 —— 不说的话用户会以为参考图生效了）
         const ri = r.data?.reference_images || {};
         const base = seen > 0 ? `图片已生成（第 ${seen + 1} 张，已自动换个机位/时段，避免与上一张雷同）` : '图片已生成并关联到分镜';
-        toast.ok(ri.used ? `${base}；已带上 ${ri.used} 张角色参考图（${(ri.characters || []).join('、')}）` : base);
+        // 分开报来源：只说"带了 N 张参考图"，用户没法判断是脸带上了还是景带上了
+        const src = [
+          (ri.characters || []).length ? `角色 ${(ri.characters || []).join('、')}` : '',
+          (ri.cards || []).length ? `场景/道具 ${(ri.cards || []).join('、')}` : '',
+        ].filter(Boolean).join('；');
+        toast.ok(ri.used ? `${base}；已带上 ${ri.used} 张参考图（${src}）` : base);
+        if (ri.dropped) toast.warn(`参考图最多带 4 张，这次有 ${ri.dropped} 张被挤掉了（优先保角色长相）。`, 7000);
         if (ri.local_skipped) {
-          toast.warn(`有 ${ri.local_skipped} 张角色参考图是本地文件，Agnes 抓不到（需要公网 URL），这次没有作为出图输入。`, 7000);
+          toast.warn(`有 ${ri.local_skipped} 张参考图是本地文件，Agnes 抓不到（需要公网 URL），这次没有作为出图输入。`, 7000);
         }
         load();
       } else toast.err(r.error);

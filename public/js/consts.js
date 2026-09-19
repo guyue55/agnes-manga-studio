@@ -73,6 +73,13 @@ export function icon(name, size = 18, cls = '') {
  * uitest 有一条钉直接读 lib/story.js 比对，改这里必须同步改那边。
  */
 export const STORY_CARD_KINDS = ['world', 'character', 'location', 'prop', 'plot', 'timeline'];
+
+/**
+ * 哪些卡片的参考图能进出图输入（批 8 补 17，与 lib/story.js 的 CARD_IMAGE_KINDS 同源）。
+ * 只认地点卡/道具卡：人物卡有资产库（已接进出图），这两类却只有一行文字，
+ * 于是"同一个场景每张图都不一样"。uitest 有跨文件同构钉。
+ */
+export const CARD_IMAGE_KINDS = ['location', 'prop'];
 export const STORY_CARD_LABELS = {
   world: '信息卡', character: '人物卡', location: '地点卡',
   prop: '道具卡', plot: '剧情卡', timeline: '时间线',

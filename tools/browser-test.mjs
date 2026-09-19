@@ -1845,6 +1845,108 @@ try {
       }
     }
 
+    group('地点卡参考图契约（批 8 补 17：同一个场景每张图都不一样）');
+    {
+      // 自建上游 mock：既出卡片（解析那一步要），又**记录实际收到的 image 数组** ——
+      // "参考图有没有真的发出去"只有看上游收到什么才算数（同批 8 补 13 的纪律）
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      const sentImages = [];
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        if (u.pathname === '/pixel.png') { res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': PNG.length }); return res.end(PNG); }
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'character', name: '林晚', role: '主角', appearance: '白衣' },
+                { kind: 'location', name: '临江茶馆', atmosphere: '喧闹潮湿' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          if (u.pathname === '/v1/images/generations') {
+            sentImages.push(Array.isArray(b.image) ? b.image : (b.image ? [b.image] : []));
+            return send({ data: [{ url: `http://127.0.0.1:${mockPort}/pixel.png` }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      let pid = '';
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'card-ref-key' }) });
+        pid = (await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: '卡片参考图验收剧' }) })).id;
+        const mk = async (n) => (await J('/api/images', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, name: n, remote_url: `https://example.com/${n}.png`, url: `https://example.com/${n}.png` }) })).id;
+        const good = await mk('loc-good');
+        const localImg = await mk('loc-local');
+        // 本地文件（Agnes 抓不到）：必须如实说"用不上"，不能让用户以为生效了
+        await J(`/api/images/${localImg}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remote_url: '', url: '/assets/local/scene.png' }) });
+
+        // 卡片没有建卡端点（卡片由解析产出）——走一次真解析
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '卡片参考图·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false }) });
+        for (let i = 0; i < 80; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        const cards = await J(`/api/story/cards?project_id=${pid}`);
+        const loc = cards.find((c) => c.kind === 'location');
+        ok('解析出了地点卡（下面用它验证参考图真的进出图调用）', !!loc, JSON.stringify(cards.map((c) => c.kind)));
+        await J(`/api/story/cards/${loc.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reference_image_ids: [good, localImg] }) });
+
+        // ① 出图时真的带上（**在动 UI 之前**验：此时卡上挂着公网 + 本地各一张）
+        const sb = await J('/api/storyboards', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: [{ project_id: pid, episode_number: 1, shot_number: 1, scene_description: '茶馆内', image_prompt: 'a tea house', story_card_ids: [loc.id] }] }) });
+        sentImages.length = 0;
+        const img = await J('/api/agnes/image', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, storyboard_id: sb.rows[0].id, prompt: 'a tea house' }) });
+        const got = sentImages[0] || [];
+        ok('地点卡的参考图**真的发到了上游**（此前只有人物卡的会进调用）',
+          got.includes('https://example.com/loc-good.png'), JSON.stringify(got));
+        ok('本地文件没被发上去（Agnes 抓不到，发了也是白搭）',
+          !got.some((u) => String(u).startsWith('/assets/')), JSON.stringify(got));
+        ok('上报说清是哪个场景带上的（只说"N 张"用户没法判断是脸还是景）',
+          ((img.reference_images || {}).cards || []).includes('临江茶馆'), JSON.stringify((img.reference_images || {}).cards));
+        ok('本地文件用不上时如实计数', (img.reference_images || {}).local_skipped >= 1, JSON.stringify(img.reference_images));
+
+        // ② 地点卡的就地编辑器里有参考图选择器（此前只有人物卡有，场景只有一行文字）
+        // 必须带 source_id：原著页只在"选中了某份原著"时才载卡片列表（只给 project_id 会停在空态）
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        // data-card 只在**编辑态**才挂上，展示态要按文字找（人物卡排在地点卡前面）
+        await waitFor(() => cdp.eval(`return [...document.querySelectorAll('#nov-cards .card')].some((c) => c.innerText.includes('临江茶馆'));`), '原著页地点卡', 15000);
+        // 必须点**地点卡**那张（人物卡的编辑器里没有参考图选择器 —— 人物卡走资产库那条路）
+        await cdp.eval(`const card = [...document.querySelectorAll('#nov-cards .card')].find((c) => c.innerText.includes('临江茶馆'));
+          card.querySelector('[data-edit]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('.ref-item[data-ref]');`), '参考图选择器', 8000);
+        ok('地点卡的就地编辑器里有参考图选择器（能挂上才谈得上"出图时带上"）', true);
+        await waitFor(() => cdp.eval(`return document.querySelectorAll('.ref-item.on').length === 2;`), '已挂的两张显示为选中态', 8000);
+        ok('已经挂上的参考图显示为选中态（否则用户看不出挂没挂上）', true);
+
+        // ③ 勾选态切换 + 保存真的落库（不是只改了个样子）
+        await cdp.eval(`const it = document.querySelector('.ref-item[data-ref="${localImg}"]'); const cb = it.querySelector('input'); cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true })); return true;`);
+        await sleep(300);
+        const offNow = await cdp.eval(`return document.querySelector('.ref-item[data-ref="${localImg}"]').classList.contains('on');`);
+        ok('取消勾选后选中态跟着变（缩略图上选没选中必须看得出来）', offNow === false, String(offNow));
+        await cdp.eval(`document.querySelector('[data-save]').click(); return true;`);
+        await sleep(1500);
+        const saved = (await J(`/api/story/cards?project_id=${pid}`)).find((c) => c.id === loc.id);
+        ok('保存后只剩勾着的那张（未勾的真的被摘掉了）',
+          JSON.stringify(saved.reference_image_ids) === JSON.stringify([good]), JSON.stringify(saved.reference_image_ids));
+
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+      }
+      await new Promise((r) => mock.close(r));
+    }
+
     group('全链路进度契约（批 8 补 16：卡在哪一步、下一步点哪儿）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
@@ -2080,7 +2182,8 @@ try {
         await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
         // 等**具体**那句话，而不是"页面里出现过参考图"：toast 几秒后会自动消失，
         // 泛匹配会先命中别的字样、再读到一个空 toast（本轮踩过：断言时好时坏）
-        const toastSeen = await waitFor(() => cdp.eval(`return /已带上 1 张角色参考图/.test(document.body.innerText);`), '出图结果提示（含参考图张数）', 20000)
+        // 批 8 补 17 起按**来源**分开报：只说"N 张"用户没法判断是脸带上了还是景带上了
+        const toastSeen = await waitFor(() => cdp.eval(`return /已带上 1 张参考图（角色 /.test(document.body.innerText);`), '出图结果提示（含参考图张数与来源）', 20000)
           .then(() => true).catch(() => false);
         ok('出图时自动把绑定角色的公网参考图发给上游（此前它只被当封面显示）',
           Array.isArray(sentImages) && sentImages.includes('https://example.com/face.png'), JSON.stringify(sentImages));

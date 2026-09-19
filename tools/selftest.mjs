@@ -551,6 +551,45 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('地点卡/道具卡参考图（批 8 补 17：同一个场景每张图都不一样）');
+{
+  const story = require('./lib/story.js');
+  ok('只认地点卡/道具卡（人物卡有资产库，信息卡/剧情卡/时间线不进提示词）',
+    JSON.stringify(story.CARD_IMAGE_KINDS) === JSON.stringify(['location', 'prop']), JSON.stringify(story.CARD_IMAGE_KINDS));
+  eq('参考图 id 清洗：去空、去重', JSON.stringify(story.normalizeRefIds(['a', '', 'a', 'b', null, 'c'])), JSON.stringify(['a', 'b', 'c']));
+  eq('参考图 id 清洗：限量 12（与角色档案同一口径）', story.normalizeRefIds(Array.from({ length: 30 }, (_, i) => `i${i}`)).length, 12);
+  eq('非数组一律当空（脏输入不能让卡片挂上乱七八糟的东西）', JSON.stringify(story.normalizeRefIds('abc')), '[]');
+
+  // 关键：normalizeCard **故意不产出**这个字段 —— 产出空数组会在归并（store.update 合并）时
+  // 把用户挂的参考图静默清空。这条钉钉的是"形状"，不是"值"。
+  const card = story.normalizeCard({ kind: 'location', name: '老宅', atmosphere: '阴冷' }, {});
+  ok('normalizeCard 不产出 reference_image_ids（产出就会在重新解析时清空用户挂的图）',
+    !('reference_image_ids' in card), Object.keys(card).join(','));
+  ok('但用户挂的参考图在归并时原样保留（store.update 是合并，键不在 patch 里就留着）',
+    !('reference_image_ids' in story.applyBibleCards([], [{ kind: 'location', name: '老宅' }]).insert[0]));
+
+  // 归并：旧卡有参考图、新结果里没有这个字段 → 更新包不含该键 → 合并后仍在
+  const old = [{ id: 'c1', kind: 'location', name: '老宅', reference_image_ids: ['img1', 'img2'] }];
+  const plan = story.applyBibleCards(old, [{ kind: 'location', name: '老宅', atmosphere: '更阴冷' }]);
+  eq('同名卡就地更新（id 稳定）', plan.update[0].id, 'c1');
+  ok('更新包里**不含** reference_image_ids（含了就会把用户挂的图冲掉）',
+    !('reference_image_ids' in plan.update[0]), Object.keys(plan.update[0]).join(','));
+  // 模拟 store.update 的 Object.assign 合并
+  const merged = Object.assign({}, old[0], (({ id, ...rest }) => rest)(plan.update[0]));
+  eq('合并后用户挂的两张图还在', JSON.stringify(merged.reference_image_ids), JSON.stringify(['img1', 'img2']));
+
+  // 追加解析才是**真正会碰到地点卡**的那条路（reduce 只归并 origin=bible 的信息卡/剧情卡）：
+  // mergeTwo 以旧卡为底，新卡没有这个键 → 原样保留。这里把它钉死。
+  // （mergeTwo 是内部函数，从公开入口 mergeAppend 走一遍更实在）
+  const ap = story.mergeAppend(
+    [{ id: 'c1', kind: 'location', name: '老宅', atmosphere: '阴冷', reference_image_ids: ['img1', 'img2'] }],
+    [{ kind: 'location', name: '老宅', atmosphere: '更阴冷潮湿' }],
+  );
+  eq('mergeAppend 把这张卡列为 touched（会被回写）', ap.touched.length, 1);
+  eq('回写包里带着用户挂的参考图', JSON.stringify(ap.touched[0].reference_image_ids), JSON.stringify(['img1', 'img2']));
+  eq('合并仍取更详细的描述（保留参考图没有妨碍原有语义）', ap.touched[0].atmosphere, '更阴冷潮湿');
+}
+
 group('全链路进度体检（批 8 补 16：卡在哪一步、下一步点哪儿）');
 {
   const { pipelineOverview } = require('./lib/story.js');

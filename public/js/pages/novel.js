@@ -15,9 +15,9 @@ import { api } from '../api.js';
 import {
   esc, icon, fmtTime,
   STORY_CARD_KINDS, STORY_CARD_FIELDS, STORY_CARD_FIELD_LABELS, STORY_ROLE_OPTIONS, STORY_STAGE_OPTIONS,
-  storyKindLabel,
+  CARD_IMAGE_KINDS, storyKindLabel,
 } from '../consts.js';
-import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, dataOf, options } from '../ui.js';
+import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, dataOf, options, imgWithFallback } from '../ui.js';
 import { charCount, countLabel, limitState } from '../textstats.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams } from '../app.js';
@@ -36,6 +36,7 @@ export default async function novel(container, params = {}) {
   let job = null;
   let editingId = null;                     // 正在就地编辑的卡片 id
   let armedDel = '';                        // 已按过一次删除的卡片 id（两击确认）
+  let imgs = [];                            // 本项目图片素材（给地点卡/道具卡挂参考图用）
   let outline = null;                       // 分集骨架结果（null = 还没算过；改卡片/换原著后作废）
   let outlinePer = Number(params.per_episode) || 4; // 每集至少几拍（可反复调，纯本地计算不花钱）
 
@@ -353,8 +354,15 @@ export default async function novel(container, params = {}) {
   }
 
   // ── 卡片工作台 ──────────────────────────────────────────
+  /** 本项目图片素材：给地点卡/道具卡挂参考图用（批 8 补 17） */
+  async function loadImages() {
+    const r = await api.images();
+    imgs = (r.ok ? (r.data || []) : []).filter((i) => i.project_id === projectId && (i.url || i.remote_url));
+  }
+
   async function loadCards() {
     const box = container.querySelector('#nov-cards');
+    await loadImages(); // 卡片编辑器里要挂参考图，素材先取到（拿不到就是空列表，不阻断卡片显示）
     const r = await api.storyCards({ sourceId: sourceId || undefined, projectId: sourceId ? undefined : projectId });
     if (!r.ok) { box.innerHTML = errBox(r.error, '卡片没取到', r.trace); return; }
     cards = r.data || [];
@@ -395,9 +403,21 @@ export default async function novel(container, params = {}) {
     box.innerHTML = shown.map(cardHtml).join('');
     on(box, '[data-edit]', 'click', (e) => { editingId = dataOf(e.currentTarget, 'edit'); renderCards(); });
     on(box, '[data-cancel]', 'click', () => { editingId = null; renderCards(); });
+    // 参考图选中态：勾选后给卡片描边（否则选中与未选中在缩略图上几乎看不出差别）
+    on(box, '.ref-item', 'change', (e) => {
+      const it = e.currentTarget;
+      it.classList.toggle('on', it.querySelector('input').checked);
+    });
     on(box, '[data-save]', 'click', async (e) => {
       const id = dataOf(e.currentTarget, 'save');
       const patch = collectEdits(id);
+      // 参考图不在 [data-f] 里（是多选缩略图，不是单值输入），单独收集
+      const refBox = container.querySelector(`#e-refs-${id}`);
+      if (refBox) {
+        patch.reference_image_ids = [...refBox.querySelectorAll('.ref-item')]
+          .filter((it) => it.querySelector('input').checked)
+          .map((it) => it.getAttribute('data-ref'));
+      }
       if (!patch.name.trim()) { toast.err('名字不能为空——下游全靠名字对上号'); return; }
       const r = await api.updateStoryCard(id, patch);
       if (!r.ok) { toast.err(r.error); return; }
@@ -705,6 +725,15 @@ export default async function novel(container, params = {}) {
                 : `<input class="input" id="e-${esc(f)}-${esc(c.id)}" data-f="${esc(f)}" value="${esc(c[f] || '')}" />`}</div>`).join('')}
           <div class="field"><label for="e-alias-${esc(c.id)}">别名（顿号或逗号分隔）</label>
             <input class="input" id="e-alias-${esc(c.id)}" data-f="aliases" value="${esc((c.aliases || []).join('、'))}" /></div>
+          ${CARD_IMAGE_KINDS.includes(c.kind) ? `<div class="field"><label>参考图<span style="color:var(--text-4);font-weight:400">（从本项目的图片里挑，出图时会自动带上——同一个场景/道具前后一致就靠它）</span></label>
+            ${imgs.length ? `<div class="ref-grid" id="e-refs-${esc(c.id)}">
+              ${imgs.map((i) => `
+                <label class="ref-item${(c.reference_image_ids || []).includes(i.id) ? ' on' : ''}" data-ref="${esc(i.id)}" title="${esc(i.prompt || i.name || '')}">
+                  <input type="checkbox" ${(c.reference_image_ids || []).includes(i.id) ? 'checked' : ''} aria-label="选为参考图" />
+                  ${imgWithFallback(i.url || i.remote_url, { alt: String(i.name || '参考图').slice(0, 30), cls: 'ref-thumb' })}
+                </label>`).join('')}
+            </div>` : `<div class="note">本项目还没有图片素材——参考图可以留空，也可以先去「图片生成」出一张场景/道具图再回来挂上。</div>`}
+          </div>` : ''}
           <div class="hint-xs">来源：${c.origin === 'bible' ? '全局归并' : `第 ${(c.chunk_index ?? 0) + 1} 段`} · 出现 ${c.mentions || 1} 次 · 证据段 ${(c.evidence || []).map((i) => i + 1).join('/') || '—'}</div>
         </div>`;
     }

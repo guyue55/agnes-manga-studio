@@ -1236,18 +1236,50 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   // ── 角色参考图进出图输入（批 8 补 13）──
   ok('参考图在使用点注入（入库的提示词仍只存镜头内容）',
     /function characterRefImages\(chars, opts = \{\}\)/.test(routesSrc)
-    && /const inputImages = \[\.\.\.new Set\(\[\.\.\.explicit, \.\.\.ref\.urls\]\)\]/.test(routesSrc));
+    // 批 8 补 17：参考图来源从"只有角色"扩到"角色 + 地点/道具卡"，
+    // 顺序固定为 显式 → 角色 → 场景道具（总上限 4 张时**先保脸**）
+    && /const allRefs = \[\.\.\.new Set\(\[\.\.\.explicit, \.\.\.ref\.urls, \.\.\.refCards\.urls\]\)\]/.test(routesSrc)
+    && /function storyCardRefImages\(cards, opts = \{\}\)/.test(routesSrc));
   ok('只有公网 URL 才发给上游（本地 /assets/… Agnes 抓不到），且如实上报用不上几张',
     /\^https\?:\\\/\\\/\/i\.test\(u\)/.test(routesSrc) && /local_skipped: ref\.local/.test(routesSrc));
   ok('参考图有上限（多了互相打架也拖慢生成）',
     /num\(opts\.max, 4\)/.test(routesSrc) && /\.slice\(0, 4\)/.test(routesSrc));
   ok('溯源记的是**实际发出**的输入（记 body.image 就查不到自动带上的参考图）',
-    /input_content: \{ prompt, size, image: inputImages\[0\] \|\| null, reference_images: ref\.urls, negative_prompt: neg \}/.test(routesSrc)
+    /reference_images: \[\.\.\.ref\.urls, \.\.\.refCards\.urls\],/.test(routesSrc)
     && /input_images: inputImages,/.test(routesSrc));
   ok('前端如实报"带上了几张参考图、是谁的"，本地文件用不上时明确警告',
-    /已带上 \$\{ri\.used\} 张角色参考图/.test(boardsSrc) && /ri\.local_skipped/.test(boardsSrc));
+    /已带上 \$\{ri\.used\} 张参考图/.test(boardsSrc) && /ri\.local_skipped/.test(boardsSrc)
+    // 来源要分开报：只说"N 张"用户没法判断是脸带上了还是景带上了
+    && /场景\/道具 \$\{\(ri\.cards \|\| \[\]\)\.join\('、'\)\}/.test(boardsSrc));
   ok('批量出图在**花钱之前**预检参考图（先说清哪几张会真的进到出图输入）',
-    /async function imageRefPrecheck\(shots\)/.test(boardsSrc) && /其中 \$\{refPre\.used\} 张角色参考图会作为出图输入/.test(boardsSrc));
+    /async function imageRefPrecheck\(shots\)/.test(boardsSrc)
+    && /其中 \$\{refPre\.used\} 张参考图会作为出图输入/.test(boardsSrc)
+    // 预检必须把场景/道具卡的参考图也算进去，否则"带了几张"是假的
+    && /count\(s\.story_card_ids, cardById, cardUrls\)/.test(boardsSrc));
+
+  // ── 地点卡/道具卡参考图（批 8 补 17）──
+  const novelSrc17 = read(path.join(PUB, 'js', 'pages', 'novel.js'));
+  const constsSrc17 = read(path.join(PUB, 'js', 'consts.js'));
+  ok('地点卡/道具卡能挂参考图（此前只有人物卡有，场景/道具只有一行文字）',
+    /CARD_IMAGE_KINDS\.includes\(c\.kind\)/.test(novelSrc17) && /e-refs-\$\{esc\(c\.id\)\}/.test(novelSrc17));
+  ok('参考图是**多选缩略图**，保存时单独收集（它不是单值输入，不在 [data-f] 里）',
+    /refBox\.querySelectorAll\('\.ref-item'\)/.test(novelSrc17) && /patch\.reference_image_ids = /.test(novelSrc17));
+  ok('卡片编辑器里能看到本项目素材（取不到就是空列表，不阻断卡片显示）',
+    /async function loadImages\(\)/.test(novelSrc17) && /await loadImages\(\);/.test(novelSrc17));
+  // 前端词表必须与后端同源（照抄错了不会报错，只会静默不给挂图）
+  const storySrc17 = read(path.join('lib', 'story.js'));
+  const pick = (src) => (src.match(/CARD_IMAGE_KINDS = \[([^\]]*)\]/) || [])[1].replace(/['"\s]/g, '');
+  ok('前后端的"可挂参考图的卡片类型"逐字同源（uitest 跨文件同构钉）',
+    pick(storySrc17) === pick(constsSrc17) && pick(storySrc17) === 'location,prop',
+    `story.js=${pick(storySrc17)} consts.js=${pick(constsSrc17)}`);
+  ok('参考图 id 落库前必须清洗（去空/去重/限量，脏 id 会让出图静默少带几张）',
+    /story\.normalizeRefIds\(patch\.reference_image_ids\)/.test(routesSrc)
+    && /function normalizeRefIds\(v\)/.test(storySrc17));
+  // 判之前先剥注释：解释"为什么不产出这个字段"的注释里必然会写出字段名（本轮又踩一次）
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  ok('归并时**绝不**产出 reference_image_ids（产出空数组会在重新解析时清空用户挂的图）',
+    !/reference_image_ids/.test(stripComments((storySrc17.match(/function normalizeCard[\s\S]*?\n\}/) || [''])[0])),
+    'normalizeCard 里出现了 reference_image_ids —— 重新解析会静默清空用户挂的参考图');
 
   // ── 全链路进度面板（批 8 补 16）──
   const dashSrc = read(path.join(PUB, 'js', 'pages', 'dashboard.js'));

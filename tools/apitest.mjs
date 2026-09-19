@@ -1861,6 +1861,102 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('地点卡/道具卡参考图进出图输入（批 8 补 17：同一个场景每张图都不一样）');
+{
+  const pj = await api('POST', '/api/projects', { name: '卡片参考图测试剧' });
+  const PID = pj.data.id;
+  const mk = async (name) => (await api('POST', '/api/images', { project_id: PID, name, remote_url: `https://example.com/${name}.png`, url: `https://example.com/${name}.png` })).data.id;
+  const loc1 = await mk('loc1'); const loc2 = await mk('loc2'); const localImg = await mk('localonly');
+  // 把一张图改成"本地文件"（没有公网 URL）—— Agnes 抓不到，必须如实上报用不上
+  await api('PUT', `/api/images/${localImg}`, { remote_url: '', url: '/assets/local/scene.png' });
+
+  // 卡片没有专门的建卡端点（卡片由解析产出）——走一次真解析拿到 mock 里的地点卡「临江茶馆」
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '卡片参考图·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const LOC = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((c) => c.kind === 'location');
+  ok('解析出了地点卡（下面用它验证参考图真的进出图调用）', !!LOC, '没有地点卡');
+  const CARD = LOC.id;
+  const putCard = await api('PUT', `/api/story/cards/${CARD}`, {
+    reference_image_ids: [loc1, loc2, localImg, loc1, ''],   // 含重复与空值，落库必须清洗
+  });
+  eq('卡片参考图落库前清洗（去重/去空）', JSON.stringify(putCard.data.reference_image_ids), JSON.stringify([loc1, loc2, localImg]));
+
+  const sb = await api('POST', '/api/storyboards', {
+    project_id: PID, episode_number: 1, shot_number: 1, scene_description: '茶馆内',
+    image_prompt: 'a dark room', story_card_ids: [CARD],
+  });
+  const SB = sb.data.id;
+
+  lastImageCreate = null;
+  const r1 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: SB, prompt: 'a dark room' });
+  const sent1 = (lastImageCreate && lastImageCreate.image) || [];
+  ok('地点卡挂的参考图**真的发出去了**（此前只有人物卡的会进调用）',
+    sent1.includes('https://example.com/loc1.png') && sent1.includes('https://example.com/loc2.png'), JSON.stringify(sent1));
+  eq('上报用上了几张（只算公网 URL）', r1.data.reference_images.used, 2);
+  ok('上报说清是哪个场景/道具带上的', (r1.data.reference_images.cards || []).includes('临江茶馆'), JSON.stringify(r1.data.reference_images.cards));
+  eq('本地文件用不上如实计数', r1.data.reference_images.local_skipped, 1);
+  ok('溯源记的是实际发出的输入（含卡片参考图）',
+    (r1.data.asset ? true : true) && (await api('GET', `/api/tasks?project_id=${PID}`)).data
+      .filter((t) => t.task_type === 'image' && t.storyboard_id === SB)
+      .some((t) => (t.input_images || []).includes('https://example.com/loc1.png')));
+
+  // 角色优先：总上限 4 张时先保脸（脸比景更难靠文字说准）
+  const chImgs = [];
+  for (let i = 0; i < 4; i++) chImgs.push(await mk(`face${i}`));
+  const ch = await api('POST', '/api/characters', { project_id: PID, name: '主角', appearance: '长发', reference_image_ids: chImgs });
+  const sb2 = await api('POST', '/api/storyboards', {
+    project_id: PID, episode_number: 1, shot_number: 2, scene_description: '茶馆内',
+    image_prompt: 'a girl', character_ids: [ch.data.id], story_card_ids: [CARD],
+  });
+  lastImageCreate = null;
+  const r2 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb2.data.id, prompt: 'a girl' });
+  const sent2 = (lastImageCreate && lastImageCreate.image) || [];
+  eq('总上限仍是 4 张（多了互相打架，也拖慢生成）', sent2.length, 4);
+  ok('4 张角色参考图把场景图挤掉时，**角色优先**（脸比景更难靠文字说准）',
+    sent2.every((u) => u.includes('face')), JSON.stringify(sent2));
+  eq('被上限挤掉的如实计数（否则"我挂了 6 张怎么只用了 4 张"没人回答）', r2.data.reference_images.dropped, 2);
+  eq('上报的 used 与实际发出的一致（含角色与场景两类）', r2.data.reference_images.used, sent2.length);
+
+  // 没挂参考图的卡片不能凭空带图
+  const card2 = await api('POST', '/api/story/cards', { project_id: PID, kind: 'prop', name: '旧怀表' });
+  const sb3 = await api('POST', '/api/storyboards', {
+    project_id: PID, episode_number: 1, shot_number: 3, scene_description: '特写',
+    image_prompt: 'a watch', story_card_ids: [card2.data.id],
+  });
+  lastImageCreate = null;
+  const r3 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb3.data.id, prompt: 'a watch' });
+  ok('没挂参考图的卡片不发 image 参数（空数组会改变上游的生成模式）',
+    !(lastImageCreate && lastImageCreate.image) && r3.data.reference_images.used === 0,
+    JSON.stringify(lastImageCreate && lastImageCreate.image));
+
+  // 不可挂图的卡片类型：即使硬塞了 id 也不进调用（人物卡走资产库那条路）
+  const wc = await api('POST', '/api/story/cards', { project_id: PID, kind: 'world', name: '世界观', genre: '悬疑' });
+  await api('PUT', `/api/story/cards/${wc.data.id}`, { reference_image_ids: [loc1] });
+  const sb4 = await api('POST', '/api/storyboards', {
+    project_id: PID, episode_number: 1, shot_number: 4, scene_description: '甲',
+    image_prompt: 'a sky', story_card_ids: [wc.data.id],
+  });
+  lastImageCreate = null;
+  const r4 = await api('POST', '/api/agnes/image', { project_id: PID, storyboard_id: sb4.data.id, prompt: 'a sky' });
+  ok('信息卡/剧情卡/时间线挂了参考图也不进调用（它们本来就不进提示词）',
+    !(lastImageCreate && lastImageCreate.image) && r4.data.reference_images.used === 0,
+    JSON.stringify(lastImageCreate && lastImageCreate.image));
+
+  // 重新解析（归并）不能把用户挂的参考图冲掉 —— 这是本轮最容易踩的坑
+  const before = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((c) => c.id === CARD);
+  eq('归并前卡片挂着 3 张参考图', (before.reference_image_ids || []).length, 3);
+  // 追加解析才是**真正会碰到地点卡**的那条路（reduce 只归并 origin=bible 的信息卡/剧情卡），
+  // 也是长篇连载里最常走的：接着往后解析，同名卡只补字段、id 与用户挂的图都不能动。
+  const SRC = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+  const ap = await api('POST', '/api/story/append', { project_id: PID, source_id: SRC.id, text: '林晚又回到临江茶馆。'.repeat(20), reduce: false });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${ap.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const after = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((c) => c.name === '临江茶馆');
+  eq('追加解析后同名卡 id 不变（就地归并，不删了重建）', after.id, CARD);
+  eq('追加解析后用户挂的参考图**一张不少**（归并产出空数组就会在这里静默清空）',
+    JSON.stringify(after.reference_image_ids), JSON.stringify([loc1, loc2, localImg]));
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('全链路进度（批 8 补 16：一次问清卡在哪一步）');
 {
   const pj = await api('POST', '/api/projects', { name: '进度体检测试剧' });
