@@ -47,6 +47,9 @@ export default async function scripts(container, params) {
   let epNo = 1;                      // 当前集号（单集生成与保存都用它）
   let epPlan = null;                 // { episode_count, per_episode }
   let prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
+  // 批 8 补 12：当前这一集"生成时喂给模型的输入"的指纹（由服务端算，前端只搬运）。
+  // 存剧本时带上它，之后原著追加/重切分集导致输入变了，过期体检就能如实报出来。
+  let epDigest = '';
   let priorOn = true;                // 生成时是否带上前情提要
   let batchCancel = false;           // 逐集生成的取消旗标
   // fields 是跨页签共享的一张表（历史行为：同名变量在页签间延续）。
@@ -133,6 +136,7 @@ export default async function scripts(container, params) {
   async function loadEpisodes() {
     epPlan = null;
     prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
+    epDigest = '';
     if (projectId) {
       const r = await api.storyEpisodes({ project_id: projectId });
       if (r.ok && r.data.episode_count) epPlan = { episode_count: r.data.episode_count, per_episode: r.data.per_episode };
@@ -170,15 +174,22 @@ export default async function scripts(container, params) {
           <span class="hint-xs">带上前情提要</span>
         </label>
         <div class="spacer"></div>
+        <button class="btn btn-xs" id="ep-stale" title="纯本地判断：哪几集的剧本是按旧的分集骨架/旧前情生成的（不调模型、不花钱）">${icon('search', 12)}过期体检</button>
         <button class="btn btn-xs" id="gen-eps" title="按分集骨架逐集生成并保存（每集一次模型调用）">${icon('wand', 12)}逐集生成</button>
       </div>
       <div class="hint-xs" id="ep-status" style="margin-top:8px"></div>
+      <div id="ep-stale-box"></div>
       <div id="ep-progress"></div>`;
     const no = box.querySelector('#ep-no');
     no.onchange = () => { epNo = Math.max(1, Math.min(n, Number(no.value) || 1)); no.value = epNo; syncEpStatus(); };
+    // 体检结果与"是否带前情"绑在一起（前情变了指纹就变），改了勾选必须作废重算
     box.querySelector('#ep-load').onclick = () => loadEpisodeBrief(epNo);
-    box.querySelector('#ep-prior').onchange = (e) => { priorOn = !!e.target.checked; syncEpStatus(); };
-    box.querySelector('#gen-eps').onclick = openBatch;
+    box.querySelector('#ep-prior').onchange = (e) => { priorOn = !!e.target.checked; stale = null; syncEpStatus(); };
+    // 先体检再开弹窗：默认范围来自"缺剧本/已过期"的那几集。体检是本地算的、不花钱，
+    // 但每次点都重算一遍会让"改完范围再点一次"变慢 —— 所以算过一次就复用（体检按钮可手动刷新）
+    box.querySelector('#gen-eps').onclick = async () => { if (!stale) await runStaleCheck(); openBatch(); };
+    const staleBtn = box.querySelector('#ep-stale');
+    if (staleBtn) staleBtn.onclick = () => runStaleCheck();
     syncEpStatus();
   }
 
@@ -201,12 +212,18 @@ export default async function scripts(container, params) {
    * 载入第 N 集：把该集拍表填进模板的"大纲"变量，并取回前情提要。
    * 这一步**不调模型**，所以随便点、随便换集都不会产生费用。
    */
-  async function loadEpisodeBrief(ep) {
+  async function loadEpisodeBrief(ep, withPrior) {
     const tpl = tplOf(TAB_TPL[tab]);
     if (!tpl) { toast.err('这个类型还没有模板'); return null; }
     epNo = Math.max(1, Number(ep) || 1);
-    const r = await api.storyEpisodeBrief({ project_id: projectId, episode: epNo, per_episode: epPlan ? epPlan.per_episode : undefined });
+    const usePrior = withPrior === undefined ? priorOn : !!withPrior;
+    // with_prior 必须与**实际生成时**一致：不带前情却按"带前情"取指纹，会凭空报过期
+    const r = await api.storyEpisodeBrief({
+      project_id: projectId, episode: epNo,
+      per_episode: epPlan ? epPlan.per_episode : undefined, with_prior: usePrior ? undefined : '0',
+    });
     if (!r.ok) { toast.err(r.error); return null; }
+    epDigest = r.data.input_digest || '';
     prior = {
       text: r.data.prior || '', episodes: r.data.prior_episodes || [], omitted: r.data.prior_omitted || [],
       chars: r.data.prior_chars || 0, truncated: !!r.data.prior_truncated,
@@ -232,9 +249,42 @@ export default async function scripts(container, params) {
    * 逐集生成（批 8 补 8）：一集一次模型调用，生成完**立刻按集保存**，
    * 中途失败只记下这一集继续往下走 —— 不能因为第 7 集返回坏 JSON 就把 8〜20 集全丢掉。
    */
+  /** 过期体检结果（纯本地、零模型调用）：用户要能反复看，才敢信"该重生成哪几集" */
+  let stale = null;
+
+  async function runStaleCheck() {
+    const box = container.querySelector('#ep-stale-box');
+    if (!projectId) { toast.err('先在右上角选一个项目'); return null; }
+    const r = await api.storyStaleness({ project_id: projectId, per_episode: epPlan ? epPlan.per_episode : undefined, with_prior: priorOn ? undefined : '0' });
+    if (!r.ok) { toast.err(r.error); return null; }
+    stale = r.data;
+    if (!box) return stale;
+    const c = stale.counts || {};
+    const rows = (stale.episodes || []).map((e) => {
+      const label = { missing: '还没有剧本', stale: '输入已变，建议重生成', unknown: '没有生成指纹，无法判断', ok: '一致' }[e.script_state] || e.script_state;
+      const badge = e.script_state === 'stale' ? 'gold' : (e.script_state === 'missing' ? 'gray' : (e.script_state === 'ok' ? 'green' : 'gray'));
+      return `<div class="row" style="gap:8px;padding:3px 0">
+        <span class="hint-xs" style="flex:0 0 52px">第 ${e.episode_number} 集</span>
+        <span class="badge ${badge}" style="flex:0 0 auto">${esc(label)}</span>
+        <span class="hint-xs" style="flex:1;min-width:0">${e.script_id ? esc(e.script_title || '已保存') : ''}${e.shots ? ` · 分镜 ${e.shots} 镜` : ' · 还没有分镜'}</span>
+      </div>`;
+    }).join('');
+    box.innerHTML = `<div class="note" style="margin-top:8px">
+      ${icon('search', 13)} 过期体检：缺剧本 <b>${c.script_missing || 0}</b> 集 · 建议重生成 <b>${c.script_stale || 0}</b> 集
+      · 一致 ${(stale.episode_count || 0) - (c.script_missing || 0) - (c.script_stale || 0) - (c.script_unknown || 0)} 集
+      ${c.script_unknown ? `· 无法判断 ${c.script_unknown} 集` : ''}
+      <div class="divider" style="margin:6px 0"></div>${rows}
+      ${(stale.notes || []).map((x) => `<div class="hint-xs" style="margin-top:4px">${esc(x)}</div>`).join('')}
+    </div>`;
+    return stale;
+  }
+
   function openBatch() {
     const n = epPlan ? epPlan.episode_count : 0;
     if (!n) return;
+    // 默认只生成"缺剧本或输入已变"的集：重跑一遍全都花钱，而多数集其实没变化。
+    // 体检是本地算的，没跑过就先跑一次（不花钱），让默认范围有依据。
+    const todo = stale ? (stale.episodes || []).filter((e) => e.script_state === 'missing' || e.script_state === 'stale').map((e) => e.episode_number) : [];
     // 取值必须在**弹窗还活着的时候**：modal 关闭后 DOM 就被摘掉了，
     // 关掉之后再去 querySelector('#b-from') 只会拿到 null —— 用户填的范围会被静默丢掉（退回全量）。
     new Promise((resolve) => {
@@ -245,9 +295,10 @@ export default async function scripts(container, params) {
         body: `<div class="note">将按分集骨架逐集生成，每集<b>调用一次模型</b>（共 <b id="b-n">${n}</b> 次），
           生成完立即保存为一条脚本记录（标题带集号），可在右侧「已保存脚本」逐集查看。</div>
           <div class="row wrap" style="gap:10px;margin-top:12px">
-            <div class="field" style="flex:1;min-width:110px"><label for="b-from">从第几集</label><input class="input" id="b-from" type="number" min="1" max="${n}" value="${Math.min(epNo, n)}" /></div>
-            <div class="field" style="flex:1;min-width:110px"><label for="b-to">到第几集</label><input class="input" id="b-to" type="number" min="1" max="${n}" value="${n}" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label for="b-from">从第几集</label><input class="input" id="b-from" type="number" min="1" max="${n}" value="${todo.length ? todo[0] : Math.min(epNo, n)}" /></div>
+            <div class="field" style="flex:1;min-width:110px"><label for="b-to">到第几集</label><input class="input" id="b-to" type="number" min="1" max="${n}" value="${todo.length ? todo[todo.length - 1] : n}" /></div>
           </div>
+          ${todo.length ? `<div class="hint-xs" style="margin-top:6px">默认范围来自<b>过期体检</b>（本地算的，没花钱）：这 ${todo.length} 集的剧本是"缺的"或"输入已经变了"，第 ${todo.join('、')} 集。要重跑其它集直接改上面的范围。</div>` : ''}
           <label class="row" style="gap:8px;align-items:center;margin-top:12px;cursor:pointer">
             <input type="checkbox" id="b-prior"${priorOn ? ' checked' : ''} />
             <span class="hint-xs">带上前情提要（越往后越重要：每集都能看见前面发生了什么，本地计算、不额外花钱）</span>
@@ -301,7 +352,7 @@ export default async function scripts(container, params) {
       if (batchCancel) { paint(null, '已取消'); break; }
       paint(ep, `正在生成第 ${ep} 集…`);
       try {
-        const brief = await loadEpisodeBrief(ep);
+        const brief = await loadEpisodeBrief(ep, withPrior);
         if (!brief) { done.push({ ep, ok: false, error: '这一集没有拍' }); continue; }
         if (!withPrior) prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
         await refreshRoster();
@@ -322,6 +373,7 @@ export default async function scripts(container, params) {
           content,
           model_name: container.querySelector('#model')?.value || '',
           generation_prompt: '',
+          plan_digest: epDigest,   // 这一集生成时的输入指纹（服务端算的）
         });
         if (!savedR.ok) { done.push({ ep, ok: false, error: savedR.error }); continue; }
         // 结果区停在最后一集，用户可以直接看/改（逐集产物都已经存好了）
@@ -687,6 +739,7 @@ export default async function scripts(container, params) {
         content: result,
         model_name: container.querySelector('#model')?.value || '',
         generation_prompt: '',
+        plan_digest: epDigest,
       });
       setBusy(saveBtn, false);
       if (r.ok) { toast.ok('已保存到项目'); loadSaved(); }

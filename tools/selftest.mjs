@@ -551,6 +551,78 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('剧本/分镜的过期体检（批 8 补 12：输入变了、产物没重生成）');
+{
+  const { planEpisodes, episodeInputDigest, digestText, auditStaleness } = require('./lib/story.js');
+  const cards = [
+    { id: 'p1', kind: 'plot', name: '茶馆初见', stage: '起', order: 1 },
+    { id: 'p2', kind: 'plot', name: '密室夜访', stage: '合', order: 2 },
+    { id: 'p3', kind: 'plot', name: '真相', stage: '起', order: 3 },
+    { id: 'p4', kind: 'plot', name: '结局', stage: '合', order: 4 },
+  ];
+  const plan = planEpisodes(cards, { perEpisode: 2 });
+  eq('过期体检：先有两集骨架', plan.episodes.length, 2);
+  const d1 = episodeInputDigest(plan, 1);
+  const d2 = episodeInputDigest(plan, 2);
+  ok('指纹是 8 位十六进制且同一输入稳定', /^[0-9a-f]{8}$/.test(d1) && d1 === episodeInputDigest(plan, 1), d1);
+  ok('不同集的指纹不同（本集拍表进指纹）', d1 !== d2);
+  ok('不存在的集返回空串（"没有这一集"要能与"有但没变"区分）', episodeInputDigest(plan, 99) === '');
+
+  const scripts = [{ id: 's1', episode_number: 1, title: '第1集', content: '第一集正文', plan_digest: d1, created_at: '2024-01-01' }];
+  const shots = [{ episode_number: 1, source_script_id: 's1', script_digest: digestText('第一集正文') }];
+  const r0 = auditStaleness(plan, scripts, shots);
+  eq('输入没变 → 剧本一致', r0.episodes[0].script_state, 'ok');
+  eq('分镜的来源剧本没变 → 一致', r0.episodes[0].shot_state, 'ok');
+  eq('第 2 集没剧本也没分镜 → 都算缺', r0.episodes[1].script_state + '/' + r0.episodes[1].shot_state, 'missing/missing');
+  eq('缺剧本的集数与"该重生成"分开计数（缺 ≠ 过期）', r0.counts.script_missing + '/' + r0.counts.script_stale, '1/0');
+
+  // 原著**往后追加**新章节：第 1 集的拍表和前情都没变 → 不该报过期。
+  // 这一条是"精确性"的钉子：动不动就报过期，用户就会去重生成一堆没必要的集（真花钱）
+  const grown = cards.concat([{ id: 'p5', kind: 'plot', name: '夜访灯笼', stage: '承', order: 5 }]);
+  const plan2 = planEpisodes(grown, { perEpisode: 2 });
+  const r1 = auditStaleness(plan2, scripts, shots);
+  eq('往后追加章节：第 1 集输入没变 → 仍然一致（不无谓地喊重生成）', r1.episodes[0].script_state, 'ok');
+  eq('往后追加章节：多出来的那一集如实算"还没有剧本"', r1.counts.script_missing, 2);
+  eq('往后追加章节：一集都不该报过期', r1.counts.script_stale, 0);
+  eq('多出来的集在列表里（用户能直接去生成）', r1.episodes.length, 3);
+
+  // 重切分集（改每集拍数）：第 1 集的拍表被重新分组 → 指纹变 → 如实报过期
+  const planPer = planEpisodes(cards, { perEpisode: 3 });
+  const rp = auditStaleness(planPer, scripts, shots);
+  eq('重切分集后第 1 集如实报过期', rp.episodes[0].script_state, 'stale');
+  eq('过期计数只算真的过期了的那几集', rp.counts.script_stale, 1);
+  ok('给出的"当前输入指纹"就是该重生成时该存的那个值',
+    rp.episodes[0].input_digest === episodeInputDigest(planPer, 1) && rp.episodes[0].input_digest !== d1);
+
+  // 改**更早**的拍：本集拍表没动，但模型看到的前情变了 —— 只对拍表取指纹就会漏报
+  const front = cards.map((c) => (c.id === 'p1' ? { ...c, name: '茶馆初见·改写' } : c));
+  const plan3 = planEpisodes(front, { perEpisode: 2 });
+  eq('改更早的拍：第 1 集自己的拍表变了 → 过期', auditStaleness(plan3, scripts, shots).episodes[0].script_state, 'stale');
+  ok('前情进指纹这件事本身：第 2 集的指纹随更早的集变化（它的拍表一个字没动）',
+    episodeInputDigest(plan3, 2) !== episodeInputDigest(plan, 2)
+    && JSON.stringify(plan3.episodes[1].beats) === JSON.stringify(plan.episodes[1].beats));
+  eq('显式声明不带前情时，前情变化不再影响指纹（指纹要如实描述"实际喂了什么"）',
+    episodeInputDigest(plan3, 2, { withPrior: false }) === episodeInputDigest(plan, 2, { withPrior: false }), true);
+
+  // 剧本正文被改了 → 由它生成的分镜过期；源剧本被删 → 无从追溯，也算过期
+  const edited = [{ ...scripts[0], content: '第一集正文（改过）' }];
+  eq('剧本正文改过 → 分镜报过期', auditStaleness(plan, edited, shots).episodes[0].shot_state, 'stale');
+  eq('源剧本被删 → 分镜无从追溯，如实报过期', auditStaleness(plan, [], shots).episodes[0].shot_state, 'stale');
+
+  // "不知道"不能当成"没过期"：本轮之前生成的剧本没有指纹
+  const r2 = auditStaleness(plan, [{ ...scripts[0], plan_digest: '' }], [{ episode_number: 1 }]);
+  eq('没有指纹 → unknown（不替用户断言它没过期）', r2.episodes[0].script_state, 'unknown');
+  eq('没有来源剧本的分镜 → unknown', r2.episodes[0].shot_state, 'unknown');
+  ok('unknown 单独计数、并如实说明原因', r2.counts.script_unknown === 1 && r2.notes.some((x) => x.includes('没有生成指纹')), JSON.stringify(r2.notes));
+  eq('unknown 不算"该重生成"（否则用户会被无谓的重生成烧钱）', r2.counts.script_stale, 0);
+
+  // 同一集存了多份（重生成过）：以最新的一份为准，与界面一致
+  const multi = [scripts[0], { id: 's9', episode_number: 1, title: '第1集·新', content: 'x', plan_digest: 'aaaaaaaa', created_at: '2025-01-01' }];
+  eq('同一集有多份时看最新那份', auditStaleness(plan, multi, shots).episodes[0].script_id, 's9');
+  eq('旧的没过期、新的过期 → 这一集算过期（不能因为存在一份"看着没问题"的就放过）',
+    auditStaleness(plan, multi, shots).episodes[0].script_state, 'stale');
+}
+
 group('人物卡 ↔ 资产库漂移体检（批 8 补 11：出图用的长相与界面显示的是不是同一份）');
 {
   const { auditCharacterDrift } = require('./lib/story.js');

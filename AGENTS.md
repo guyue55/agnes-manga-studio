@@ -60,10 +60,17 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   会让每张卡都报，面板会被无视）；空字段 → `info`（纯补全），非空且不同 → `warn` 并逐条列出"库值 → 卡值"。
   `sync_character` 一键同步：只写外貌/服饰/别名，**绝不碰** role/gender/age/personality（用户可能特意改过），
   并在 `notes` 留痕
+- 剧本/分镜过期体检（批 8 补 12）：生成要花钱、输入却会变（追加解析补全剧情卡 / 重切分集 / 人工改正文），
+  于是"看起来好好的、其实跟原著对不上"的剧本会静默留下。剧本记生成时的**输入指纹**（本集拍表 + **前情提要**，
+  由 `episodeInputDigest` 在服务端算、`/api/story/episode-brief` 直接返回，前端只搬运），分镜记**来源剧本 id +
+  其正文指纹**（服务端按入库那一刻的正文算，前端不参与哈希）。`GET /api/story/staleness` **纯本地**逐集判定：
+  `ok` / `stale` / `unknown`（没有指纹）—— **`unknown` 既不能当"没问题"也不能当"该重生成"**，单独计数、
+  不计入重生成。精确性是省钱的关键：**往后追加章节不该让前面的集报过期**（拍表与前情都没变）。
+  故事脚本页「过期体检」按钮 + 逐集生成的**默认范围收窄成"缺剧本或已过期"的集**
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 545 / apitest 708 / uitest 969 / browser-test 416），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 571 / apitest 727 / uitest 977 / browser-test 423），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

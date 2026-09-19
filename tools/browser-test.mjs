@@ -1845,6 +1845,96 @@ try {
       }
     }
 
+    group('过期体检契约（批 8 补 12：输入变了要能看见，默认范围据此收窄）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before12 = await J('/api/settings');
+      const pj12 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '过期验收剧' }) });
+      const pid = pj12.id;
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            // 归并链给出"两幕八拍"，够切成两集；其余（抽取）给一张剧情卡
+            if (/已抽取的卡片清单/.test(user)) {
+              return send(200, { choices: [{ message: { content: JSON.stringify({
+                world: { name: '过期验收世界观', summary: '设定' },
+                plots: [
+                  { name: '过期·起1', stage: '起', conflict: 'C1' }, { name: '过期·承1', stage: '承', conflict: 'C2' },
+                  { name: '过期·转1', stage: '转', conflict: 'C3' }, { name: '过期·合1', stage: '合', outcome: 'O1' },
+                  { name: '过期·起2', stage: '起', conflict: 'C4' }, { name: '过期·承2', stage: '承', conflict: 'C5' },
+                  { name: '过期·转2', stage: '转', conflict: 'C6' }, { name: '过期·合2', stage: '合', outcome: 'O2' },
+                ],
+              }) } }] });
+            }
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'plot', name: '过期·起1', stage: '起', conflict: 'C1' },
+            ] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'stale-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '过期验收原著', text: '过期验收用的长弧线故事。'.repeat(30) }) });
+        for (let i = 0; i < 40; i++) { await sleep(250); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        const eps = await J(`/api/story/episodes?project_id=${pid}&source_id=${an.source.id}&per_episode=4`);
+        ok('过期验收：分集骨架已就位', eps.episode_count >= 2, JSON.stringify({ n: eps.episode_count }));
+
+        await cdp.eval(`location.hash = '#/scripts?project_id=${pid}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#ep-stale');`), '故事脚本页分集卡（含过期体检按钮）', 12000);
+        await cdp.eval(`document.querySelector('#ep-stale').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /过期体检/.test((document.querySelector('#ep-stale-box')||{}).innerText||'');`), '过期体检结果', 12000);
+        const box = await cdp.eval(`return (document.querySelector('#ep-stale-box')||{}).innerText||'';`);
+        ok('体检面板报出"缺剧本 N 集 / 建议重生成 M 集"（不是含糊的一句"有问题"）',
+          /缺剧本/.test(box) && /建议重生成/.test(box), box.replace(/\s+/g, ' ').slice(0, 150));
+        ok('逐集列出每一集的状态（用户知道是哪几集）', /第 1 集/.test(box) && /还没有剧本/.test(box), box.replace(/\s+/g, ' ').slice(0, 150));
+
+        // 默认范围据此收窄：全都缺剧本时就是全集
+        await cdp.eval(`document.querySelector('#gen-eps').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#b-from');`), '逐集生成弹窗', 10000);
+        const dflt = await cdp.eval(`const f=document.querySelector('#b-from'), t=document.querySelector('#b-to'); return f.value + '-' + t.value;`);
+        ok('默认范围来自体检（缺剧本/已过期的那几集），不是无脑全跑', dflt === `1-${eps.episode_count}`, dflt);
+        await cdp.eval(`document.querySelector('.modal-foot [data-no]').click(); return true;`);
+
+        // 用 API 存一份"第 1 集剧本 + 它的输入指纹"，再重切分集 → 页面应报过期
+        const b1 = await J(`/api/story/episode-brief?project_id=${pid}&source_id=${an.source.id}&per_episode=4&episode=1`);
+        await J('/api/scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, script_type: 'story_concept', episode_number: 1, title: '第 1 集', content: '第 1 集正文', plan_digest: b1.input_digest }) });
+        // 故事脚本页用的是**服务端默认**的每集拍数（hash 上的 per_episode 它不认），
+        // 所以要真的让第 1 集的输入变，得改**原著卡片**（追加/修正解析结果就是这条路径）
+        const cards12 = await J(`/api/story/cards?source_id=${an.source.id}`);
+        const beat = cards12.filter((c) => c.kind === 'plot').sort((x, y) => (Number(x.order) || 0) - (Number(y.order) || 0))[0];
+        ok('过期验收：拿到第 1 集的第一拍', !!beat, JSON.stringify(cards12.map((c) => c.name)));
+        await J(`/api/story/cards/${beat.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conflict: 'C1（原著后续章节补充了这场冲突的细节）' }) });
+        await cdp.eval(`location.hash = '#/scripts?project_id=${pid}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#ep-stale');`), '故事脚本页（重切后）', 12000);
+        await cdp.eval(`document.querySelector('#ep-stale').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /过期体检/.test((document.querySelector('#ep-stale-box')||{}).innerText||'');`), '重切后的体检结果', 12000);
+        const box2 = await cdp.eval(`return (document.querySelector('#ep-stale-box')||{}).innerText||'';`);
+        ok('原著卡片改过之后，第 1 集被标成"输入已变，建议重生成"',
+          /建议重生成/.test(box2) && /输入已变/.test(box2), box2.replace(/\s+/g, ' ').slice(0, 170));
+        ok('面板给出过期条数（重生成是花钱的事，数字要摆在点按钮之前）',
+          /建议重生成\s*1\s*集/.test(box2.replace(/\s+/g, ' ')) || /建议重生成 1 集/.test(box2.replace(/\s+/g, ' ')),
+          box2.replace(/\s+/g, ' ').slice(0, 170));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before12) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('人物卡↔资产库漂移契约（批 8 补 11：同步只动会注入提示词的字段）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());

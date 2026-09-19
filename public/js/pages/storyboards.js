@@ -572,7 +572,7 @@ export default async function storyboards(container, params) {
         continue;
       }
       paint(ep, `正在生成第 ${ep} 集分镜…`);
-      const out = await shotsFromText(sc.content, ep);
+      const out = await shotsFromText(sc.content, ep, sc.id);
       if (out.ok) done.push({ ep, ok: true, inserted: out.inserted, bound: out.bound });
       else done.push({ ep, error: out.error });
     }
@@ -597,7 +597,13 @@ export default async function storyboards(container, params) {
    * "单集生成有 13 个字段、批量生成少两个"这种静默漂移。
    * 不碰 UI（不 toast、不弹窗、不刷新）—— 那是调用方的事。
    */
-  async function shotsFromText(text, ep) {
+  /**
+   * @param {string} text 剧本正文
+   * @param {number} ep 集号
+   * @param {string} [sourceScriptId] 这份正文来自哪条剧本记录 —— 记下来才能判断
+   *   "剧本后来改过没有"（批 8 补 12）。指纹由服务端按入库那一刻的正文算，前端不参与。
+   */
+  async function shotsFromText(text, ep, sourceScriptId) {
     const roster = await loadRoster(text);
     const r = await api.genText({
       messages: [
@@ -638,6 +644,7 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
       negative_prompt: flat(s.negative_prompt) || 'low quality, blurry, distorted face',
       status: 'pending',
       sort_order: i,
+      source_script_id: sourceScriptId || null,
     }));
     const r2 = await api.createStoryboards(rows2);
     if (!r2.ok) return { ok: false, error: r2.error };

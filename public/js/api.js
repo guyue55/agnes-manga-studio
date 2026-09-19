@@ -182,6 +182,13 @@ export const api = {
     return req('GET', `/api/story/episode-brief?${u.toString()}`);
   },
 
+  // 剧本/分镜的过期体检（批 8 补 12）：纯本地判定，一次模型都不调
+  storyStaleness: (q = {}) => {
+    const u = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') u.set(k, String(v));
+    return req('GET', `/api/story/staleness?${u.toString()}`);
+  },
+
   // 一致性体检（批 8 补 3）：纯本地判定，随时可跑、不花钱
   storyAudit: (opts = {}) => {
     const q = new URLSearchParams();

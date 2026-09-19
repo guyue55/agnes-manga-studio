@@ -1833,6 +1833,74 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('剧本/分镜过期体检（批 8 补 12：输入变了要能被发现，没变不能乱喊）');
+{
+  const pj = await api('POST', '/api/projects', { name: '过期体检测试剧' });
+  const PID = pj.data.id;
+  // 用带 __LONGARC__ 的原文，mock 会给出"两幕八拍"，够切成好几集
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '过期·原著', text: `__LONGARC__${'长弧线的故事。'.repeat(40)}` });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const SRC = an.data.source.id;
+  // "纯本地"这件事要用计数证明：**解析跑完**之后到体检结束，一次模型都不该调
+  const callsBeforeStale = storyChatCalls;
+  const ep = (await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  ok('过期验收：分集骨架已就位（至少 2 集）', ep.episode_count >= 2, JSON.stringify({ n: ep.episode_count }));
+
+  const st0 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('还没生成任何剧本 → 每一集都算"缺"', st0.counts.script_missing, ep.episode_count);
+  eq('缺 ≠ 过期（不能把"没有"算成"该重生成"）', st0.counts.script_stale, 0);
+
+  // 按 brief 的指纹存一条"第 1 集剧本"（等价于逐集生成时前端带上 plan_digest）
+  const b1 = (await api('GET', `/api/story/episode-brief?project_id=${PID}&source_id=${SRC}&per_episode=4&episode=1`)).data;
+  ok('episode-brief 直接返回输入指纹（算法只留服务端一份）', /^[0-9a-f]{8}$/.test(b1.input_digest || ''), b1.input_digest);
+  const sc1 = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'story_concept', episode_number: 1, title: '第 1 集',
+    content: '第 1 集的剧本正文', plan_digest: b1.input_digest,
+  });
+  eq('剧本存下输入指纹', sc1.data.plan_digest, b1.input_digest);
+
+  const st1 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('刚生成完 → 第 1 集一致', st1.episodes.find((x) => x.episode_number === 1).script_state, 'ok');
+  eq('一致不计入"该重生成"', st1.counts.script_stale, 0);
+
+  // 分镜记来源剧本：指纹由服务端按入库那一刻的正文算（前端不参与哈希）
+  const sb = await api('POST', '/api/storyboards', { rows: [{ project_id: PID, episode_number: 1, shot_number: 1, scene_description: '甲', source_script_id: sc1.data.id }] });
+  ok('分镜入库时服务端补上了来源剧本的指纹', /^[0-9a-f]{8}$/.test(sb.data.rows[0].script_digest || ''),
+    JSON.stringify(sb.data.rows[0].script_digest));
+  const st2 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('分镜的来源剧本没变 → 分镜一致', st2.episodes.find((x) => x.episode_number === 1).shot_state, 'ok');
+
+  // ① 改了剧本正文 → 由它生成的分镜过期（剧本自己不算过期：它记的是"生成时的输入"）
+  await api('PUT', `/api/scripts/${sc1.data.id}`, { content: '第 1 集的剧本正文（人工改过）' });
+  const st3 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('剧本正文改过 → 分镜报过期', st3.episodes.find((x) => x.episode_number === 1).shot_state, 'stale');
+  eq('过期计数如实上报（用户据此决定要不要重新拆镜）', st3.counts.shot_stale, 1);
+
+  // ② 重切分集 → 第 1 集拍表重新分组 → 剧本过期
+  // 注意：幕次收口优先，per=2/3/4 都会收在同一处（这不是 bug，是"不拆幕"的既定语义）。
+  // 要真的改变第 1 集的拍表，得把每集拍数抬到能跨过幕边界
+  const st4 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=6`)).data;
+  eq('重切分集后第 1 集剧本报过期', st4.episodes.find((x) => x.episode_number === 1).script_state, 'stale');
+  ok('返回体带诊断字段与说明（界面要能解释"过期"是什么意思）',
+    typeof st4.scripts_scanned === 'number' && Array.isArray(st4.notes) && st4.notes.length > 0, JSON.stringify(st4.notes).slice(0, 120));
+
+  // ③ 手工粘贴的剧本没有指纹 → unknown，且**不算**该重生成
+  const manual = await api('POST', '/api/scripts', { project_id: PID, script_type: 'story_concept', episode_number: 2, title: '第 2 集（手工）', content: '手工写的' });
+  eq('手工剧本没有指纹', manual.data.plan_digest, '');
+  const st5 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('没有指纹 → unknown（不替用户断言它没过期）', st5.episodes.find((x) => x.episode_number === 2).script_state, 'unknown');
+  eq('unknown 不计入"该重生成"', st5.counts.script_stale, 0);
+  ok('unknown 有单独计数与说明', st5.counts.script_unknown >= 1 && st5.notes.some((x) => x.includes('没有生成指纹')));
+
+  // ④ 删掉源剧本 → 分镜无从追溯，如实报过期
+  await api('DELETE', `/api/scripts/${sc1.data.id}`);
+  const st6 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('源剧本被删 → 分镜报过期（不是静默"没问题"）', st6.episodes.find((x) => x.episode_number === 1).shot_state, 'stale');
+
+  eq('体检是纯本地的：一次模型都没调', storyChatCalls, callsBeforeStale);
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('人物卡 ↔ 资产库漂移（批 8 补 11：同步只动会注入提示词的字段）');
 {
   const pj = await api('POST', '/api/projects', { name: '漂移体检测试剧' });

@@ -1230,6 +1230,30 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 剧本/分镜过期体检（批 8 补 12）──
+  ok('过期体检是纯本地端点、并返回逐集状态与计数',
+    /on\('GET', '\/api\/story\/staleness'/.test(routesSrc)
+    && /story\.auditStaleness\(plan, scripts, shots/.test(routesSrc));
+  ok('剧本记下"生成时的输入指纹"，分镜记下"来源剧本 + 它的指纹"',
+    /plan_digest: str\(body\.plan_digest\)/.test(routesSrc)
+    && /source_script_id: str\(r\.source_script_id\) \|\| null/.test(routesSrc)
+    && /function sourceDigest\(scriptId\)/.test(routesSrc));
+  ok('分镜的指纹由**服务端**按入库那一刻的正文算（前端复算哈希迟早漂移）',
+    /script_digest: sourceDigest\(str\(r\.source_script_id\)\)/.test(routesSrc));
+  ok('前端生成时带上指纹、并显式区分"带/不带前情"（不带前情却按带前情取指纹会凭空报过期）',
+    /plan_digest: epDigest/.test(scriptsSrc) && /with_prior: usePrior \? undefined : '0'/.test(scriptsSrc));
+  ok('逐集生成的默认范围来自体检（缺剧本/已过期），不是无脑全跑',
+    /const todo = stale \? \(stale\.episodes \|\| \[\]\)\.filter/.test(scriptsSrc)
+    && /默认范围来自<b>过期体检<\/b>/.test(scriptsSrc));
+  // title 属性里出现裸双引号会**提前闭合属性**（中文引号写成英文引号就会这样），
+  // 表现为按钮 title 被截断、后面多出一堆垃圾属性 —— 只对这一行做判据，别全文件扫
+  {
+    const line = scriptsSrc.split('\n').find((x) => x.includes('id="ep-stale"')) || '';
+    ok('过期体检按钮：文案明确、且 title 里的引号是成对的（不成对会提前闭合属性）',
+      /不调模型、不花钱/.test(line) && (line.match(/"/g) || []).length % 2 === 0,
+      line.trim().slice(0, 120));
+  }
+
   // ── 人物卡 ↔ 资产库漂移（批 8 补 11）──
   // 注意用本块之前就读好的 `novel`：`novelSrc` 在本块之后才声明（TDZ，用到会整份崩）
   ok('漂移体检有同步动作与按钮文案（不出现含糊的"一键修复"）',
@@ -1263,9 +1287,9 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   // ── 逐集生成分镜（批 8 补 9）──
   ok('单集生成与逐集生成共用同一个内核（各写一份提示词迟早会漂移）',
-    /async function shotsFromText\(text, ep\)/.test(boardsSrc)
+    /async function shotsFromText\(text, ep, sourceScriptId\)/.test(boardsSrc)
     && /const out = await shotsFromText\(text, episode\)/.test(boardsSrc)
-    && /const out = await shotsFromText\(sc\.content, ep\)/.test(boardsSrc));
+    && /const out = await shotsFromText\(sc\.content, ep, sc\.id\)/.test(boardsSrc));
   ok('逐集生成分镜：分镜写进对应的那一集（不串集）',
     /episode_number: ep,/.test(boardsSrc) && /note: `分镜生成\$\{ep > 1/.test(boardsSrc));
   ok('逐集生成分镜：先确认调用次数，可取消，失败只丢这一集',
