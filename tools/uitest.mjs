@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -56,7 +57,7 @@ group('入口文件');
 // ── 2. 模块文件齐全 ──────────────────────────────────────────
 group('模块完整性');
 {
-  const pages = ['dashboard', 'projects', 'scripts', 'storyboards', 'characters', 'images', 'videos', 'tasks', 'assets', 'settings'];
+  const pages = ['dashboard', 'projects', 'scripts', 'novel', 'storyboards', 'characters', 'images', 'videos', 'tasks', 'assets', 'settings'];
   for (const p of pages) {
     ok(`页面模块 ${p}.js 存在`, fs.existsSync(path.join(PUB, 'js', 'pages', `${p}.js`)));
   }
@@ -120,6 +121,14 @@ group('import 符号');
     if (path.basename(file) === 'helpers.js') continue;
     const src = read(file);
     ok(`${path.basename(file)} 默认导出函数`, /export\s+default\s+(?:async\s+)?function/.test(src));
+    // 首参必须是 router 传进来的容器（app.js 调 nav.page(page, params)）。
+    // 变更须知：页面若自己 createElement 一个容器再往里写，DOM 不会进文档，
+    // 表现为"切过去白屏、且**没有任何报错**"（批 8 的 novel.js 就这么白过一次）。
+    // 所以这里钉死签名形状：第一个参数名必须是 container，且不能再自建 .page 容器。
+    ok(`${path.basename(file)} 首参是 router 注入的容器（container）`,
+      /export\s+default\s+async\s+function\s+\w+\s*\(\s*container\b/.test(src));
+    ok(`${path.basename(file)} 不自建页面容器（写了也不在文档里）`,
+      !/createElement\('div'\)[\s\S]{0,40}className\s*=\s*'page'/.test(src));
   }
 }
 
@@ -1055,6 +1064,112 @@ group('角色库（R14：档案 + 绑定 + 引用守卫）');
   ok('预览标注角色注入徽标与最终词', /\+角色/.test(sbs) && /data-prompt="\$\{field\}"/.test(sbs));
   // 灵敏度对照：把"绑定"删掉，行渲染守卫必须能发现
   ok('灵敏度对照：charCell 缺失会被检出', !/function charCell\(/.test('const x = 1;'));
+}
+
+// ── 批 8 原著解析：前端与后端同源、页面契约 ───────────────────
+group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐全）');
+{
+  const app = read(path.join(PUB, 'js', 'app.js'));
+  const apiSrc = read(path.join(PUB, 'js', 'api.js'));
+  const consts = read(path.join(PUB, 'js', 'consts.js'));
+  const novel = read(path.join(PUB, 'js', 'pages', 'novel.js'));
+  const fileSrc = read(path.join(PUB, 'js', 'storyfile.js'));
+  const routesSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+  const storySrc = read(path.join(ROOT, 'lib', 'story.js'));
+
+  ok('导航注册了原著解析页（图标存在，否则静默退化成 info 图标）',
+    /id: 'novel', label: '原著解析', icon: 'book'/.test(app) && /book: '<path/.test(consts));
+  ok('原著解析页默认导出函数', /export default async function novel/.test(novel));
+  ok('原著解析页在故事脚本之后、分镜制作之前（链路顺序即导航顺序）',
+    app.indexOf("id: 'novel'") > app.indexOf("id: 'scripts'") && app.indexOf("id: 'novel'") < app.indexOf("id: 'storyboards'"));
+
+  // ① 卡片类别必须与后端同源（漂移 = "抽到了但界面不显示"）
+  const parseArr = (src, re) => {
+    const m = re.exec(src);
+    return m ? m[1].split(',').map((x) => x.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : [];
+  };
+  const backKinds = parseArr(storySrc, /const CARD_KINDS = \[([^\]]+)\]/);
+  const frontKinds = parseArr(consts, /export const STORY_CARD_KINDS = \[([^\]]+)\]/);
+  ok('后端 CARD_KINDS 解析成功（自证解析器有效）', backKinds.length === 6, backKinds.join(','));
+  eq('前端卡片类别与后端 CARD_KINDS 逐项一致（顺序也算）', frontKinds, backKinds);
+  const backFields = [...storySrc.matchAll(/^\s{2}([a-z_]+): \[([^\]]*)\],/gm)].map((m) => m[1]);
+  const frontFieldKeys = [...consts.matchAll(/^\s{2}([a-z_]+): \[/gm)].map((m) => m[1]);
+  ok('前端字段表覆盖后端 CARD_FIELDS 的每一类',
+    backKinds.every((k) => frontFieldKeys.includes(k)), `后端 ${backKinds.join(',')} / 前端 ${frontFieldKeys.join(',')}`);
+  ok('前端每类字段都给了中文标签（否则编辑态显示英文键名）',
+    /export const STORY_CARD_FIELD_LABELS = \{/.test(consts) && /storyKindLabel/.test(consts));
+  ok('灵敏度对照：把类别表改错会被比对检出',
+    JSON.stringify(['world', 'character', 'location']) !== JSON.stringify(backKinds)
+    && JSON.stringify(['world', 'character']) !== JSON.stringify(backKinds));
+
+  // ② 文本规范化必须与后端 normalizeText 输出一致（否则"字数"在骗人）
+  const require2 = createRequire(import.meta.url);
+  const storyMod = require2(path.join(ROOT, 'lib', 'story.js'));
+  const fileMod = await import(pathToFileURL(path.join(PUB, 'js', 'storyfile.js')).href);
+  const probes = [
+    '\uFEFF第一章\r\n\r\n\r\n林晚走了。\r\n',
+    '  前后有空白  \n\n\n\n\n中间空行很多\n',
+    '甲\t\t\n乙   \n',
+    '没有换行的一段文字',
+  ];
+  const mismatch = probes.filter((t) => fileMod.normalizeStoryText(t) !== storyMod.normalizeText(t));
+  ok('前端 normalizeStoryText 与后端 normalizeText 逐例一致', mismatch.length === 0,
+    mismatch.map((t) => JSON.stringify(t)).join(' | ') || `${probes.length} 例全部一致`);
+  ok('灵敏度对照：两套规范化确实会不同（不是恒等的空断言）',
+    fileMod.normalizeStoryText('\uFEFFa\r\n\r\n\r\nb') !== '\uFEFFa\r\n\r\n\r\nb');
+
+  // ③ 文件读取：纯文本才收，超限/空文件给可读理由
+  ok('只收纯文本（Word/PDF 明确拒绝并给替代路径）',
+    !fileMod.checkStoryFile({ name: 'a.docx', size: 100 }).ok
+    && /另存为 txt/.test(fileMod.checkStoryFile({ name: 'a.docx', size: 100 }).error));
+  ok('接受 .txt/.md/.markdown', ['.txt', '.md', '.markdown'].every((e) => fileMod.checkStoryFile({ name: `a${e}`, size: 10 }).ok));
+  ok('空文件被拒', !fileMod.checkStoryFile({ name: 'a.txt', size: 0 }).ok);
+  ok('超大文件被拒（20MB 上限）', !fileMod.checkStoryFile({ name: 'a.txt', size: fileMod.STORY_FILE_MAX + 1 }).ok);
+  ok('页面用 accept 与校验同一份扩展名表', /STORY_FILE_ACCEPT/.test(fileSrc) && /\.txt,\.md,\.markdown/.test(novel));
+
+  // ④ 端点齐全：前端调的每个 /api/story/* 后端都必须有
+  // 端点路径在 api.js 里有三种写法：纯字面量、带查询参数的模板串、带 :id 的模板串。
+  // 直接字符串比对会把后两种误判，所以分两步：
+  //   ① 纯字面量的做**精确**存在性检查（最严，能抓拼写错）；
+  //   ② 模板串取"静态前缀"（到 $ 或 : 为止），要求后端存在以它为前缀的注册路由。
+  //      `cards/${id}` 与 `cards/${q...}` 都归到前缀 /api/story/cards，仍能抓住路径主体写错。
+  const heads = (src) => [...new Set([...src.matchAll(/\/api\/story\/[a-z/-]*/g)].map((m) => m[0].replace(/\/+$/, '')))];
+  const frontHeads = heads(apiSrc);
+  const backHeads = heads(routesSrc);
+  ok('api.js 暴露了 story 端点（自证非空跑）', frontHeads.length >= 6, frontHeads.join(','));
+  ok('后端注册了 story 路由（自证非空跑）', backHeads.length >= 6, backHeads.join(','));
+  const unmatched = frontHeads.filter((h) => !backHeads.some((b) => b === h || b.startsWith(`${h}/`)));
+  ok('api.js 用到的每个 /api/story 路径后端都有对应注册', unmatched.length === 0, unmatched.join(','));
+  const literals = [...new Set([...apiSrc.matchAll(/'\/api\/story\/[^'?]*'/g)].map((m) => m[0].slice(1, -1)))];
+  const missLiteral = literals.filter((p2) => !routesSrc.includes(`'${p2}'`));
+  ok('其中纯字面量端点做精确比对（抓拼写错）', literals.length >= 4 && missLiteral.length === 0,
+    missLiteral.join(',') || `精确命中 ${literals.length} 个：${literals.join(',')}`);
+  ok('api.js 暴露了干跑与卡片 CRUD',
+    ['storyPlan:', 'storyAnalyze:', 'storyCards:', 'updateStoryCard:', 'deleteStoryCard:', 'storyPrompt:', 'storyCardToCharacter:', 'storyImportCharacters:', 'storySources:', 'deleteStorySource:']
+      .every((k) => apiSrc.includes(k)));
+
+  // ⑤ 计费闸门：解析入口必须先干跑再确认（不许静默花钱）
+  ok('解析入口接入 costConfirm（与分镜/视频同一条付费纪律）', /costConfirm\(\{ count: plan\.calls/.test(novel));
+  ok('没干跑过就先干跑一次（不许拿旧数字给新原文背书）',
+    /if \(!plan\) \{/.test(novel) && /plan = null;/.test(novel) && /原文一变/.test(novel));
+  ok('覆盖不全时明说（不学竞品"截断了却宣称已解析全书"）',
+    /truncated \? `<br>原文超出单次解析上限/.test(novel) && /只覆盖前/.test(novel));
+
+  // ⑥ 刷新不丢：原文落库 + 任务进度续上
+  ok('解析任务 id 进 localStorage（刷新/切页回来能续上进度）', /localStorage\.setItem\(JOB_KEY/.test(novel) && /api\.batch\(saved\)/.test(novel));
+  ok('解析记录可把原文载回输入框（竞品刷新即全丢的那 1 万字）',
+    /data-load=/.test(novel) && /textEl\.value = r2\.data\.text/.test(novel));
+  ok('删原著前告知会连带删掉多少卡片（引用后果要说清）', /张卡片会一起删除，无法撤销/.test(novel));
+  ok('删单卡走就地两击确认（不弹窗打断，也不一击就没）', /armedDel !== id/.test(novel));
+  ok('就地编辑保存前校验名字非空（下游全靠名字对上号）', /名字不能为空/.test(novel));
+
+  // ⑦ 反向驱动：人物卡入资产库 + 回注文本
+  ok('只有人物卡给"入资产库"按钮（地点/道具卡不该进角色库）',
+    /c\.kind === 'character' \? `<button class="btn btn-xs" data-tochar=/.test(novel));
+  ok('回注文本由服务端渲染（前端不重复实现 cardsToPrompt）',
+    /api\.storyPrompt\(/.test(novel) && !/function cardsToPrompt/.test(novel));
+  ok('复制成功文案说清"粘到哪里"（减少人工试错）', /粘贴进剧本\/分镜模板的变量框/.test(novel));
+  ok('批量入资产库前告知跳过语义（幂等，不制造重复角色）', /已在库里的会自动跳过/.test(novel));
 }
 
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);

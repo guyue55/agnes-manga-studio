@@ -66,6 +66,38 @@ export function icon(name, size = 18, cls = '') {
 }
 
 // ── 枚举 ────────────────────────────────────────────────────
+/**
+ * 批 8：原著卡片的六种类别。
+ * 变更须知：这份 id 表必须与后端 `lib/story.js` 的 `CARD_KINDS` **完全一致** ——
+ * 后端按 kind 过滤/落库，前端按 kind 分组渲染，两边一旦漂移就会出现"抽到了但界面不显示"。
+ * uitest 有一条钉直接读 lib/story.js 比对，改这里必须同步改那边。
+ */
+export const STORY_CARD_KINDS = ['world', 'character', 'location', 'prop', 'plot', 'timeline'];
+export const STORY_CARD_LABELS = {
+  world: '信息卡', character: '人物卡', location: '地点卡',
+  prop: '道具卡', plot: '剧情卡', timeline: '时间线',
+};
+/** 每类卡片在编辑态要显示的字段（与后端 CARD_FIELDS 同源，顺序即展示顺序） */
+export const STORY_CARD_FIELDS = {
+  world: ['genre', 'tone', 'worldview', 'theme', 'logline', 'mainline'],
+  character: ['role', 'identity', 'appearance', 'outfit', 'personality', 'gender', 'age'],
+  location: ['atmosphere', 'region', 'time_of_day', 'features'],
+  prop: ['owner', 'usage', 'features'],
+  plot: ['stage', 'conflict', 'turn', 'outcome', 'involved'],
+  timeline: ['when', 'order_note'],
+};
+export const STORY_CARD_FIELD_LABELS = {
+  role: '定位', identity: '身份', appearance: '外貌', outfit: '服饰', personality: '性格',
+  gender: '性别', age: '年龄', genre: '题材', tone: '基调', worldview: '世界观', theme: '主题',
+  logline: '一句话故事', mainline: '主线', atmosphere: '氛围', region: '地域',
+  time_of_day: '时段', features: '特征', owner: '持有者', usage: '用途', stage: '阶段',
+  conflict: '冲突', turn: '转折', outcome: '结果', involved: '涉及人物',
+  when: '时间', order_note: '顺序说明',
+};
+export function storyKindLabel(k) { return STORY_CARD_LABELS[k] || k; }
+export const STORY_ROLE_OPTIONS = ['主角', '配角', '反派', '龙套'];
+export const STORY_STAGE_OPTIONS = ['起', '承', '转', '合'];
+
 export const PROJECT_TYPES = ['爽文漫剧', '悬疑漫剧', '都市逆袭', '末世生存', '奇幻冒险', '科幻脑洞', '情绪故事', '短篇条漫动态化', '自定义'];
 export const ASPECTS = ['9:16 竖屏', '16:9 横屏', '1:1 方形', '3:4 竖版', '4:3 横版'];
 

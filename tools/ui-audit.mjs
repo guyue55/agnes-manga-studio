@@ -233,6 +233,8 @@ try {
     ['videos', `#/videos?project=${pid}`],
     ['tasks', '#/tasks', `(document.querySelector('[data-detail]')||document.querySelector('[data-detailt]')||{}).click?.();`],
     ['scripts', `#/scripts?project=${pid}`],
+    // 批 8：原著解析页（卡片工作台是新的栅格 + 长文本输入，最需要在 4 个视口下量一遍溢出）
+    ['novel', `#/novel?project_id=${pid}`],
     ['characters', `#/characters?project=${pid}`, `document.querySelector('#new-char')?.click();`],
     ['settings', '#/settings?sec=templates', `document.querySelector('#t-new')?.click();`],
   ];

@@ -8,6 +8,7 @@ import { toast } from './ui.js';
 import dashboard from './pages/dashboard.js';
 import projects from './pages/projects.js';
 import scripts from './pages/scripts.js';
+import novel from './pages/novel.js';
 import storyboards from './pages/storyboards.js';
 import characters from './pages/characters.js';
 import images from './pages/images.js';
@@ -20,6 +21,8 @@ const NAV = [
   { id: 'dashboard', label: '工作台', icon: 'dashboard', page: dashboard },
   { id: 'projects', label: '项目管理', icon: 'folder', page: projects },
   { id: 'scripts', label: '故事脚本', icon: 'script', page: scripts },
+  // 批 8：原著解析紧跟故事脚本——它是剧本/资产/分镜的上游，链路顺序即导航顺序
+  { id: 'novel', label: '原著解析', icon: 'book', page: novel },
   { id: 'storyboards', label: '分镜制作', icon: 'film', page: storyboards },
   // R14：角色库紧跟分镜制作——分镜是角色的使用现场，两者来回切换最频繁
   { id: 'characters', label: '角色库', icon: 'users', page: characters },

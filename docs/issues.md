@@ -1079,6 +1079,41 @@ R15 功能门禁全绿后，做了一次"代替肉眼"的真机几何复查（�
 - **下一轮**：批 7 收尾——R25 幂等键 / R26 上传压缩与时长校验 / R27 成本留痕 / R28 错误出口 /
   R29 `with_counts` / R30 `// 变更须知` 纪律（其中 R25/R27 已部分落在批 1 的 `costConfirm`，需先核对口径）。
 
+**B63 研读轮·十三（第 82 轮）**：**原著解析页（批 8 下）**。新增 `public/js/pages/novel.js`（原著解析工作台）、
+`public/js/storyfile.js`（本地文件读取 + 文本规范化纯函数层）、`consts.js` 的六类卡片表、`api.js` 的 11 个 story 方法、
+导航项「原著解析」（紧跟故事脚本），并在 `tools/browser-test.mjs` 补一组**行为级**付费闸门契约。
+门禁 selftest 302 / apitest 482 / uitest 731→**845** / browser-test 296→**314**，全绿。
+
+- **页面做成了独立页而不是故事脚本页的第 6 个页签**：`scripts.js` 的整个结构是"一个页签 = 一个模板 → 填变量 → 生成"，
+  而解析工作台是"长文输入 + 六类卡片分组 + 就地编辑 + 反向驱动"，交互模型根本不同。
+  塞进 `SCRIPT_TYPES` 需要在 `tplOf/renderFields/syncCounters/stepNo/generate/carryToNext` 等近十处特判，
+  属于典型的高耦合改造；独立页则对 `scripts.js` **零改动**（731 条既有钉全不受影响）。
+- **干跑 → 确认 → 解析**三步（沿用批 7 的计费安全纪律）：`先算一算` 走 `/api/story/plan`（纯本地切块，
+  **一次模型都不调**）给出"分 N 段 / 调用模型 N+1 次 / 覆盖 X/Y 字"；`开始解析` 再弹 `costConfirm`。
+  没干跑过就直接点解析时会先补一次干跑——不许拿旧数字给新原文背书（改原文即作废上次结论）。
+- **原文落库 + 载回输入框**：对着 04 号包"全包零持久化、刷新即丢 1 万字"的缺陷做的。
+  解析记录列表显示"字数 / 段数 / 卡片数 / 时间 / 状态"，`载入原文` 一键回到输入框改完重解析。
+- **卡片工作台**：六类分组带计数、就地编辑（名字/摘要 + 各类业务字段 + 别名）、就地两击删除、
+  人物卡一键入资产库、任意类别一键复制回注文本（渲染由服务端 `cardsToPrompt` 出，前端不重复实现）。
+- **文件读取不做服务器上传**：`.txt/.md` 用 `file.text()` 在浏览器本地读，`checkStoryFile` 只收这三种扩展名、
+  拒空文件、拒 >20MB，Word/PDF 明确回"请先另存为 txt"。
+- **三个真问题（都是本轮实测抓到的，已修）**：
+  ① **页面白屏且零报错**：`novel.js` 一开始写成 `export default async function novel(params)` 并自建容器
+     （`document.createElement('div')` + `className='page'`），而 router 是 `nav.page(page, params)` ——
+     首参是**已挂进文档的容器**，自建的那个永远不在 DOM 里。表现是"切过去白屏、控制台一句错都没有"，
+     浏览器测试只报"等待超时"。**已加 uitest 棘轮**：页面首参必须是 `container`，且不得自建 `.page` 容器。
+  ② **`ui.js` 的 `on()` 只传事件对象**（`addEventListener` 直通），我按 `(e, el)` 写了一批委托处理器，
+     `el` 恒为 `undefined` —— 一点就 `Cannot read properties of undefined`。已全改为 `e.currentTarget`。
+  ③ **跨组污染**：为验证"第一次必弹费用确认"，我的浏览器测试组清掉了当天免打扰票据却**没有还回去**，
+     导致后面的 E2E 组点出图被弹窗拦住、超时变红。已在组尾把票据写回（并留注释说明为什么必须还）。
+- **正向对照 4 组**（改坏 → 变红 → 还原 → 复绿）：前端类别表多一类（uitest 1 红）、
+  api.js 端点路径拼错（uitest 3 红）、空态漏 CTA（uitest 1 红，这条在开发中**真实**拦下过我 3 个空态）、
+  **绕过 `costConfirm`**（uitest **0 红**、browser-test 4 红）。最后一条最有价值：
+  `const go = true || await costConfirm(...)` 这种绕过，源码级棘轮（只查"有没有调用"）**抓不到**，
+  只有行为层"点了必须弹窗"才抓得到 —— 这也是本项目"源级棘轮 + 真机行为契约"两层都要有的实证。
+- 另：正向对照还发现 `/api/story/plan` 的计费钉原本是**假钉**（详见 B62）与"测试原文太短导致跨块合并未被跑到"，
+  两处都已在 B62 记录。
+
 **B62 研读轮·十二（第 81 轮）**：**原著解析内核（批 8 上）**。新增 `lib/story.js` 纯函数层 + `story_sources` /
 `story_cards` 两张表 + `novel_extract`/`story_bible` 两个提示词模板 + `/api/story/*` 十二个端点。
 门禁 selftest 209→**302** / apitest 368→**482**（uitest 731、browser-test 296 未动），全绿。

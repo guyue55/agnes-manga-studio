@@ -188,7 +188,7 @@ try {
 
     group('页面切换');
     const pages = [
-      ['projects', '项目管理'], ['scripts', '故事脚本'], ['storyboards', '分镜制作'], ['characters', '角色库'],
+      ['projects', '项目管理'], ['scripts', '故事脚本'], ['novel', '原著解析'], ['storyboards', '分镜制作'], ['characters', '角色库'],
       ['images', '图片生成'], ['videos', '视频生成'], ['tasks', '镜头任务'],
       ['assets', '素材库'], ['settings', '设置'],
     ];
@@ -655,6 +655,66 @@ try {
       ok('当天免打扰生效：再点不再弹确认', !(await dialogOpen()));
       // 清理探针镜头；票据**故意保留**（后续各组的生成点击不应被弹窗打断）
       await fetch(`http://127.0.0.1:${port}/api/storyboards/${probe.id}`, { method: 'DELETE' });
+    }
+
+    group('原著解析页（批 8：干跑计费闸门 / 覆盖如实上报）');
+    {
+      // 本组只用到 /api/story/plan（**纯本地计算，不调模型**），所以不依赖任何上游 Key：
+      // 这正好让它能证明"确认之前一分钱都不花"——连上游都没配，弹窗照样先出现。
+      const J = (url, o) => fetch(`http://127.0.0.1:${port}${url}`, o).then((x) => x.json());
+      const SKIP = 'agnes.cost.skipUntil';
+      const dialogOpen = () => cdp.eval(`!!document.querySelector('.modal-mask [data-yes]')`);
+      const plist = await J('/api/projects');
+      const pid = (plist.find((x) => x.name === '浏览器验收剧') || {}).id;
+      await cdp.eval(`localStorage.removeItem('${SKIP}'); return true;`); // 上一组故意留了免打扰票据，这里要先清掉
+      await cdp.eval(`location.hash = '#/novel?project_id=${pid}'; return true;`);
+      await waitFor(() => cdp.eval(`!!document.querySelector('#nov-text') && !!document.querySelector('#nov-run')`), '原著解析页就绪');
+      ok('原著解析页标题正确', await cdp.eval(`document.querySelector('.page-title')?.textContent === '原著解析'`));
+      ok('解析记录空态带一键出口（不是死胡同）',
+        await cdp.eval(`!!document.querySelector('#nov-sources [data-act]')`));
+
+      // 约 5800 字、12 段的原文：默认 3000 字一段 → 稳定切出 2 段
+      const chars = await cdp.eval(`const t = Array.from({length:12},(_,i)=>('第'+(i+1)+'段。'+'林晚走进临江茶馆，白衣上沾着夜雨。'.repeat(20))).join('\\n\\n');
+        const el = document.querySelector('#nov-text'); el.value = t; el.dispatchEvent(new Event('input',{bubbles:true})); return el.value.length;`);
+      ok('原文粘贴后计数可见（字数超过一段上限，才会真的分块）', chars > 3000, String(chars));
+      ok('计数文案含"原文 N 字"', await cdp.eval(`(document.querySelector('#nov-count')?.textContent||'').includes('原文')`));
+
+      // ① 干跑：给出"分几段、调几次、覆盖多少"，且**不弹费用确认、不落库**
+      await cdp.eval(`document.querySelector('#nov-plan').click(); return true;`);
+      const gotPlan = await waitFor(() => cdp.eval(`(document.querySelector('#nov-plan-box')||{}).textContent?.includes('将分')`), '干跑结果出现', 8000).then(() => true).catch(() => false);
+      ok('干跑给出分段与调用次数', gotPlan);
+      const planText = await cdp.eval(`return (document.querySelector('#nov-plan-box')||{}).textContent || '';`);
+      ok('干跑结果含"分 N 段"与"调用模型 N 次"', /将分\s*2\s*段/.test(planText) && /调用模型\s*3\s*次/.test(planText), planText.slice(0, 90));
+      ok('干跑结果如实说明覆盖全文（未截断时不谎报风险）', planText.includes('覆盖全文'), planText.slice(0, 90));
+      ok('干跑本身不弹费用确认（本地计算不该打断）', !(await dialogOpen()));
+      const before = await J(`/api/story/sources?project_id=${pid}`);
+      ok('干跑不落库（还没确认就花钱/写盘都不许）', before.length === 0, JSON.stringify(before.length));
+
+      // ② 点开始解析：必须先弹费用确认，且文案给出真实次数
+      await cdp.eval(`document.querySelector('#nov-run').click(); return true;`);
+      const dlg = await waitFor(dialogOpen, '原著解析弹出成本确认', 8000).then(() => true).catch(() => false);
+      ok('开始解析前弹出成本确认（未确认不花钱）', dlg);
+      const copy = await cdp.eval(`return (document.querySelector('.modal-body')||{}).textContent || '';`);
+      ok('确认文案说清真实费用与计费归属', copy.includes('真实费用') && copy.includes('Agnes'), copy.slice(0, 70));
+      ok('确认文案带上本次调用次数与段数（用户能算账）', copy.includes('3') && copy.includes('原著解析') && copy.includes('2 段'), copy.slice(0, 120));
+
+      // ③ 取消 → 不得提交（无 job、无落库）。用可选链：弹窗没出现时也要**干净地红**，
+      // 而不是在 click of null 上抛异常把整组带走（对照 I 实测过一次）
+      await cdp.eval(`document.querySelector('.modal-mask [data-no]')?.click(); return true;`);
+      await sleep(700);
+      ok('取消后未提交解析任务（无 job 记录）', !(await cdp.eval(`localStorage.getItem('agnes.novel.job')`)));
+      const after = await J(`/api/story/sources?project_id=${pid}`);
+      ok('取消后未落库任何原著', after.length === 0, String(after.length));
+
+      // ④ 改原文后旧的分段数字必须作废（不许拿旧数字给新原文背书）
+      await cdp.eval(`const el = document.querySelector('#nov-text'); el.value = el.value + '\\n\\n追加一段，林晚拔剑。'; el.dispatchEvent(new Event('input',{bubbles:true})); return true;`);
+      ok('改原文后干跑结论被作废（不会拿旧数字误导）',
+        !(await cdp.eval(`(document.querySelector('#nov-plan-box')||{}).textContent?.includes('将分')`)));
+
+      // 收尾：本组为了验证"第一次必弹"清掉了当天免打扰票据，
+      // 必须**还回去**——否则后面各组的生成点击会被弹窗拦住（E2E 组就是这么被我拦红过一次）。
+      await cdp.eval(`localStorage.setItem('${SKIP}', String(Date.now() + 86400000)); return true;`);
+      ok('已还回当天免打扰票据（不污染后续各组的生成点击）', !!(await cdp.eval(`return localStorage.getItem('${SKIP}');`)));
     }
 
     group('全链路 E2E（mock 上游 × 真实 UI）');

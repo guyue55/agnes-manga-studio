@@ -130,6 +130,34 @@ export const api = {
   batch: (id) => req('GET', `/api/batch/${id}`),
   cancelBatch: (id) => req('POST', `/api/batch/${id}/cancel`, {}),
 
+  // 批 8 原著解析。注意 /api/story/plan 是**干跑**：只切块不调模型，用于"先告诉用户要花几次调用"。
+  storyPlan: (p) => req('POST', '/api/story/plan', p),
+  // 解析是异步任务（分块并发 + 全局归并），受理后立刻返回 jobId，进度走 SSE 的 batch 事件
+  storyAnalyze: (p) => req('POST', '/api/story/analyze', p, { timeoutMs: TIMEOUT.gen }),
+  storySources: (projectId) => req('GET', `/api/story/sources${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  storySource: (id) => req('GET', `/api/story/sources/${id}`),
+  deleteStorySource: (id) => req('DELETE', `/api/story/sources/${id}`),
+  storyCards: (opts = {}) => {
+    const q = [];
+    if (opts.projectId) q.push(`project_id=${encodeURIComponent(opts.projectId)}`);
+    if (opts.sourceId) q.push(`source_id=${encodeURIComponent(opts.sourceId)}`);
+    if (opts.kind) q.push(`kind=${encodeURIComponent(opts.kind)}`);
+    return req('GET', `/api/story/cards${q.length ? `?${q.join('&')}` : ''}`);
+  },
+  updateStoryCard: (id, patch) => req('PUT', `/api/story/cards/${id}`, patch),
+  deleteStoryCard: (id) => req('DELETE', `/api/story/cards/${id}`),
+  // 回注文本由**服务端**渲染（前端不重复实现 cardsToPrompt，否则格式有两个真相来源）
+  storyPrompt: (opts = {}) => {
+    const q = [];
+    if (opts.projectId) q.push(`project_id=${encodeURIComponent(opts.projectId)}`);
+    if (opts.sourceId) q.push(`source_id=${encodeURIComponent(opts.sourceId)}`);
+    if (opts.kinds && opts.kinds.length) q.push(`kinds=${encodeURIComponent(opts.kinds.join(','))}`);
+    return req('GET', `/api/story/cards/prompt${q.length ? `?${q.join('&')}` : ''}`);
+  },
+  storyCardToCharacter: (id, payload) => req('POST', `/api/story/cards/${id}/to-character`, payload),
+  storyImportCharacters: (payload) => req('POST', '/api/story/cards/import-characters', payload),
+  storyReduce: (sourceId) => req('POST', '/api/story/reduce', { source_id: sourceId }, { timeoutMs: TIMEOUT.gen }),
+
   importData: (data, mode) => req('POST', '/api/import', { data, mode }),
   logs: () => req('GET', '/api/logs'),
 };

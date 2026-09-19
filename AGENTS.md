@@ -9,8 +9,9 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 - 后端链路：`server.js` → `lib/routes.js`（全部 /api 端点）→ `lib/agnes.js`（Agnes 云 API 客户端）→ 外部 API；异步任务链 `lib/jobs.js` + `lib/poller.js`（后台轮询 + SSE 推送）；持久化基石 `lib/store.js`；原著解析纯函数层 `lib/story.js`（切块/卡片规范化/跨块去重合并/回注渲染，全部可离线断言）
 - 原著解析（批 8）：`docs/research/09-story-bible-plan.md` —— 长篇原文 → 六类卡片（信息卡/人物卡/地点卡/道具卡/剧情卡/时间线），分块 map + 全局 reduce，`/api/story/*` 提供干跑计费闸门、卡片 CRUD、回注渲染与"人物卡入资产库"反向驱动
-- 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（10 个页面模块）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 302 / apitest 482 / uitest 731 / browser-test 296），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 10 页，其中 7 页带**弹窗动作钩子**，弹窗内一并度量）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁
+- 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
+- 测试：`tools/` 下四套断言脚本（selftest 302 / apitest 482 / uitest 845 / browser-test 314），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 10 页，其中 7 页带**弹窗动作钩子**，弹窗内一并度量）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+  **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
 ---
@@ -30,7 +31,10 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 | `.understand-anything/intermediate/scan-result.json` | 文件清单 + 预解析 importMap（供增量分析复用） |
 
 当前快照：commit `d268a0debde803fa36749bb482e4ff30330df444`（批 7 收尾）— **278 节点 / 1076 边 / 9 层 / 15 步导览**，全部文本为中文。
-锚点之后另有两次**纯文档**提交（`AGENTS.md` 与 `docs/issues.md` 的图谱重建记录），按「改行不改结构」不计入失真；`git diff <锚点>..HEAD --name-only` 若只列出这两份文档，无需重建。
+⚠️ **批 8 之后图谱已失真，待重建**：锚点之后新增 4 个文件（`lib/story.js`、`public/js/pages/novel.js`、
+`public/js/storyfile.js`、`docs/research/09-story-bible-plan.md`）与十余个 `/api/story/*` 端点，
+下表的节点/边数与层表数字**仍是锚点时的值**（55 个文件级节点）；对锚点之前就存在的文件，查询结论仍然可靠。
+重建前请先跑 `/understand`（增量即可，但它按批次重分析，会顺带重跑分层与导览）。
 扫描范围 = `git ls-files` 减去 `.understandignore` 里的排除项（工具自身的 `knowledge-graph.json` / `fingerprints.json` / `meta.json` / `intermediate/` / `tmp/` / `.trash-*` 一律排除：它们是被分析对象的产物，且体积最大）。
 
 ### 图谱 Schema
@@ -68,17 +72,17 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 
 | layer id | 名称 | 文件数 |
 |---|---|---|
-| `layer:frontend-pages` | 前端页面层 | 11（含批 3 新增的 `public/js/pages/characters.js` 角色库页） |
-| `layer:frontend-shell` | 前端壳层与共享模块 | 7（含批 4 新增的 `public/js/textstats.js`：长文本计数/软上限/门禁判据的纯函数层） |
+| `layer:frontend-pages` | 前端页面层 | 11 → **12**（批 8 新增 `public/js/pages/novel.js` 原著解析工作台） |
+| `layer:frontend-shell` | 前端壳层与共享模块 | 7 → **8**（批 8 新增 `public/js/storyfile.js`：文件准入 + 文本规范化纯函数层） |
 | `layer:backend-api` | HTTP 接口与路由层 | 2 |
 | `layer:backend-service` | 后端服务层（agnes/jobs/poller） | 3 |
-| `layer:data-persistence` | 数据持久化层（store/seed） | 2 |
+| `layer:data-persistence` | 数据持久化层（store/seed） | 2 → **3**（批 8 新增 `lib/story.js`：原著解析纯函数层，与 store/seed 同属"无 IO 的领域内核"） |
 | `layer:test` | 测试层（tools/ 四套断言测试 + run-all + ui-audit 度量 + port-check 端口防护验证） | 7 |
 | `layer:build-tooling` | 构建与代码生成工具（build-exe / build-graph-data） | 2 |
-| `layer:documentation` | 文档、竞品研读与静态图谱查看器（docs/、AGENTS.md） | 18（含 `docs/research/08-src-0{0..5}-*.md` 六篇） |
+| `layer:documentation` | 文档、竞品研读与静态图谱查看器（docs/、AGENTS.md） | 18 → **19**（新增 `docs/research/09-story-bible-plan.md`） |
 | `layer:config` | 项目配置 | 3 |
 
-层内文件节点合计 55 = 图谱文件级节点总数（校验脚本会强制：每个文件级节点**有且只有一个**归属）。
+层内文件节点合计 55（锚点）→ **59**（批 8 后，待重建确认）= 图谱文件级节点总数（校验脚本会强制：每个文件级节点**有且只有一个**归属）。
 
 ### 常用查询（可直接复制执行）
 
@@ -171,7 +175,7 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
 ## ⚠️ 注意事项与已知边界
 
 1. **CJS 依赖不在 `imports` 边里**：`server.js`、`lib/routes.js`、`tools/selftest.mjs` 等用 CommonJS `require()` / `createRequire()`（SEA 兼容），tree-sitter import 解析返回空。它们的真实依赖被捕获为 `depends_on` / `calls` 边（例：`file:server.js → file:lib/routes.js`）。查后端依赖时**务必同时看这两种边**，只看 `imports` 会漏。
-2. **`tested_by` 必须手工补回（每轮重建都要做）**：本项目测试脚本在 `tools/` 下叫 `selftest/apitest/uitest/browser-test`（非 `*.test.*` 约定命名），而合并脚本 `merge-batch-graphs.py` 的 `is_test_path()` 对 JS 只认 stem 以 `.test`/`.spec` 结尾 —— 于是**所有** `tested_by` 都被判成"生产↔生产"丢掉，且它的路径约定补链（Pass 2）也一条补不出来。当前图里的 **22 条**是重建后逐对**按源码证据**复核补回的（证据 = 测试脚本正文里出现被测算文件的完整相对路径，或唯一 basename；例如 `tools/uitest.mjs` 用 `readdirSync('public/js/pages')` 动态列举并逐文件断言，故 10 个页面文件都算被它覆盖）。补边脚本逻辑见 `docs/issues.md` 的 B61 条目；补回的边一律 `weight 0.5`、`direction forward`，并给生产节点打 `tested` 标签。
+2. **`tested_by` 必须手工补回（每轮重建都要做）**：本项目测试脚本在 `tools/` 下叫 `selftest/apitest/uitest/browser-test`（非 `*.test.*` 约定命名），而合并脚本 `merge-batch-graphs.py` 的 `is_test_path()` 对 JS 只认 stem 以 `.test`/`.spec` 结尾 —— 于是**所有** `tested_by` 都被判成"生产↔生产"丢掉，且它的路径约定补链（Pass 2）也一条补不出来。当前图里的 **22 条**是重建后逐对**按源码证据**复核补回的（证据 = 测试脚本正文里出现被测算文件的完整相对路径，或唯一 basename；例如 `tools/uitest.mjs` 用 `readdirSync('public/js/pages')` 动态列举并逐文件断言，故**每个**页面文件都算被它覆盖，批 8 之后是 11 个）。补边脚本逻辑见 `docs/issues.md` 的 B61 条目；补回的边一律 `weight 0.5`、`direction forward`，并给生产节点打 `tested` 标签。
 3. **当前无孤立节点（0 个）**：上一版曾把 `.understand-anything/` 的 `.understandignore` 与 `config.json` 记为"仅有的两个孤立节点"，本轮重建后二者各有 `related` 互链边、且各有一条来自 `AGENTS.md` 的 `documents` 边，已不再孤立（`layers` 里 `layer:config` 恰好也是这两个 + `package.json`）。校验脚本会把"无任何边的节点"列为 warning，重建后应为 0。
 4. **两套"知识图谱"，不要混淆**：
    - `.understand-anything/knowledge-graph.json` — 本文档描述的**工具生成全图**（278 节点），机器消费、可增量更新；
