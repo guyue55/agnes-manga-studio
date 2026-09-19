@@ -448,6 +448,7 @@ export default async function novel(container, params = {}) {
     bind_shot_target: '绑到这些镜头',
     lock_shot_char: '锁定该角色',
     strip_style_word: '删掉写死的画风词',
+    sync_character: '同步到资产库',
   };
 
   const BASIS_LABEL = {
@@ -602,6 +603,20 @@ export default async function novel(container, params = {}) {
         });
         if (!okGo) return;
       }
+      if (code === 'sync_character') {
+        // 这一条会**覆盖**资产库里已有的描述，所以必须把"哪个值变哪个值"逐条摆出来让人确认 ——
+        // 机器只负责发现与搬运，哪份对是人的判断
+        const drift = issue.drift || [];
+        const okGo = await confirm({
+          title: '把人物卡同步到资产库',
+          text: `资产库里的「${esc(issue.target_name)}」是按<b>出图时真正注入</b>的那份，人物卡是原著里读到的。`
+            + `同步会以人物卡为准，改动这些字段：<br><br>`
+            + drift.map((d) => `· ${esc(d.field)}：「${esc(d.asset || '空')}」→「${esc(d.card)}」`).join('<br>')
+            + '<br><br>只动外貌/服饰/别名三项（真正会影响出图的），角色定位、性格这些你在资产库里改过的不动。',
+          okText: '同步',
+        });
+        if (!okGo) return;
+      }
       if (code === 'lock_shot_char') {
         const okGo = await confirm({
           title: '锁定角色',
@@ -614,6 +629,7 @@ export default async function novel(container, params = {}) {
       const r = await api.storyAuditFix({
         project_id: projectId, code, card_ids: issue.card_ids || [],
         target_id: issue.target_id, shot_ids: issue.shot_ids || [], word: issue.word,
+        card_ids: issue.card_ids || [],
       });
       setBusy(btn, false);
       if (!r.ok) { toast.err(r.error); return; }
@@ -623,6 +639,9 @@ export default async function novel(container, params = {}) {
       else if (code === 'bind_shot_target') toast.ok(`已把「${d.target_name}」绑到 ${d.bound_shots} 个镜头上`);
       else if (code === 'lock_shot_char') toast.ok(`已锁定「${d.target_name}」，这些镜头会逐字注入它的外貌`);
       else if (code === 'strip_style_word') toast.ok(`已从 ${d.fixed_shots} 个镜头的提示词里删掉「${d.word}」，画风回到项目设置`);
+      else if (code === 'sync_character') toast.ok(d.updated
+        ? `已把「${d.target_name}」的${d.fields.join('/')}同步到资产库，出图用的长相跟人物卡一致了`
+        : `「${d.target_name}」已经一致，没有要改的`);
       else toast.ok(`已把 ${d.created_count} 张人物卡写进资产库${d.skipped_count ? `（${d.skipped_count} 张已在库里）` : ''}`);
       await loadCards();
       await runAudit();

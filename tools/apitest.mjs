@@ -1833,6 +1833,64 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('人物卡 ↔ 资产库漂移（批 8 补 11：同步只动会注入提示词的字段）');
+{
+  const pj = await api('POST', '/api/projects', { name: '漂移体检测试剧' });
+  const PID = pj.data.id;
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '漂移·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const cards = (await api('GET', `/api/story/cards?source_id=${an.data.source.id}`)).data;
+  const lin = cards.find((c) => c.kind === 'character' && c.name === '林晚');
+  ok('漂移验收：拿到人物卡', !!lin, JSON.stringify(cards.map((c) => c.name)));
+
+  // ① 入资产库 → 一致，不报漂移
+  const imp = await api('POST', '/api/story/cards/import-characters', { project_id: PID, source_id: an.data.source.id });
+  eq('入资产库成功', imp.data.created_count >= 1, true);
+  const a1 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const drift1 = a1.data.drift_issues;
+  eq('刚导入时没有漂移（复制过去就是同一份）', drift1.length, 0);
+  ok('返回体里有 drift_counts/drift_pairs 诊断字段', !!a1.data.drift_counts && typeof a1.data.drift_pairs === 'number');
+
+  // ② 制造漂移：直接改人物卡（等价于"追加解析补全了卡"）
+  await api('PUT', `/api/story/cards/${lin.id}`, { appearance: '长发及腰，左眉有疤', outfit: '青色长衫', aliases: ['晚晚', '阿晚'] });
+  const a2 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const dr = a2.data.drift_issues;
+  ok('改人物卡后报出漂移', dr.length === 1 && dr[0].code === 'char_drift', JSON.stringify(dr.map((x) => x.title)));
+  ok('漂移项逐字段摆出"资产库值 → 人物卡值"（人才能判断哪份对）',
+    (dr[0].drift || []).length >= 2 && dr[0].conflicts.every((c) => c.values.length === 2), JSON.stringify(dr[0].drift));
+  ok('漂移项可修，动作码是 sync_character（问题码 ≠ 动作码）', dr[0].fixable === true && dr[0].fix_code === 'sync_character');
+  ok('漂移并进了面板真正消费的 issues', a2.data.issues.some((x) => x.code === 'char_drift'));
+  eq('合并后的 issues = 四组之和', a2.data.issues.length,
+    a2.data.card_issues.length + a2.data.shot_issues.length + a2.data.style_issues.length + a2.data.drift_issues.length);
+
+  // ③ 同步：只动会注入提示词的字段
+  const before = (await api('GET', '/api/characters?project_id=' + PID)).data.find((c) => c.story_card_id === lin.id);
+  await api('PUT', `/api/characters/${before.id}`, { role: '反派', personality: '暴躁易怒' }); // 用户自己在资产库里改的
+  const fx = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'sync_character', target_id: before.id, card_ids: [lin.id] });
+  eq('同步 200', fx.status, 200);
+  eq('同步确实改了东西', fx.data.updated, true);
+  ok('同步说明改了哪些字段', (fx.data.fields || []).length >= 2, JSON.stringify(fx.data.fields));
+  const after = (await api('GET', '/api/characters?project_id=' + PID)).data.find((c) => c.id === before.id);
+  eq('外貌按人物卡覆盖', after.appearance, '长发及腰，左眉有疤');
+  eq('服饰按人物卡覆盖', after.outfit, '青色长衫');
+  ok('别名取并集（不丢掉资产库里原有的）', String(after.alias).includes('阿晚') && String(after.alias).includes('晚晚'), after.alias);
+  eq('用户自己改的角色定位**不动**（同步不该覆盖人的编辑）', after.role, '反派');
+  eq('用户自己改的性格**不动**', after.personality, '暴躁易怒');
+  ok('同步留痕（notes 里能看到"与人物卡同步"）', /与人物卡同步/.test(String(after.notes)), String(after.notes));
+  ok('同步后漂移消失', (await api('GET', `/api/story/audit?project_id=${PID}`)).data.drift_issues.length === 0);
+
+  // ④ 再同步一次：没有可改的，如实说没改
+  const again = await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'sync_character', target_id: before.id, card_ids: [lin.id] });
+  eq('已一致时 updated=false（不假报"已同步"）', again.data.updated, false);
+
+  // ⑤ 校验：不存在的角色 / 不是这张卡导入的角色都要明确报错
+  eq('不存在的角色 → 404', (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'sync_character', target_id: 'nope', card_ids: [lin.id] })).status, 404);
+  const other = cards.find((c) => c.kind === 'character' && c.name !== '林晚');
+  eq('拿别的人物卡去同步 → 400（不能把张三的脸同步到李四身上）',
+    (await api('POST', '/api/story/audit/fix', { project_id: PID, code: 'sync_character', target_id: before.id, card_ids: [other.id] })).status, 400);
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('追加解析（批 8 补 10：只解析新增章节 / 已有卡 id 不变 / 一张不删）');
 {
   const pj = await api('POST', '/api/projects', { name: '追加解析测试剧' });

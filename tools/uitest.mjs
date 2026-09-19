@@ -1230,6 +1230,20 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
 
   const boardsSrc = read(path.join(PUB, 'js', 'pages', 'storyboards.js'));
   const scriptsSrc = read(path.join(PUB, 'js', 'pages', 'scripts.js')); // storySrc 在本块之外已读过
+  // ── 人物卡 ↔ 资产库漂移（批 8 补 11）──
+  // 注意用本块之前就读好的 `novel`：`novelSrc` 在本块之后才声明（TDZ，用到会整份崩）
+  ok('漂移体检有同步动作与按钮文案（不出现含糊的"一键修复"）',
+    /sync_character: '同步到资产库'/.test(novel) && /code === 'sync_character'/.test(novel));
+  ok('同步前把"哪个值变哪个值"逐条摆出来（这条会覆盖资产库里的描述，必须让人确认）',
+    /d\.asset \|\| '空'/.test(novel) && /→「\$\{esc\(d\.card\)\}」/.test(novel));
+  ok('确认文案说明只动外貌/服饰/别名（不影响出图的不动）',
+    /只动外貌\/服饰\/别名三项/.test(novel));
+  ok('后端漂移体检用纯函数、并进了 issues（面板渲染的是 issues）',
+    /story\.auditCharacterDrift\(cards/.test(routesSrc) && /drift_issues/.test(routesSrc)
+    && /styleIssues\.issues, drift\.issues\)/.test(routesSrc));
+  ok('同步修复只写外貌/服饰/别名，不碰角色定位与性格',
+    /code === 'sync_character'/.test(routesSrc) && !/patch\.(role|personality|gender|age) =/.test(routesSrc));
+
   // ── 追加解析（批 8 补 10）──
   const novelSrc = fs.readFileSync(path.join(PUB, 'js/pages/novel.js'), 'utf8');
   ok('原著页有「追加到选中的原著」入口，并真的发 append_to 那类载荷',

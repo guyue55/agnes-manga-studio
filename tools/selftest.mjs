@@ -551,6 +551,33 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('人物卡 ↔ 资产库漂移体检（批 8 补 11：出图用的长相与界面显示的是不是同一份）');
+{
+  const { auditCharacterDrift } = require('./lib/story.js');
+  const card = { id: 'k1', kind: 'character', name: '林晚', appearance: '长发及腰', outfit: '青衫', aliases: ['晚晚', '阿晚'], role: '主角', personality: '冷静' };
+  const ch = { id: 'ch1', name: '林晚', story_card_id: 'k1', appearance: '白衣', outfit: '', alias: '晚晚', role: '配角', personality: '暴躁' };
+  const r = auditCharacterDrift([card], [ch]);
+  const it = r.issues[0] || {};
+  ok('漂移体检：报出外貌/服饰/别名三处不一致', r.issues.length === 1 && (it.drift || []).map((d) => d.field).join(',') === '外貌,服饰,别名');
+  ok('漂移体检：有覆盖（库里非空但不同）→ warn，且值逐条摆出来给人核对',
+    it.level === 'warn' && it.conflicts.length === 3
+    && it.conflicts.some((c) => c.field === '外貌' && c.values.join('→') === '白衣→长发及腰'));
+  ok('漂移体检：只有空字段要补 → info（纯补全，不覆盖任何已有内容）',
+    auditCharacterDrift([card], [{ ...ch, appearance: '长发及腰', alias: '晚晚、阿晚' }]).issues[0].level === 'info');
+  ok('漂移体检：role/gender/personality 这些**不影响出图**的字段不参与（否则每张卡都报，用户会无视面板）',
+    !JSON.stringify(it.drift).includes('性格') && !JSON.stringify(it.drift).includes('定位'));
+  ok('漂移体检：还没入资产库的人物卡不在本条重复报（那是 char_not_in_asset 的事）',
+    auditCharacterDrift([card], []).issues.length === 0 && auditCharacterDrift([card], []).pairs === 0);
+  ok('漂移体检：完全一致就一条都不报', auditCharacterDrift([card], [{ ...ch, appearance: '长发及腰', outfit: '青衫', alias: '晚晚、阿晚' }]).issues.length === 0);
+  ok('漂移体检：资产库里的别名用顿号/逗号/斜杠分隔都认得（别名的写法是历史遗留）',
+    auditCharacterDrift([{ ...card, aliases: ['阿晚'] }],
+      [{ ...ch, appearance: '长发及腰', outfit: '青衫', alias: '晚晚,阿晚' }]).issues.length === 0);
+  ok('漂移体检：卡里没写外貌就不报（不能凭"库里写了卡里没有"就报漂移）',
+    auditCharacterDrift([{ id: 'k2', kind: 'character', name: '顾寒' }], [{ id: 'ch2', name: '顾寒', story_card_id: 'k2', appearance: '黑衣' }]).issues.length === 0);
+  ok('漂移体检：可修，修复动作码是 sync_character（问题码 ≠ 动作码）',
+    it.fixable === true && it.fix_code === 'sync_character' && it.code === 'char_drift' && it.target_id === 'ch1');
+}
+
 group('追加解析的卡片归并（批 8 补 10：长篇连载只解析新增章节）');
 {
   const { mergeAppend } = require('./lib/story.js');

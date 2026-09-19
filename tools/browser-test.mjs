@@ -1845,6 +1845,81 @@ try {
       }
     }
 
+    group('人物卡↔资产库漂移契约（批 8 补 11：同步只动会注入提示词的字段）');
+    {
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const before11 = await J('/api/settings');
+      const pj11 = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '漂移验收剧' }) });
+      const pid = pj11.id;
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'character', name: '漂移验收角色', role: '主角', identity: '验收用', appearance: '白衣' },
+            ] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'drift-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '漂移验收原著', text: '漂移验收角色走进茶馆。', reduce: false }) });
+        for (let i = 0; i < 40; i++) { await sleep(250); const j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        await J('/api/story/cards/import-characters', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, source_id: an.source.id }) });
+        const cards = await J(`/api/story/cards?source_id=${an.source.id}`);
+        const card = cards.find((c) => c.kind === 'character');
+        ok('漂移验收：人物卡与资产库角色都就位', !!card, JSON.stringify(cards.map((c) => c.name)));
+        const char0 = (await J(`/api/characters?project_id=${pid}`)).find((c) => c.story_card_id === card.id);
+
+        // 制造漂移：改人物卡（等价于"追加解析补全了卡"），同时用户自己在资产库里改了角色定位
+        await J(`/api/story/cards/${card.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ appearance: '长发及腰，左眉有疤', outfit: '青色长衫', aliases: ['阿晚'] }) });
+        await J(`/api/characters/${char0.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: '反派', personality: '暴躁易怒' }) });
+
+        // 页面上体检：面板要出现这一条，并给出"同步到资产库"按钮
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-audit');`), '原著页体检按钮', 12000);
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /资产库里的「漂移验收角色」与人物卡不一致/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '漂移问题出现在面板上', 12000);
+        const panel = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText||'';`);
+        ok('面板同时给出"资产库值 → 人物卡值"的对照（用户能判断哪份对）',
+          /外貌/.test(panel) && /白衣/.test(panel) && /长发及腰/.test(panel), panel.replace(/\s+/g, ' ').slice(0, 160));
+        ok('面板上的动作是「同步到资产库」（不是含糊的"一键修复"）',
+          /同步到资产库/.test(panel), panel.replace(/\s+/g, ' ').slice(0, 100));
+
+        // 点同步：先弹确认，把逐字段的改动摆出来
+        await cdp.eval(`const b=[...document.querySelectorAll('#nov-audit-box [data-audit-fix]')].find((x)=>x.getAttribute('data-audit-fix')==='sync_character'); b.click(); return true;`);
+        await waitFor(() => cdp.eval(`return /把人物卡同步到资产库/.test((document.querySelector('.modal')||{}).innerText||'');`), '同步确认弹窗', 8000);
+        const mtxt = await cdp.eval(`return (document.querySelector('.modal')||{}).innerText||'';`);
+        ok('确认弹窗逐条列出"哪个值变哪个值"',
+          /白衣/.test(mtxt) && /长发及腰/.test(mtxt) && /只动外貌/.test(mtxt), mtxt.replace(/\s+/g, ' ').slice(0, 180));
+        await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /同步到资产库|已经一致/.test(document.body.innerText);`), '同步完成提示', 12000);
+
+        // 结果：会注入提示词的字段按人物卡覆盖，用户自己改的不动
+        const char1 = (await J(`/api/characters?project_id=${pid}`)).find((c) => c.id === char0.id);
+        ok('同步后资产库的外貌/服饰按人物卡更新', char1.appearance === '长发及腰，左眉有疤' && char1.outfit === '青色长衫',
+          JSON.stringify({ a: char1.appearance, o: char1.outfit }));
+        ok('同步不覆盖用户自己改的角色定位与性格（只动会影响出图的字段）',
+          char1.role === '反派' && char1.personality === '暴躁易怒', JSON.stringify({ r: char1.role, p: char1.personality }));
+        ok('同步后这条漂移从面板上消失', !/与人物卡不一致/.test(String(await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText||'';`))));
+      } finally {
+        mock.close();
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(before11) });
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
+      }
+    }
+
     group('追加解析契约（批 8 补 10：只解析新增章节 / 已有卡 id 不变）');
     {
       const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
