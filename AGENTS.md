@@ -44,6 +44,25 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 重建前请先跑 `/understand`（增量即可，但它按批次重分析，会顺带重跑分层与导览）。
 扫描范围 = `git ls-files` 减去 `.understandignore` 里的排除项（工具自身的 `knowledge-graph.json` / `fingerprints.json` / `meta.json` / `intermediate/` / `tmp/` / `.trash-*` 一律排除：它们是被分析对象的产物，且体积最大）。
 
+**重建的代价与做法（第 85 轮实测，动手前必读）**
+
+- **"增量"在这里约等于全量**：锚点之后的改动文件横跨**全部 7 个批次**（批 1 有 `app.js`/`consts.js` 与两个新页面模块、
+  批 2 三个前端文件全动、批 3 `store.js`、批 4 `AGENTS.md`、批 6 两份研读文档、批 7 `routes.js`/`jobs.js`/`seed.js`/四套测试）。
+  `compute-batches.mjs --changed-files` 会把 7 批全部选进来 —— 不要指望"跑一下就好"。
+- **语义内容是人工撰写的，不是子代理批产的**：上一版（R30/B61）的做法是每个批次写一个生成器脚本
+  `tmp/gen-batch-<N>.mjs`：机械边（`contains`/`exports`/`imports`/`depends_on`/`tested_by`）由脚本从
+  `extract-structure.mjs` 的产物确定性生成，**语义内容（`summary`/`tags`/`complexity`/`languageNotes`）与 `calls` 边
+  是逐条审读源码后手写的**。全图 220 个函数节点都是这么来的 —— 这是重建真正的成本所在，也是它不能"顺手跑一下"的原因。
+- **上一版的中间产物还在本机**（`.understand-anything/.trash-<时间戳>/`，**已被 .gitignore 忽略**，随时可能被清掉）：
+  `batch-*.json`（输出 schema 样例）、`batches.json`（文件→批次映射）、`tmp/ua-file-extract-results-<n>.json`（机械提取）、
+  `tmp/ua-batch-input-<n>.json`（批次输入）、`tmp/gen-batch-<n>.mjs`（**可复用的生成器模板**）、`layers.json` / `tour.json` /
+  `assembled-graph.json`。**动手重建前第一件事：先把这些拷到安全位置**，否则等于从零开始。
+- **推荐路线**：① 拷走 `.trash-*` 的 `tmp/` 与 `batches.json`；② 按批（一轮一批，别一次全做）拿 `gen-batch-<N>.mjs`
+  作模板，只改**新增文件与改动函数**的语义块，重跑生成 `batch-<N>.json`；③ `merge-batch-graphs.py` 合并；
+  ④ 合并后**手工补回 `tested_by`**（见注意事项 2，补完不要再跑合并脚本）；⑤ 重跑分层与导览（`layers.json`/`tour.json` 同 schema）；
+  ⑥ 用 SKILL.md 里的内联校验脚本（`tmp/ua-inline-validate.cjs`）验完再写 `knowledge-graph.json` + `meta.json` + `fingerprints.json`，
+  ⑦ 最后连同代码改动一起提交。
+
 ### 图谱 Schema
 
 顶层结构：`{ version, project, nodes, edges, layers, tour }`
