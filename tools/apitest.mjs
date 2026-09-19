@@ -48,6 +48,7 @@ let chatFormats = [];
 let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0;
 let videoCreateHits = 0; // 批 7：幂等断言要能证明"复用时确实没向上游下单"，光看响应形状证明不了
 let imagesDelayMs = 0; // 批量取消契约：把出图放慢，稳定制造「运行中」窗口（测试专用）
+let storyChatCalls = 0; // 批 8：/api/story/plan 必须**一次模型都不调**，靠这个计数证明
 let badJsonUpstream = false; // R10：让上游回 200 + 非 JSON（真实世界里的"网关返回 HTML 错误页"） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
@@ -120,6 +121,33 @@ const mock = http.createServer((req, res) => {
     if (u.pathname === '/v1/chat/completions') {
       let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
       chatFormats.push(!!cb.response_format);
+      storyChatCalls++;
+      // 批 8 原著解析：按提示词特征分流（分块抽取 / 全局归并）。
+      // 抽取走 mock 的两段式：第 2 段才出现"青铜钥匙"与更详细的外貌，
+      // 用来验证"跨块去重合并"与"更详细的字段取胜"这两条真会发生。
+      const userMsg = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+      if (/"cards"\s*:/.test(userMsg)) {
+        if (userMsg.includes('__BADCHUNK__')) return send(200, { choices: [{ message: { content: '抱歉，这一段我读不懂。' } }] });
+        const seg = /第 (\d+) 段/.exec(userMsg);
+        const i = seg ? Number(seg[1]) : 1;
+        return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+          { kind: 'character', name: '林晚', aliases: ['晚晚', '林晚'], role: '主角', identity: '茶馆老板', appearance: i === 1 ? '白衣' : '白衣长剑', personality: '冷静' },
+          { kind: 'character', name: '顾寒', role: '配角', identity: '过路剑客' },
+          { kind: 'location', name: '临江茶馆', atmosphere: '喧闹潮湿' },
+          { kind: 'npc', name: '这条类别不认识应当被丢弃' },
+          ...(i === 2 ? [{ kind: 'prop', name: '青铜钥匙', owner: '林晚', usage: '开密室' }] : []),
+        ] }) } }] });
+      }
+      if (/"plots"\s*:/.test(userMsg)) {
+        // 故意包 ```json 围栏：真实网关/模型经常这么回，宽松解析必须吃得下
+        return send(200, { choices: [{ message: { content: '```json\n' + JSON.stringify({
+          world: { name: '临江旧事', genre: '古装悬疑', tone: '沉郁', mainline: '林晚查父仇，顾寒是唯一线索。' },
+          plots: [
+            { name: '茶馆初见', stage: '起', conflict: '林晚试探顾寒', outcome: '顾寒留下' },
+            { name: '钥匙现世', stage: '承', conflict: '有人跟踪', outcome: '密室开启' },
+          ],
+        }) + '\n```' } }] });
+      }
       if (cb.model === 'mock-reject-json' && cb.response_format) return send(400, { error: { message: 'response_format not supported by this gateway' } });
       if (cb.model === 'mock-deny-key' && cb.response_format) return send(401, { error: { message: 'bad key' } });
       return send(200, { choices: [{ message: { role: 'assistant', content: '```json\n[{"shot_number":1,"shot_type":"特写","image_prompt":"a hero face"}]\n```' } }] });
@@ -1522,6 +1550,250 @@ group('任务 CRUD 与批量取消');
   const persisted = (await api('GET', '/api/videos')).data.find((v) => v.id === dvId);
   ok('local_file 已持久化（刷新后「已存本地」状态仍在）', !!(persisted && persisted.local_file), String(persisted && persisted.local_file).slice(0, 70));
   await api('DELETE', `/api/videos/${dvId}`);
+}
+
+// ── 批 8：原著解析（分块 map + 全局 reduce + 卡片反向驱动）────────
+group('原著解析（批 8：分块抽取 / 跨块合并 / 卡片 CRUD / 反向驱动）');
+{
+  // 自建项目：前面的组会删项目，共用 SPID 会随执行顺序时好时坏
+  const pj = await api('POST', '/api/projects', { name: '原著解析测试剧' });
+  const SPID = pj.data.id;
+  ok('自建测试项目', !!SPID);
+
+  // 原文：五幕 × 三段，长度刻意超过 minChars(400) 数倍 ——
+  // 否则尾块合并会把整篇并成一块，"跨块去重"这条最关键的契约就根本没被跑到（踩过一次）
+  const NOVEL = Array.from({ length: 5 }, (_, k) => [
+    `第${k + 1}幕。林晚推开临江茶馆的门，白衣上沾着夜雨。她要查父亲的死因。`.repeat(2),
+    '顾寒坐在角落，青铜钥匙在灯下泛着冷光。林晚认出了那把钥匙。'.repeat(2),
+    '两人对峙，林晚拔剑，顾寒却把钥匙推了过来。'.repeat(2),
+  ].join('\n')).join('\n');
+  ok('测试原文足够长（否则切不出多块）', NOVEL.length > 700, String(NOVEL.length));
+
+  // ── 干跑：只切块，不调模型、不落库（计费闸门）──
+  const callsBefore = storyChatCalls;
+  const plan = await api('POST', '/api/story/plan', { text: NOVEL, max_chars: 200 });
+  eq('干跑 200', plan.status, 200);
+  eq('干跑立刻回，不阻塞', plan.status, 200);
+  // 变更须知：这里必须**等一下再数**。正向对照实测：把 plan 改成"忘了 await 的偷偷调用"时，
+  // 立刻检查是绿的（请求还在路上）—— 不加这个 sleep，这条钉只能证明"没有同步调用"，
+  // 而那正是同步 handler 根本做不到的事，等于什么都没证明。
+  await sleep(400);
+  eq('干跑**一次模型都没调**（用户确认之前不许花钱）', storyChatCalls, callsBefore);
+  ok('干跑切出多块', plan.data.chunk_count >= 3, `chunk_count=${plan.data.chunk_count}`);
+  eq('干跑如实给出调用次数 = 块数 + 归并 1 次', plan.data.calls, plan.data.chunk_count + 1);
+  eq('干跑覆盖全文字', plan.data.covered_chars, plan.data.total_chars);
+  eq('干跑不截断', plan.data.truncated, false);
+  ok('干跑给出逐块字数（界面要展示分段）', plan.data.chunks.every((c) => c.chars > 0 && c.label.includes('段')));
+  const planEmpty = await api('POST', '/api/story/plan', { text: '   ' });
+  eq('空原文干跑 400', planEmpty.status, 400);
+  const planNoPersist = await api('GET', `/api/story/sources?project_id=${SPID}`);
+  eq('干跑不落库（列表仍为空）', planNoPersist.data.length, 0);
+
+  // ── 真跑 ──
+  const noProj = await api('POST', '/api/story/analyze', { text: NOVEL });
+  eq('缺 project_id 直接 400（卡片必须挂在项目上才能驱动下游）', noProj.status, 400);
+  ok('错误文案说清怎么办', /选择项目/.test(noProj.data.error || ''), noProj.data.error);
+
+  const an = await api('POST', '/api/story/analyze', { project_id: SPID, title: '临江旧事', text: NOVEL, max_chars: 200, concurrency: 2 });
+  eq('解析受理 200', an.status, 200);
+  ok('返回 jobId 供进度订阅', !!an.data.jobId);
+  eq('进度链把"全局归并"也算进去', an.data.total, an.data.chunk_count + 1);
+
+  // 兜底初值：接口挂了要给"能读懂的断言失败"，不是 TypeError 把整轮测试崩掉
+  let job = { status: '(未取到)', items: [], ok: 0, fail: 0 };
+  for (let i = 0; i < 40; i++) {
+    await sleep(300);
+    job = (await api('GET', `/api/batch/${an.data.jobId}`)).data || job;
+    if (job.status !== 'running') break;
+  }
+  eq('任务结束', job.status, 'done');
+  eq('无失败块', job.fail, 0);
+  eq('进度链最后一项是全局归并且成功', job.items[job.items.length - 1].label + '/' + job.items[job.items.length - 1].state, '全局归并/ok');
+  ok('进度链逐项预填（含标签与下标）', job.items.every((it, i) => it.index === i && it.label));
+
+  const srcList = await api('GET', `/api/story/sources?project_id=${SPID}`);
+  eq('原文已落库（刷新不丢 —— 竞品最大缺陷）', srcList.data.length, 1);
+  const src = srcList.data[0];
+  eq('解析状态为已抽取', src.status, 'extracted');
+  eq('块失败数为 0', src.failed_chunks, 0);
+  ok('列表**不回传全文**（7 万字原著不能塞进列表）', !('text' in src), Object.keys(src).join(','));
+  ok('列表给预览片段', src.preview.length > 0 && src.preview.length <= 120);
+
+  const srcFull = await api('GET', `/api/story/sources/${src.id}`);
+  eq('单条能取回全文（界面据此恢复草稿）', srcFull.data.text, NOVEL.replace(/\r\n?/g, '\n'));
+
+  // ── 跨块合并 ──
+  const cards = await api('GET', `/api/story/cards?project_id=${SPID}`);
+  eq('卡片列表 200', cards.status, 200);
+  const allCards = Array.isArray(cards.data) ? cards.data : [];
+  ok('卡片列表是裸数组（与 storyboards/videos 同族形状）', Array.isArray(cards.data));
+  const byKind = (k) => allCards.filter((c) => c.kind === k);
+  eq('未知类别的卡被丢弃（mock 里混了一条 npc）', allCards.filter((c) => c.name.includes('不认识')).length, 0);
+  eq('人物卡跨块合并成 2 张（林晚/顾寒，不是每块各一份）', byKind('character').length, 2);
+  const lin = byKind('character').find((c) => c.name === '林晚');
+  ok('合并后外貌取更详细的那个', lin.appearance === '白衣长剑', lin.appearance);
+  ok('出现次数被累计（多块出现）', lin.mentions >= 2, String(lin.mentions));
+  ok('证据块号已去重排序', Array.isArray(lin.evidence) && lin.evidence.length >= 2 && lin.evidence.every((v, i, a) => i === 0 || a[i - 1] < v), JSON.stringify(lin.evidence));
+  eq('别名去重且不含自己', lin.aliases.join(','), '晚晚');
+  eq('地点卡 1 张', byKind('location').length, 1);
+  eq('道具卡 1 张（只在第 2 段出现）', byKind('prop').length, 1);
+  eq('信息卡 1 张（来自全局归并）', byKind('world').length, 1);
+  eq('剧情卡 2 张（来自全局归并）', byKind('plot').length, 2);
+  eq('归并出的信息卡字段正确', byKind('world')[0].genre, '古装悬疑');
+  eq('展示顺序：信息卡在最前', allCards[0] && allCards[0].kind, 'world');
+  eq('原文记录的卡片总数与实际一致', src.card_count, allCards.length);
+  eq('带 origin 区分来源（chunk / bible）', `${byKind('world')[0].origin}/${byKind('character')[0].origin}`, 'bible/chunk');
+
+  // ── 查询过滤 ──
+  const onlyChar = await api('GET', `/api/story/cards?project_id=${SPID}&kind=character`);
+  eq('按 kind 过滤', onlyChar.data.length, 2);
+  const bySource = await api('GET', `/api/story/cards?source_id=${src.id}`);
+  eq('按 source_id 过滤', bySource.data.length, allCards.length);
+  const other = await api('GET', '/api/story/cards?project_id=no_such_project');
+  eq('按项目过滤（不串项目）', other.data.length, 0);
+
+  // ── 回注渲染（反向驱动取用口）──
+  const pr = await api('GET', `/api/story/cards/prompt?source_id=${src.id}&kinds=character`);
+  eq('回注 200', pr.status, 200);
+  eq('只回注指定类别', pr.data.count, 2);
+  ok('回注文本带人物名与外貌', pr.data.text.includes('林晚') && pr.data.text.includes('白衣长剑'));
+  ok('回注文本带"不得矛盾"约束头', pr.data.text.includes('不得与之矛盾'));
+  ok('回注不含其他类别', !pr.data.text.includes('临江茶馆'));
+  const prAll = await api('GET', `/api/story/cards/prompt?source_id=${src.id}`);
+  ok('不指定类别则全给', prAll.data.count === allCards.length, String(prAll.data.count));
+  const prNone = await api('GET', `/api/story/cards/prompt?source_id=${src.id}&kinds=timeline`);
+  eq('该类别无卡时返回空文本（调用方据此跳过注入）', prNone.data.text, '');
+
+  // ── 卡片编辑（白名单）──
+  const other_card = byKind('character').find((c) => c.name === '顾寒');
+  const put = await api('PUT', `/api/story/cards/${lin.id}`, { name: '林晚（改）', appearance: '黑衣', kind: 'location', source_id: 'hacked', origin: 'bible' });
+  eq('编辑 200', put.status, 200);
+  eq('名字被改', put.data.name, '林晚（改）');
+  eq('外貌被改', put.data.appearance, '黑衣');
+  eq('kind 不可改（来源事实）', put.data.kind, 'character');
+  eq('source_id 不可改（断了溯源就没法核对）', put.data.source_id, src.id);
+  eq('origin 不可改', put.data.origin, 'chunk');
+  eq('用户改过的卡留痕', put.data.edited, true);
+  const putEmpty = await api('PUT', `/api/story/cards/${lin.id}`, { name: '  ' });
+  eq('空名字 400', putEmpty.status, 400);
+  const putMissing = await api('PUT', '/api/story/cards/nope', { name: 'x' });
+  eq('改不存在的卡 404', putMissing.status, 404);
+  const putAlias = await api('PUT', `/api/story/cards/${lin.id}`, { aliases: '晚晚、林晚（改）、晚晚' });
+  eq('别名走归一化（去重 + 去掉当前名字）', putAlias.data.aliases.join(','), '晚晚');
+  // 同一请求里既改名又加别名：判"自己"必须按**改后**的名字，否则旧名会作为别名留下来
+  const putBoth = await api('PUT', `/api/story/cards/${other_card.id}`, { name: '顾寒（改）', aliases: '阿寒、顾寒（改）' });
+  eq('改名 + 别名同请求时按新名字去自己', putBoth.data.aliases.join(','), '阿寒');
+  eq('同请求里名字也生效', putBoth.data.name, '顾寒（改）');
+
+  // ── 反向驱动：人物卡 → 资产库 ──
+  const badTo = await api('POST', `/api/story/cards/${byKind('location')[0].id}/to-character`, { project_id: SPID });
+  eq('地点卡不能进资产库（400）', badTo.status, 400);
+  const toChar = await api('POST', `/api/story/cards/${lin.id}/to-character`, { project_id: SPID });
+  eq('人物卡入资产库 200', toChar.status, 200);
+  eq('角色名与卡一致', toChar.data.character.name, '林晚（改）');
+  eq('角色带溯源 story_card_id', toChar.data.character.story_card_id, lin.id);
+  eq('角色默认不锁外貌', toChar.data.character.is_locked, false);
+  const toChar2 = await api('POST', `/api/story/cards/${lin.id}/to-character`, { project_id: SPID });
+  eq('重复导入是幂等的（不许出现两个林晚）', toChar2.data.deduped, true);
+  eq('幂等返回同一个角色 id', toChar2.data.character.id, toChar.data.character.id);
+  const charList = await api('GET', `/api/characters?project_id=${SPID}`);
+  eq('资产库里只有 1 个角色（不是 2 个）', charList.data.filter((c) => c.story_card_id === lin.id).length, 1);
+
+  const imp = await api('POST', '/api/story/cards/import-characters', { project_id: SPID, source_id: src.id });
+  eq('批量导入 200', imp.status, 200);
+  eq('新建 1 个（顾寒）', imp.data.created_count, 1);
+  eq('跳过 1 个（林晚已导入）', imp.data.skipped_count, 1);
+  eq('跳过项给出已有角色 id', imp.data.skipped[0].character_id, toChar.data.character.id);
+  const impAgain = await api('POST', '/api/story/cards/import-characters', { project_id: SPID, source_id: src.id });
+  eq('再导一次全部跳过（幂等）', `${impAgain.data.created_count}/${impAgain.data.skipped_count}`, '0/2');
+  const impEmpty = await api('POST', '/api/story/cards/import-characters', { project_id: SPID, ids: ['nope'] });
+  eq('没有可导入的卡时 400', impEmpty.status, 400);
+  const impNoProj = await api('POST', '/api/story/cards/import-characters', {});
+  eq('缺 project_id 400', impNoProj.status, 400);
+
+  // ── 重新归并：替换而不是叠加 ──
+  const rd1 = await api('POST', '/api/story/reduce', { source_id: src.id });
+  eq('重新归并 200', rd1.status, 200);
+  eq('归并出 1 张信息卡', rd1.data.world, 1);
+  const afterRd = await api('GET', `/api/story/cards?source_id=${src.id}`);
+  const worlds = afterRd.data.filter((c) => c.kind === 'world');
+  eq('信息卡仍是 1 张（重复归并不叠加）', worlds.length, 1);
+  eq('剧情卡仍是 2 张', afterRd.data.filter((c) => c.kind === 'plot').length, 2);
+  eq('归并后卡片总数不变', afterRd.data.length, allCards.length);
+  const rdBad = await api('POST', '/api/story/reduce', { source_id: 'nope' });
+  eq('归并不存在的原著 404', rdBad.status, 404);
+
+  // ── 截断如实上报 ──
+  const trunc = await api('POST', '/api/story/analyze', { project_id: SPID, title: '被截断的原著', text: NOVEL, max_chars: 100, max_chunks: 1, reduce: false });
+  eq('截断场景受理 200', trunc.status, 200);
+  eq('只跑 1 块（reduce 关闭时不含归并）', trunc.data.total, 1);
+  eq('截断标记为真', trunc.data.truncated, true);
+  ok('覆盖字数小于总字数（界面据此警告）', trunc.data.covered_chars < trunc.data.total_chars, `${trunc.data.covered_chars}/${trunc.data.total_chars}`);
+  for (let i = 0; i < 20; i++) {
+    await sleep(200);
+    const j = (await api('GET', `/api/batch/${trunc.data.jobId}`)).data;
+    if (j.status !== 'running') break;
+  }
+  const truncSrc = (await api('GET', `/api/story/sources?project_id=${SPID}`)).data.find((x) => x.title === '被截断的原著');
+  eq('截断事实被持久化（刷新后仍能看到警告）', truncSrc.truncated, true);
+
+  // ── 部分失败：坏块不影响好块 ──
+  const partial = await api('POST', '/api/story/analyze', { project_id: SPID, title: '半坏原著', text: `${NOVEL}\n__BADCHUNK__`, max_chars: 200, reduce: false });
+  let pjob = { status: '(未取到)', ok: 0, fail: 0 };
+  for (let i = 0; i < 30; i++) {
+    await sleep(250);
+    pjob = (await api('GET', `/api/batch/${partial.data.jobId}`)).data || pjob;
+    if (pjob.status !== 'running') break;
+  }
+  ok('坏块被记为失败', pjob.fail >= 1, `fail=${pjob.fail}`);
+  ok('好块仍然成功（一块坏不拖垮全篇）', pjob.ok >= 1, `ok=${pjob.ok}`);
+  const pSrc = (await api('GET', `/api/story/sources?project_id=${SPID}`)).data.find((x) => x.title === '半坏原著') || {};
+  eq('部分失败时状态仍是已抽取（不是失败）', pSrc.status, 'extracted');
+  ok('失败块数如实记录', pSrc.failed_chunks >= 1, String(pSrc.failed_chunks));
+  const pCards = await api('GET', `/api/story/cards?source_id=${(pSrc || {}).id}`);
+  ok('好块的卡片照常落库', (pCards.data || []).length >= 2, String((pCards.data || []).length));
+
+  // ── 全失败：必须能看出失败且给出原因 ──
+  const allBad = await api('POST', '/api/story/analyze', { project_id: SPID, title: '全坏原著', text: '__BADCHUNK__', max_chars: 200, reduce: false });
+  let bjob = { status: '(未取到)', ok: 0, fail: 0 };
+  for (let i = 0; i < 30; i++) {
+    await sleep(250);
+    bjob = (await api('GET', `/api/batch/${allBad.data.jobId}`)).data || bjob;
+    if (bjob.status !== 'running') break;
+  }
+  eq('全失败时无成功项', bjob.ok, 0);
+  const bSrc = (await api('GET', `/api/story/sources?project_id=${SPID}`)).data.find((x) => x.title === '全坏原著');
+  eq('全失败时状态为 failed', bSrc.status, 'failed');
+  ok('给出可操作的原因（不是空白）', /检查|失败|重试/.test(bSrc.error_message || ''), bSrc.error_message);
+  eq('全失败时没有卡片残留', (await api('GET', `/api/story/cards?source_id=${bSrc.id}`)).data.length, 0);
+
+  // ── 项目导出带上原著解析（换机导入后卡片不是孤儿）──
+  const exp = await api('GET', `/api/projects/${SPID}/export`);
+  eq('导出 200', exp.status, 200);
+  ok('导出含 story_sources', Array.isArray(exp.data.story_sources) && exp.data.story_sources.length >= 4, String((exp.data.story_sources || []).length));
+  ok('导出含 story_cards', Array.isArray(exp.data.story_cards) && exp.data.story_cards.length >= 2, String((exp.data.story_cards || []).length));
+  ok('导出的原文带全文（卡片可核对）', (exp.data.story_sources[0].text || '').length > 10);
+
+  // ── 删除级联 ──
+  const del = await api('DELETE', `/api/story/sources/${src.id}`);
+  eq('删除原著 200', del.status, 200);
+  ok('级联删掉它的卡片（不留指不到原文的孤儿卡）', del.data.removed_cards === allCards.length, String(del.data.removed_cards));
+  eq('该原著的卡片已清空', (await api('GET', `/api/story/cards?source_id=${src.id}`)).data.length, 0);
+  eq('别的原著的卡片不受影响', (await api('GET', `/api/story/cards?source_id=${pSrc.id}`)).data.length >= 2, true);
+  eq('部分失败的原著仍留着卡片（不是被清空）', (await api('GET', `/api/story/cards?source_id=${pSrc.id}`)).data.length >= 1, true);
+  const delAgain = await api('DELETE', `/api/story/sources/${src.id}`);
+  eq('重复删除 404', delAgain.status, 404);
+  const firstPartialCard = (Array.isArray(pCards.data) ? pCards.data[0] : null) || { id: '(无卡片)' };
+  const delCard = await api('DELETE', `/api/story/cards/${firstPartialCard.id}`);
+  eq('删单卡 200', delCard.status, 200);
+  eq('删单卡后少一张', (await api('GET', `/api/story/cards?source_id=${pSrc.id}`)).data.length, (pCards.data || []).length - 1);
+  eq('删不存在的卡 404', (await api('DELETE', '/api/story/cards/nope')).status, 404);
+
+  // ── 清场（不留脏数据影响后续组）──
+  for (const s2 of (await api('GET', `/api/story/sources?project_id=${SPID}`)).data) await api('DELETE', `/api/story/sources/${s2.id}`);
+  for (const c of (await api('GET', `/api/characters?project_id=${SPID}`)).data) if (c.story_card_id) await api('DELETE', `/api/characters/${c.id}`);
+  eq('清场后无残留原著', (await api('GET', `/api/story/sources?project_id=${SPID}`)).data.length, 0);
+  await api('DELETE', `/api/projects/${SPID}`);
 }
 
 // ── 收尾 ─────────────────────────────────────────────────────

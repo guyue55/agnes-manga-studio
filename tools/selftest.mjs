@@ -600,6 +600,202 @@ group('运镜与变体纯函数（R19/R21：白名单 / 静帧闸门 / 取模轮
     [1, 2, 3, 4, 5, 6, 7, 8].map(variationPhrase).every((v) => v && !/character|costume|story|plot/i.test(v)));
 }
 
+// ══════════════════════════════════════════════════════════════
+// 批 8：原著解析纯函数（切块 / 规范化 / 跨块合并 / 回注渲染）
+// ══════════════════════════════════════════════════════════════
+const story = require('./lib/story.js');
+
+group('原著切块（splitChunks：边界感知 + 覆盖如实上报）');
+{
+  // 无换行整篇（用户最常粘贴的形态：从网页/记事本复制的正文常常只有一个换行）
+  const one = '林晚走进茶馆。' + '她看见了顾寒。'.repeat(400);
+  const r = story.splitChunks(one, { maxChars: 300, minChars: 50 });
+  ok('无换行整篇也能切块（不能只按 \\n 切）', r.chunks.length > 5, `得到 ${r.chunks.length} 块`);
+  eq('全覆盖时 covered == total（一个字都不许丢）', r.covered_chars, r.total_chars);
+  eq('全覆盖时 truncated=false', r.truncated, false);
+  // 块自带尾随分隔符（换行），所以判"句末收尾"要先去掉尾随空白
+  ok('每块都以句末标点收尾（不把一句话切两半）',
+    r.chunks.every((c) => /[。！？…；]$/.test(c.text.trimEnd())), r.chunks.map((c) => c.text.trimEnd().slice(-1)).join(''));
+  ok('除末块外都不超上限', r.chunks.slice(0, -1).every((c) => c.chars <= 300), r.chunks.map((c) => c.chars).join(','));
+  eq('块号从 0 连续', r.chunks.map((c) => c.index).join(','), r.chunks.map((_, i) => i).join(','));
+  eq('块带人类可读标签（进度链直接用）', r.chunks[0].label, `第 1/${r.chunks.length} 段`);
+
+  // 段落边界优先于句子边界
+  const para = Array.from({ length: 9 }, (_, i) => `第${i + 1}段。`.repeat(20)).join('\n');
+  const r2 = story.splitChunks(para, { maxChars: 200, minChars: 60 });
+  ok('段落文本按段落装块', r2.chunks.length >= 2 && r2.covered_chars === r2.total_chars);
+  ok('块内保留原段落分隔（不是把段落粘成一行）', r2.chunks.some((c) => c.text.includes('\n')));
+
+  // 无标点长墙：必须硬切但**不丢字**
+  const wall = '甲'.repeat(1500);
+  const r3 = story.splitChunks(wall, { maxChars: 400, minChars: 0 });
+  eq('无标点长文覆盖完整（硬切也不许丢）', r3.covered_chars, 1500);
+  eq('无标点长文块数 = ceil(1500/400)', r3.chunks.length, 4);
+  // 显式 minChars:0 是合法用法（"别并尾块"），不能被 `|| 默认值` 吃掉
+  eq('minChars:0 被尊重（不是回落到 400）', story.splitChunks(wall, { maxChars: 400, minChars: 0 }).chunks.length, 4);
+  eq('不传 minChars 时按默认 400 并尾块', story.splitChunks(wall, { maxChars: 400 }).chunks.length, 3);
+
+  // 次数闸门：截断必须如实上报，且 covered < total
+  const r4 = story.splitChunks(one, { maxChars: 200, maxChunks: 2 });
+  eq('超次数上限只跑 maxChunks 块', r4.chunks.length, 2);
+  eq('截断时 truncated=true', r4.truncated, true);
+  ok('截断时 covered < total（前端据此警告"只解析了前 N 字"）', r4.covered_chars < r4.total_chars,
+    `${r4.covered_chars}/${r4.total_chars}`);
+  eq('max_chunks 原样回传（界面要显示上限）', r4.max_chunks, 2);
+
+  // 尾块并块
+  const r5 = story.splitChunks('甲。'.repeat(100) + '尾巴。', { maxChars: 120, minChars: 60 });
+  ok('过小的尾块向前合并（不为残句单开一次调用）',
+    r5.chunks[r5.chunks.length - 1].chars >= 60 || r5.chunks.length === 1,
+    `末块 ${r5.chunks[r5.chunks.length - 1].chars} 字`);
+
+  // 边界与脏输入
+  eq('空文本 → 0 块', story.splitChunks('   \n\n  ').chunks.length, 0);
+  eq('空文本 total_chars=0', story.splitChunks('').total_chars, 0);
+  eq('单句短文 → 1 块', story.splitChunks('只有一句话。').chunks.length, 1);
+  eq('CRLF 归一（否则字数会算多）', story.normalizeText('甲\r\n乙').length, 3);
+  ok('连续空行压缩', story.normalizeText('甲\n\n\n\n乙') === '甲\n\n乙');
+  ok('maxChars 下限保护（不许传 1 把文本切成几千块）', story.splitChunks('甲。'.repeat(500), { maxChars: 1 }).chunks[0].chars <= 200);
+}
+
+group('卡片规范化（normalizeCard：模型输出一律不可信）');
+{
+  eq('中文类别名认得出', story.normalizeKind('人物'), 'character');
+  eq('英文同义词认得出', story.normalizeKind('scene'), 'location');
+  eq('大写也认', story.normalizeKind('PLOT'), 'plot');
+  eq('认不出的类别返回空（不猜）', story.normalizeKind('不知道是啥'), '');
+  eq('空类别返回空', story.normalizeKind(''), '');
+
+  eq('无名字的卡直接丢弃', story.normalizeCard({ kind: 'character' }, {}), null);
+  eq('空白名字也算无名字', story.normalizeCard({ kind: 'character', name: '   ' }, {}), null);
+  eq('未知类别丢弃', story.normalizeCard({ kind: 'npc', name: '甲' }, {}), null);
+  eq('null / 数组 / 字符串一律丢弃',
+    [null, [], 'x', 42].map((v) => story.normalizeCard(v, {})).filter(Boolean).length, 0);
+
+  const c = story.normalizeCard({ kind: '人物', name: '《林晚》', summary: 'x'.repeat(500), aliases: '晚晚、林晚、晚晚' }, { chunk_index: 3 });
+  eq('名字去掉书名号', c.name, '林晚');
+  eq('摘要截断到 300 字（防模型写小作文挤爆下游提示词）', c.summary.length, 300);
+  eq('别名去重 + 去掉自己（否则提示词里出现"林晚（别名：林晚）"）', c.aliases.join(','), '晚晚');
+  eq('块号原样记录（界面要能显示"这条是从第 N 段读出来的"）', c.chunk_index, 3);
+  ok('未声明的字段不进卡片（白名单，不是照抄模型给的键）', !('unknown_field' in c));
+
+  const w = story.normalizeCard({ kind: 'world', name: '临江旧事', genre: '古装', tone: '沉郁' }, {});
+  eq('信息卡保留自己的业务字段', `${w.genre}/${w.tone}`, '古装/沉郁');
+  eq('信息卡不带人物字段（按类白名单）', w.appearance, undefined);
+  const p = story.normalizeCard({ kind: 'plot', summary: '茶馆初见，林晚试探顾寒' }, {});
+  ok('剧情卡没名字时用摘要兜底（否则事件全被丢光）', p && p.name.length > 0, JSON.stringify(p));
+}
+
+group('跨块合并（mergeCards：同一人物在多段出现必须收敛成一张）');
+{
+  const mk = (o, i) => story.normalizeCard({ kind: 'character', name: '林晚', ...o }, { chunk_index: i });
+  const m = story.mergeCards([mk({ appearance: '白衣', summary: '茶馆老板' }, 0), mk({ appearance: '白衣长剑', personality: '冷静' }, 1), mk({ appearance: '白衣' }, 2)]);
+  eq('三条同名卡合并成一条', m.cards.length, 1);
+  eq('合并计数如实上报', m.merged, 2);
+  eq('更详细的外貌取胜（短的不许覆盖长的）', m.cards[0].appearance, '白衣长剑');
+  eq('空字段被后来的卡补上', m.cards[0].personality, '冷静');
+  eq('摘要保留较长的那个', m.cards[0].summary, '茶馆老板');
+  eq('出现次数被累计（一致性判断的原料）', m.cards[0].mentions, 3);
+  eq('证据块号按序去重', m.cards[0].evidence.join(','), '0,1,2');
+  eq('合并顺序颠倒也一样（不受并发完成顺序影响）',
+    story.mergeCards([mk({ appearance: '白衣长剑' }, 1), mk({ appearance: '白衣' }, 0)]).cards[0].appearance, '白衣长剑');
+
+  // 归一化键：全角/空格/引号差异必须视为同一个人
+  const m2 = story.mergeCards([mk({}, 0), story.normalizeCard({ kind: 'character', name: '林 晚' }, { chunk_index: 1 })]);
+  eq('"林晚" 与 "林 晚" 视为同一人', m2.cards.length, 1);
+  eq('不同类别同名不合并', story.mergeCards([mk({}, 0), story.normalizeCard({ kind: 'location', name: '林晚' }, {})]).cards.length, 2);
+  eq('不同名字不合并', story.mergeCards([mk({}, 0), story.normalizeCard({ kind: 'character', name: '顾寒' }, {})]).cards.length, 2);
+
+  // 数量上限：超出如实上报，不静默截断
+  const many = Array.from({ length: 70 }, (_, i) => story.normalizeCard({ kind: 'character', name: `角色${i}` }, {}));
+  const m3 = story.mergeCards(many);
+  eq('单类上限生效（人物卡 60）', m3.cards.length, 60);
+  eq('被丢掉的条数如实上报', m3.dropped.length, 10);
+  ok('丢弃原因可读', m3.dropped[0].reason.includes('上限'));
+
+  // 展示顺序
+  const mixed = story.sortCards([
+    story.normalizeCard({ kind: 'plot', name: '事件' }, { order: 0 }),
+    story.normalizeCard({ kind: 'character', name: '甲' }, { order: 1 }),
+    story.normalizeCard({ kind: 'world', name: '设定' }, { order: 2 }),
+  ]);
+  eq('展示顺序固定：信息卡 → 人物 → 地点 → 道具 → 剧情 → 时间线', mixed.map((c) => c.kind).join(','), 'world,character,plot');
+}
+
+group('回注渲染（cardsToPrompt / digestCards：反向驱动的载体）');
+{
+  const cards = [
+    story.normalizeCard({ kind: 'character', name: '林晚', role: '主角', appearance: '白衣长剑', aliases: ['晚晚'] }, {}),
+    story.normalizeCard({ kind: 'location', name: '临江茶馆', atmosphere: '喧闹潮湿' }, {}),
+    story.normalizeCard({ kind: 'plot', name: '茶馆初见', stage: '起', conflict: '试探' }, {}),
+  ];
+  const p = story.cardsToPrompt(cards, ['character']);
+  ok('只渲染指定类别', p.includes('林晚') && !p.includes('临江茶馆'), p);
+  ok('带上别名与外貌（分镜一致性的关键输入）', p.includes('晚晚') && p.includes('白衣长剑'));
+  ok('带"不得矛盾"的约束头（否则模型会自由发挥）', p.includes('不得与之矛盾'));
+  eq('空卡片集渲染成空串（调用方据此跳过注入）', story.cardsToPrompt([], ['character']), '');
+  eq('类别无卡也渲染成空串', story.cardsToPrompt(cards, ['prop']), '');
+
+  const d = story.digestCards(cards);
+  ok('摘要按类分组并带中文类名', d.includes('【人物卡】') && d.includes('【地点卡】') && d.includes('【剧情卡】'), d);
+  ok('摘要逐条编号（模型可按键引用）', /1\. 林晚/.test(d));
+  ok('信息缺失时给占位符而不是空白', story.cardLine({ kind: 'character', name: '甲' }).includes('待补充'));
+
+  // 模板渲染
+  eq('模板变量被替换', story.renderPrompt('甲{{x}}乙', { x: '丙' }), '甲丙乙');
+  eq('未提供的变量不留 {{}} 痕迹', story.renderPrompt('甲{{x}}乙', {}), '甲乙');
+  eq('同变量多处出现全部替换', story.renderPrompt('{{x}}-{{x}}', { x: 'a' }), 'a-a');
+}
+
+group('模型输出解析（parseJsonLoose / extractCards：json_mode 只是请求，不是保证）');
+{
+  eq('纯 JSON', story.parseJsonLoose('{"a":1}').a, 1);
+  eq('```json 围栏', story.parseJsonLoose('```json\n{"a":2}\n```').a, 2);
+  eq('无语言标记的围栏', story.parseJsonLoose('```\n{"a":3}\n```').a, 3);
+  eq('前后带废话', story.parseJsonLoose('好的，以下是结果：\n{"a":4}\n希望有帮助').a, 4);
+  eq('裸数组', story.parseJsonLoose('[1,2]').length, 2);
+  eq('彻底不是 JSON → null（不抛异常）', story.parseJsonLoose('这不是 JSON'), null);
+  eq('空串 → null', story.parseJsonLoose(''), null);
+  eq('截断的 JSON → null（宁可这一块失败，也不猜半个对象）', story.parseJsonLoose('{"a":[1,2'), null);
+
+  const ex = story.extractCards({ cards: [{ kind: 'character', name: '甲' }, { kind: 'npc', name: '乙' }, null] }, {});
+  eq('只留下合法的卡', ex.cards.length, 1);
+  eq('原始条数如实上报（界面能显示"3 条里认了 1 条"）', ex.raw_count, 3);
+  eq('裸数组形态也认', story.extractCards([{ kind: 'location', name: '丙' }]).cards.length, 1);
+  eq('换键名 data 也认', story.extractCards({ data: [{ kind: 'prop', name: '丁' }] }).cards.length, 1);
+  eq('完全不认识的结构 → 0 条', story.extractCards({ nope: 1 }).cards.length, 0);
+}
+
+group('人物卡 → 资产库映射（cardToCharacter）');
+{
+  const card = story.normalizeCard({ kind: 'character', name: '林晚', role: '反派', aliases: ['晚晚'], appearance: '白衣', identity: '茶馆老板' }, {});
+  card.id = 'card_1';
+  const c = story.cardToCharacter(card, 'p1');
+  eq('项目 id 落到行上', c.project_id, 'p1');
+  eq('别名拼成字符串（characters 表是单列）', c.alias, '晚晚');
+  eq('白名单内的角色定位原样保留', c.role, '反派');
+  eq('没有 personality 时用 identity 兜底（不丢信息）', c.personality, '茶馆老板');
+  eq('溯源：记录来自哪张卡（重复导入要幂等）', c.story_card_id, 'card_1');
+  ok('默认不锁外貌（锁定是用户的显式动作）', c.is_locked === false);
+  const bad = story.cardToCharacter(story.normalizeCard({ kind: 'character', name: '甲', role: '随便写的定位' }, {}), 'p1');
+  eq('字典外的角色定位落回默认值', bad.role, '主角');
+}
+
+group('任务收尾阶段占位项（jobs.appendItem）');
+{
+  const job = jobs.create('unit_test_phase', 3);
+  await jobs.run(job, [{ label: 'a' }, { label: 'b' }, { label: 'c' }], async () => ({ ok: true }));
+  eq('队列本身跑完是 3/3', `${job.done}/${job.total}`, '3/3');
+  const before = job.total;
+  const rec = jobs.appendItem(job, '全局归并', 'reduce');
+  eq('total 递增（进度条要算上收尾阶段）', job.total, before + 1);
+  eq('占位项初始为 pending', rec.state, 'pending');
+  eq('下标接在最后（不覆盖已有项）', rec.index, 3);
+  eq('标签与 key 原样保留', `${rec.label}/${rec.key}`, '全局归并/reduce');
+  rec.state = 'ok'; rec.ok = true; job.done++;
+  eq('由调用方改状态后计数自洽', `${job.items.length}/${job.done}`, '4/4');
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
