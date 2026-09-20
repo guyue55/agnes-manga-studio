@@ -603,6 +603,7 @@ export default async function novel(container, params = {}) {
           <input class="input" id="nov-outline-per" type="number" min="1" max="20" value="${d.per_episode}" style="width:64px;flex:0 0 auto" />
           <span class="hint-xs" style="flex:0 0 auto">拍</span>
           <button class="btn btn-xs" data-outline-recut style="flex:0 0 auto">重新切分</button>
+          ${d.stage_covered < d.beat_count ? `<button class="btn btn-xs" data-outline-stage title="让模型把还没标幕次的拍点分到 起/承/转/合（只调一次模型；已有的幕次不会被动）" style="flex:0 0 auto">${icon('sparkles', 12)}AI 补幕次（${d.beat_count - d.stage_covered} 拍）</button>` : ''}
           <button class="btn btn-xs" data-outline-copy style="flex:0 0 auto">${icon('copy', 12)}复制</button>
           <button class="btn btn-xs btn-primary" data-outline-toscript style="flex:0 0 auto">${icon('arrowRight', 12)}带入剧本</button>
         </div>
@@ -630,7 +631,43 @@ export default async function novel(container, params = {}) {
         toast.ok(`已复制分集骨架（${d.episode_count} 集 / ${d.beat_count} 拍）——粘进剧本模板变量即可`);
       } catch { toast.err('复制失败——浏览器没给剪贴板权限，请手动选中'); }
     });
+    on(box, '[data-outline-stage]', 'click', () => fillStages());
     on(box, '[data-outline-toscript]', 'click', () => toScriptOutline());
+  }
+
+  /**
+   * AI 补幕次（批 8 补 32）：先干跑问清"要补几拍、调几次模型"，确认后再花钱。
+   * 幕次是分集的依据，所以补完要**重新切一遍**并如实报出分集依据有没有真的变好
+   * （`basis` 从 count 变成 stage 才是"这次调用有用"的证据）。
+   */
+  async function fillStages() {
+    if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
+    const dry = await api.storyStageFill(sourceId, { dryRun: true });
+    if (!dry.ok) { toast.err(dry.error); return; }
+    if (!dry.data.targets) { toast.ok('所有剧情拍点都已经有幕次了'); return; }
+    // 花钱的动作先说清楚（与本页其它生成入口同一条闸门）：补几拍、调几次、什么不会被改
+    const yes = await costConfirm({
+      count: 1,
+      what: '补幕次',
+      note: `有 ${dry.data.targets} 个剧情拍点还没标幕次（共 ${dry.data.beats} 拍），全部拍点一次交给模型判断，只调 1 次。`
+        + '已经标好的幕次不会被动；模型返回的幕次只要不是「起/承/转/合」就会被丢掉并如实告诉你。',
+    });
+    if (!yes) return;
+    setBusy(container, true, '正在补幕次');
+    try {
+      const r = await api.storyStageFill(sourceId);
+      if (!r.ok) { toast.err(r.error); return; }
+      const d = r.data;
+      const bad = (d.invalid || []).length + (d.missing || []).length;
+      const back = (d.back_steps || []).length;
+      toast.ok(`已补 ${d.assigned}/${d.targets} 拍的幕次`);
+      // 说不清楚的必须说清楚：没接住的、顺序倒退的、以及"分集依据有没有真的变好"
+      if (bad) toast.err(`有 ${bad} 拍没接住（模型返回的幕次不在 起/承/转/合 之内，或没给全），已保持原样`);
+      if (back) toast.err(`有 ${back} 处幕次顺序倒退（模型没按"幕次不能倒退"来），建议人工看一眼`);
+      if (d.basis_before !== d.basis_after) toast.ok(`分集依据：${d.basis_before} → ${d.basis_after}`);
+      await loadCards();
+      await runOutline();
+    } finally { setBusy(container, false); }
   }
 
   /** 分集骨架 → 故事脚本页（与「带入剧本」同一条链路，只是换成骨架文本） */
@@ -1118,6 +1155,15 @@ export default async function novel(container, params = {}) {
     } else if (!sourceId) {
       toast('这张卡属于另一份原著：先在左侧点选它所在的那份，再回来挂参考图', 'info', 6000);
     }
+  }
+
+  // 从一致性体检"去处理"跳进来（panel=outline）：把「分集大纲」面板直接打开。
+  // 那条体检项说的是"没标幕次就排不出分集"，而补幕次的按钮就在这个面板里 ——
+  // 让用户自己去找这个按钮，等于体检只给了结论、没给出口（批 8 补 32）
+  if (params.panel === 'outline' && sourceId) {
+    await runOutline();
+    const ob = container.querySelector('#nov-outline-box');
+    if (ob) ob.scrollIntoView({ block: 'center' });
   }
 
   return {

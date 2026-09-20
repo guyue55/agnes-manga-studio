@@ -324,6 +324,46 @@ group('B4 画风分层');
     && /maxlength="\$\{STORY_CARD_FIELD_MAX\.summary\}"/.test(novelMaxSrc));
   ok('4.1 服务端截断时界面会说话（不静默少一截文字）',
     /r\.data\.truncated/.test(novelMaxSrc) && /已截断/.test(novelMaxSrc));
+  // 批 8 补 32：AI 补幕次（幕次是分集的依据，界面必须"先干跑、再花钱、后如实报"）
+  {
+    // 这里的 stageApiSrc 在别的块里（块作用域取不到）、stageSeedSrc 在文件更后面才声明（TDZ）——
+    // 必须各读一份，别指望外层有（批 8 补 31 就为这个白查过一轮）
+    const stageApiSrc = read(path.join(PUB, 'js', 'api.js'));
+    const stageSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    // **把钉钉在 fillStages 这个函数体上**：`costConfirm(` 在本页别处也出现（其它生成入口也用它），
+    // 拿整份文件去 test 就是"因错误的原因通过"—— 把 fillStages 里的计费确认删掉，断言照样绿。
+    // 同理 `d.invalid`/`d.missing` 也不能靠 `|bad\b` 这种兜底分支（那等于没钉）
+    const fillBody = (novelMaxSrc.match(/async function fillStages\(\)[\s\S]*?\n  \}/) || [''])[0];
+    ok('4.1 找得到 fillStages 的函数体（下面几条都钉在它身上，钉不到就是空测）',
+      fillBody.length > 200, String(fillBody.length));
+    ok('4.1 前端有补幕次的端点封装，且带 dry_run（干跑不花钱）',
+      /storyStageFill:/.test(stageApiSrc) && /\/api\/story\/stage-fill/.test(stageApiSrc) && /dry_run/.test(stageApiSrc));
+    ok('4.1 补幕次按钮只在"还有拍点没标幕次"时才渲染（没有待定时不摆一个点了没反应的按钮）',
+      /d\.stage_covered < d\.beat_count/.test(novelMaxSrc) && /data-outline-stage/.test(novelMaxSrc));
+    ok('4.1 按钮点击接到了 fillStages', /\[data-outline-stage\][^\n]*fillStages\(\)/.test(novelMaxSrc));
+    // 花钱的动作必须过本页统一的计费闸门，而不是自己弹一个"确认吗"
+    ok('4.1 补幕次先干跑拿到"要补几拍"再走计费确认（不许直接开跑）',
+      /storyStageFill\(sourceId, \{ dryRun: true \}\)/.test(fillBody) && /costConfirm\(/.test(fillBody));
+    ok('4.1 干跑里就拦住"没有待定拍"的情况（不弹确认也不花钱）',
+      /if \(!dry\.data\.targets\)/.test(fillBody));
+    // 结果必须如实说清：补了几个、哪几拍没接住、有没有倒退、分集依据有没有真的变好
+    ok('4.1 补完如实报出补了几拍', /已补 \$\{d\.assigned\}\/\$\{d\.targets\}/.test(fillBody));
+    ok('4.1 没接住的拍要单独报（不能只报成功数）',
+      /d\.invalid/.test(fillBody) && /d\.missing/.test(fillBody));
+    ok('4.1 幕次倒退要提醒人工看一眼（服务端不替模型修顺）', /d\.back_steps/.test(fillBody) && /倒退/.test(fillBody));
+    ok('4.1 分集依据变了要报出来（"这次调用有没有用"的证据）',
+      /d\.basis_before !== d\.basis_after/.test(fillBody));
+    ok('4.1 补完要重新载入卡片并重切分集（否则界面还显示旧骨架）',
+      /await loadCards\(\)[\s\S]{0,60}await runOutline\(\)/.test(fillBody));
+    // 体检的"去处理"跳进来要真的把面板打开：只切页不打开面板 = 用户还得自己找那个按钮
+    ok('4.1 原著页认得体检带过来的 panel=outline 深链并打开分集大纲面板',
+      /params\.panel === 'outline'/.test(novelMaxSrc) && /#nov-outline-box/.test(novelMaxSrc)
+      && /panel: 'outline'/.test(read(path.join(ROOT, 'lib', 'story.js'))));
+    // 补 32 的提示词模板必须真的在内置模板里（否则运行时报"缺少提示词模板"）
+    ok('4.1 补幕次用的提示词模板在内置模板表里',
+      stageSeedSrc.includes("key: 'plot_stage'") || stageSeedSrc.includes('key: \'plot_stage\''));
+  }
+
   // 批 8 补 31：角色字段上限表的前后端镜像（角色的 appearance 会原文进每一次出图提示词）
   ok('4.1 前后端角色字段上限表同构（角色编辑框 maxlength 的唯一来源）',
     feTable(constsSrc, 'CHARACTER_FIELD_MAX') !== ''

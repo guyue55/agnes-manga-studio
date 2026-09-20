@@ -173,6 +173,14 @@ export const api = {
     return req('GET', `/api/story/episodes?${q.toString()}`);
   },
 
+  /**
+   * 补分幕次（批 8 补 32）：把"还没标幕次"的剧情拍点交给模型分到 起/承/转/合。
+   * `dryRun` 只回报"要补几拍、调几次模型"，不花钱 —— 界面必须先干跑再让用户确认。
+   * 它**只调一次**模型（全部拍点一次给完），所以计费闸门就是"要补几拍"这一个数。
+   */
+  storyStageFill: (sourceId, opts = {}) => req('POST', '/api/story/stage-fill',
+    { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
+
   /** 单集拍表 + 前情提要（批 8 补 8）：逐集生成的本集大纲与连续性上下文，纯本地计算 */
   storyEpisodeBrief: (q = {}) => {
     // 这里**没有** qs 助手（本文件一贯用 URLSearchParams 拼查询串）：写 qs(...) 只会在运行时抛

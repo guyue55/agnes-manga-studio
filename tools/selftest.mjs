@@ -2146,13 +2146,130 @@ group('内置提示词更新决策（批 8 补 28）');
     eq('补记**不动内容**（只是登记事实）', k.content, SAME.content);
     eq('补记也补版本号（下次判据要一起用）', k.builtin_version, SAME.builtin_version || 1);
     eq('用户改过的行**绝不补记**（补记 = 把用户的内容登记成官方版 → 下次就会被覆盖）', e.builtin_digest, undefined);
-    eq('其余没提到的内置模板照旧新增', st.list('prompt_templates').length, 16);
+    // 按 **key 集合**比对，不钉张数：张数是快照，每加一个内置模板就得改一次（补 29 的教训②）；
+    // 而 key 集合是真正的不变量 —— "其余内置模板都补上了"这句话说的就是这个
+    eq('其余没提到的内置模板照旧新增（比对 key 集合，不钉张数）',
+      st.list('prompt_templates').map((x) => x.key).sort().join(','),
+      seed.DEFAULT_TEMPLATES.map((t) => t.key).sort().join(','));
   }
+
 
   ok('两个抽取提示词都写明了 involved 只写本名、顿号分隔、不写泛称',
     ['novel_extract', 'story_bible'].every((k) => /involved/.test(seed.DEFAULT_TEMPLATES.find((t) => t.key === k).content)
       && /本名/.test(seed.DEFAULT_TEMPLATES.find((t) => t.key === k).content)));
 }
+
+group('AI 补分幕次（批 8 补 32：把"一格一格填"的活交给模型）');
+  // ── 批 8 补 32：AI 补分幕次（幕次是分集的依据，"标幕次"是纯分类）──────────────
+  // 这一组的价值在于钉住几条**很容易写错**的语义：只补"待定"的、脏幕次不许落库、
+  // 以及"倒退"要按**落库后的真实状态**算（这一条是 apitest 抓出来的真错，见下）
+  {
+    const mk = (id, order, stage, extra = {}) => ({ id, kind: 'plot', order, name: `拍${id}`, stage, ...extra });
+    const cards = [
+      mk('a', 1, '起', { conflict: 'C1' }),
+      mk('b', 2, '', { turn: 'T2' }),
+      mk('c', 3, '第一幕', { outcome: 'O3', involved: '林晚' }),
+      mk('d', 4, '合'),
+      { id: 'x', kind: 'character', order: 5, name: '不该被算进来的角色卡' },
+    ];
+    const t = story.stageFillTargets(cards);
+    eq('补幕次只看剧情拍点（角色卡不算拍子）', t.beats.length, 4);
+    eq('"没有幕次"包含写错的词（第一幕）而不只是空串', t.targets.map((x) => x.id).join(','), 'b,c');
+    eq('拍点按原文顺序（order 优先）', t.beats.map((x) => x.id).join(','), 'a,b,c,d');
+
+    const lines = story.stageFillLines(t.beats);
+    ok('清单给每个拍点编号（1 起）', /^1\. \[/m.test(lines), lines.split('\n')[0]);
+    ok('已经定好的幕次标成「已定」并写出是什么', /\[已定：起\]/.test(lines), lines);
+    ok('还没定的标成「待定」', /\[待定\]/.test(lines), lines);
+    ok('清单里带上判断幕次需要的字段（冲突/转折/结果/涉及）',
+      /冲突：C1/.test(lines) && /转折：T2/.test(lines) && /结果：O3/.test(lines) && /涉及：林晚/.test(lines), lines);
+
+    // ① 只写"待定"的：模型对"已定"的那些也给了值，一个都不许动
+    const p1 = story.applyStageAssignments(cards, { stages: [
+      { index: 1, stage: '合' }, { index: 2, stage: '承' }, { index: 3, stage: '转' }, { index: 4, stage: '起' },
+    ] });
+    eq('只给"待定"的拍写幕次', p1.patch.map((x) => `${x.id}:${x.stage}`).join(','), 'b:承,c:转');
+    ok('**人定过的拍不在补写名单里**（模型给它们的值一律丢弃）',
+      !p1.patch.some((x) => x.id === 'a' || x.id === 'd'), JSON.stringify(p1.patch));
+    eq('待定数如实给出', p1.targets, 2);
+
+    // ② 脏幕次绝不落库
+    const p2 = story.applyStageAssignments(cards, { stages: [
+      { index: 2, stage: '高潮' }, { index: 3, stage: '起' },
+    ] });
+    eq('词表外的幕次被丢弃（不落库）', p2.patch.map((x) => `${x.id}:${x.stage}`).join(','), 'c:起');
+    eq('并如实报出丢弃原因', (p2.invalid[0] || {}).reason, 'not_a_stage');
+    eq('没给到的拍计进 missing（不能只报补了几个）', p2.missing.map((x) => x.index).join(','), '2');
+
+    // ③ 越界 / 重复 / 缺字段的 index 都不能让整批崩掉
+    const p3 = story.applyStageAssignments(cards, { stages: [
+      { index: 99, stage: '起' }, { index: 0, stage: '承' }, { index: 2, stage: '转' },
+      { index: 2, stage: '合' }, { stage: '起' }, { index: 3, stage: '' },
+    ] });
+    eq('越界与非法 index 报 index_out_of_range', p3.invalid.filter((x) => x.reason === 'index_out_of_range').length, 3);
+    eq('同一个 index 给两次报 duplicate_index（先到的生效）',
+      p3.invalid.filter((x) => x.reason === 'duplicate_index').length, 1);
+    eq('重复时以先到的为准', p3.patch.map((x) => `${x.id}:${x.stage}`).join(','), 'b:转');
+    ok('一批里坏几条不影响好的那几条', p3.patch.length === 1, JSON.stringify(p3.patch));
+
+    // ④ **倒退要按"落库后的真实状态"算**：模型对"已定"的拍提了倒退的值，而我们没写它 —— 不该报倒退。
+    //    （apitest 抓出来的真错：第一版拿模型的回答算，于是报了一个根本没落库的"倒退"= 假警报）
+    //   构造：模型给"已定"的第 1 拍提了「合」（我们**不写**它），给待定的第 2 拍提了「承」。
+    //   落库后是「起→承」（单调，没问题）；拿模型的回答算则是「合→承」（倒退，假警报）。
+    const p4 = story.applyStageAssignments([mk('a', 1, '起'), mk('b', 2, '')],
+      { stages: [{ index: 1, stage: '合' }, { index: 2, stage: '承' }] });
+    eq('没落库的提议不算数（不该凭空报倒退）', p4.back_steps.length, 0);
+    eq('而落库的那一条照常写上', p4.patch.map((x) => `${x.id}:${x.stage}`).join(','), 'b:承');
+    //   反过来：落库后**真的**倒退时必须报出来（否则上面那条"不报"就成了"永远不报"）
+    const p4b = story.applyStageAssignments([mk('a', 1, '合'), mk('b', 2, '')],
+      { stages: [{ index: 2, stage: '承' }] });
+    eq('落库后真的倒退（合→承）就要报出来', p4b.back_steps.map((x) => x.index).join(','), '2');
+
+    // ⑤ 真的倒退（倒退的那一拍是"待定"、确实落库了）必须报出来
+    const p5 = story.applyStageAssignments([mk('a', 1, '起'), mk('b', 2, ''), mk('c', 3, '')],
+      { stages: [{ index: 2, stage: '转' }, { index: 3, stage: '起' }] });
+    eq('落库后确实倒退 → 报出位置', p5.back_steps.map((x) => `${x.index}:${x.stage}`).join(','), '3:起');
+    eq('但**不替模型修顺**（数据照写）', p5.patch.map((x) => `${x.id}:${x.stage}`).join(','), 'b:转,c:起');
+
+    // ⑥ 没有 id 的卡改不了：不能假装补上了
+    const p6 = story.applyStageAssignments([{ kind: 'plot', order: 1, name: '无 id', stage: '' }],
+      { stages: [{ index: 1, stage: '起' }] });
+    eq('没有 id 的卡不计入补写名单', p6.patch.length, 0);
+    eq('并如实计入 no_id', p6.no_id, 1);
+
+    // ⑦ 分集依据真的会因此变好：全都没幕次时是 count，补上之后是 stage
+    const noStage = [mk('a', 1, ''), mk('b', 2, ''), mk('c', 3, ''), mk('d', 4, '')];
+    eq('都没幕次时退化为按拍数平均切', story.planEpisodes(noStage, { perEpisode: 2 }).basis, 'count');
+    const filled = story.applyStageAssignments(noStage, { stages: [
+      { index: 1, stage: '起' }, { index: 2, stage: '承' }, { index: 3, stage: '转' }, { index: 4, stage: '合' },
+    ] });
+    const after = noStage.map((c) => ({ ...c, stage: (filled.patch.find((x) => x.id === c.id) || {}).stage || c.stage }));
+    eq('补完之后分集依据变成幕次', story.planEpisodes(after, { perEpisode: 2 }).basis, 'stage');
+
+    // ⑧ 模板与词表必须同源：STAGE_ORDER 加了第五幕，提示词必须跟着改（否则模型永远只回四幕）
+    const tpl = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'plot_stage');
+    ok('补幕次的模板存在', !!tpl);
+    ok('模板把四幕的含义写清楚了', ['起', '承', '转', '合'].every((k) => tpl.content.includes(k)));
+    ok('模板要求"每个编号都要给"（缺了就只能是 missing）', /每个编号都要给/.test(tpl.content));
+    ok('模板要求幕次不能倒退（分集靠它收口）', /不能倒退/.test(tpl.content));
+    ok('模板要求"已定"的必须原样保持不变', /原样保持不变/.test(tpl.content));
+    ok('模板的返回格式是 stages 数组且用 index 对位（不许靠顺序猜）', /"stages":\[\{"index":1/.test(tpl.content));
+    eq('模板里的幕次词表与 STAGE_ORDER 完全一致（加第五幕必须同时改提示词）',
+      (tpl.content.match(/「起」「承」「转」「合」/) || []).length > 0 && story.STAGE_ORDER.join('') === '起承转合', true);
+    eq('模板只问一次、不重复要拍点内容（省 token 也避免模型改写）', /不要复述拍点/.test(tpl.content), true);
+
+    // ⑨ 体检里的"剧情卡没标幕次"必须**有出口**（不能只报问题、让人自己去找按钮）：
+    //    出口要直达「分集大纲」面板 —— 补幕次的按钮在那里，那面板也会显示"退化成按拍数平均切"的后果
+    const noStageCard = { id: 'p1', kind: 'plot', name: '没标幕次的拍', stage: '', order: 1, project_id: 'PRJ', source_id: 'SRC' };
+    const issue = (story.auditCards([noStageCard], {}).issues.find((x) => x.code === 'plot_no_stage')) || {};
+    eq('体检仍报"没有幕次"', issue.code, 'plot_no_stage');
+    eq('这一项仍然不是"机械可修"（补幕次要调模型、要花钱，不能混进免费的一键修复）', issue.fixable, false);
+    eq('出口指向原著页', (issue.go || {}).page, 'novel');
+    eq('出口带上项目与原著（否则跳过去是空的）',
+      `${((issue.go || {}).params || {}).project_id}/${((issue.go || {}).params || {}).source_id}`, 'PRJ/SRC');
+    eq('出口落到「分集大纲」面板（补幕次的按钮就在那儿）', ((issue.go || {}).params || {}).panel, 'outline');
+    ok('详情里说清"也可以让模型一次补齐"（否则用户不知道有这条路）', /一次/.test(issue.detail || ''), issue.detail);
+  }
 
 // ══════════════════════════════════════════════════════════════
 // 批 8 补 28：剧情卡人物闭环体检（involved 里的人在人物卡/角色库里找不到）

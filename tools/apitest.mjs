@@ -172,6 +172,28 @@ const mock = http.createServer((req, res) => {
           ],
         }) + '\n```' } }] });
       }
+      // 批 8 补 32：补分幕次。按提示词里的 "stages" 分流（只有这个模板会要 stages）。
+      // 拍点数从编号清单里数出来 —— 模型看的就是这份清单，mock 也照同样的方式读，
+      // 才不会出现"mock 返回 5 个、实际只有 3 拍"这种只有测试才有的形状。
+      if (/"stages"\s*:/.test(userMsg)) {
+        const n = (userMsg.match(/^\d+\. \[/gm) || []).length;
+        const mk = (stage) => Array.from({ length: n }, (_, i) => ({ index: i + 1, stage }));
+        // __BADSTAGE__：**每一拍**都给词表外的词 → 服务端必须全部丢弃、绝不落库，并如实上报
+        if (userMsg.includes('__BADSTAGE__')) {
+          return send(200, { choices: [{ message: { content: JSON.stringify({ stages: mk('第一幕') }) } }] });
+        }
+        // __BACKSTEP__：最后一拍给"起"，前面都是"转" → 必然构成一次"幕次倒退"
+        // （服务端只上报位置、不替模型"修顺"——修顺等于我们编数据）
+        if (userMsg.includes('__BACKSTEP__')) {
+          const rows = mk('转'); if (rows.length) rows[rows.length - 1] = { index: n, stage: '起' };
+          return send(200, { choices: [{ message: { content: JSON.stringify({ stages: rows }) } }] });
+        }
+        // __GARBAGE__：根本不是 JSON（宽松解析也吃不下）→ 这次调用算**失败**，不许动任何卡片
+        if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '我觉得应该是起承转合吧。' } }] });
+        // 默认：全部给"转"（不是"合"，也不是"起"）。这样"人定过的那张"只要不是"转"，
+        // 它保持不变就说明服务端**没有覆盖**它（若默认值恰好等于它的原值，那条断言就没有牙了）
+        return send(200, { choices: [{ message: { content: JSON.stringify({ stages: mk('转') }) } }] });
+      }
       if (cb.model === 'mock-reject-json' && cb.response_format) return send(400, { error: { message: 'response_format not supported by this gateway' } });
       if (cb.model === 'mock-deny-key' && cb.response_format) return send(401, { error: { message: 'bad key' } });
       return send(200, { choices: [{ message: { role: 'assistant', content: '```json\n[{"shot_number":1,"shot_type":"特写","image_prompt":"a hero face"}]\n```' } }] });
@@ -3228,6 +3250,106 @@ group('原著解析（批 8：分块抽取 / 跨块合并 / 卡片 CRUD / 反向
   for (const c of (await api('GET', `/api/characters?project_id=${SPID}`)).data) if (c.story_card_id) await api('DELETE', `/api/characters/${c.id}`);
   eq('清场后无残留原著', (await api('GET', `/api/story/sources?project_id=${SPID}`)).data.length, 0);
   await api('DELETE', `/api/projects/${SPID}`);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 32：AI 补分幕次（幕次是分集的依据，而"标幕次"是纯分类）
+// ══════════════════════════════════════════════════════════════
+group('AI 补分幕次（批 8 补 32：把"一格一格填"的活交给模型）');
+{
+  const pj = await api('POST', '/api/projects', { name: '补幕次测试剧' });
+  const PID = pj.data.id;
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '补幕次·原著', text: `__LONGARC__${'长弧线的故事。'.repeat(40)}` });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const src = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+  const listPlots = async () => (await api('GET', `/api/story/cards?source_id=${src.id}&kind=plot`)).data;
+  const plots = await listPlots();
+  ok('拿到了多拍剧情卡（__LONGARC__ 给 8 拍）', plots.length >= 4, String(plots.length));
+  const epOf = async () => (await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${src.id}`)).data;
+
+  // 造出"人定过的 + 还没定的"混合局面：留一张有幕次的，其余清掉。
+  // 留的那张**不能是"合"** —— mock 默认对所有拍都回"合"，若留的是"合"就分不清
+  // "我们没覆盖"和"正好被覆盖成同一个值"（注意事项 11：断言别因错误的原因通过）
+  // 留的那张**不能是 mock 会返回的那个值**（默认"转"）—— 否则分不清"我们没覆盖"
+  // 和"正好被覆盖成同一个值"（注意事项 11：断言别因错误的原因通过）
+  // 必须**逐字复刻**服务端 sortBeats 的排序（order 优先、id 兜底）：只按 order 排、
+  // 不加 id 兜底时，order 相同/缺失的卡片顺序与后端不一致（第一版就这么写错了，白查了两轮）
+  const byOrder = [...plots].sort((x, y) => (Number(x.order) || 0) - (Number(y.order) || 0)
+    || String(x.id || '').localeCompare(String(y.id || '')));
+  const lastBeat = byOrder[byOrder.length - 1];
+  ok('最后一拍的 order 确实是最大值（排序口径与后端一致才有意义）',
+    byOrder.every((c) => (Number(c.order) || 0) <= (Number(lastBeat.order) || 0)), JSON.stringify(byOrder.map((c) => c.order)));
+  const keep = plots.find((c) => c.stage && c.stage !== '转') || plots[0];
+  const cleared = plots.filter((c) => c.id !== keep.id);
+  ok('留作"人定过"的那张幕次不是 mock 会返回的「转」（否则下面那条断言没有牙）', keep.stage !== '转', String(keep.stage));
+  for (const c of cleared) await api('PUT', `/api/story/cards/${c.id}`, { stage: '' });
+  eq('清完之后幕次只覆盖 1 拍', (await epOf()).stage_covered, 1);
+
+  // 体检必须**有出口**：报"剧情卡没标幕次"的同时要把人送到能补的地方（补幕次的按钮在分集大纲面板里），
+  // 否则用户看到结论还得自己去找按钮 —— 那就是"只报问题、不给出口"
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const noStage = (aud.data.issues || []).filter((x) => x.code === 'plot_no_stage');
+  ok('体检报出了"没标幕次"的拍', noStage.length >= 1, String(noStage.length));
+  eq('这一项不是"机械可修"（补幕次要调模型、要花钱）', (noStage[0] || {}).fixable, false);
+  eq('出口指向原著页', ((noStage[0] || {}).go || {}).page, 'novel');
+  eq('出口落到「分集大纲」面板', (((noStage[0] || {}).go || {}).params || {}).panel, 'outline');
+  eq('出口带上这份原著（否则跳过去是空的）', (((noStage[0] || {}).go || {}).params || {}).source_id, src.id);
+
+  // ① 干跑：只说"要补几拍、调几次"，不花钱、不改数据
+  const dry = await api('POST', '/api/story/stage-fill', { source_id: src.id, dry_run: true });
+  eq('干跑 200', dry.status, 200);
+  eq('干跑如实报出要补的拍数', dry.data.targets, cleared.length);
+  eq('干跑报出调用次数（全部拍点一次给完 = 1 次）', dry.data.calls, 1);
+  eq('干跑不写库', (await listPlots()).filter((c) => !c.stage).length, cleared.length);
+
+  // ② 真跑：mock 默认对每一拍都回"转"
+  const run = await api('POST', '/api/story/stage-fill', { source_id: src.id });
+  eq('真跑 200', run.status, 200);
+  eq('补上了所有待定的拍', run.data.assigned, cleared.length);
+  eq('分集依据 mixed → stage（这次调用到底有没有用的证据）', `${run.data.basis_before}→${run.data.basis_after}`, 'mixed→stage');
+  const afterCards = await listPlots();
+  eq('**人定过的幕次一个都没动**（mock 对它也回了"转"，它还是原值就说明我们没覆盖）',
+    (afterCards.find((c) => c.id === keep.id) || {}).stage, keep.stage);
+  eq('待定的那些真的落库了', afterCards.filter((c) => c.stage === '转').length, cleared.length);
+
+  // ③ 词表外的幕次必须丢弃并如实上报（脏幕次会让分集在错误的位置切开）。
+  // 标记走**卡片名**：补幕次的提示词里就是拍点清单，名字会原样进 prompt（与 __LONGARC__ 同一手法）
+  const badCard = cleared[0];
+  await api('PUT', `/api/story/cards/${badCard.id}`, { stage: '', name: '__BADSTAGE__ 改名' });
+  const bad = await api('POST', '/api/story/stage-fill', { source_id: src.id });
+  eq('词表外的幕次没被写进去', (await listPlots()).find((c) => c.id === badCard.id).stage, '');
+  eq('全部被丢弃时如实报出条数（mock 每一拍都给了词表外的词）', (bad.data.invalid || []).filter((x) => x.reason === 'not_a_stage').length, run.data.beats);
+  eq('并报出哪几拍没接住', (bad.data.missing || []).length, 1);
+  eq('一条都没接住时 assigned = 0', bad.data.assigned, 0);
+  ok('并说清是"模型没给出可用的幕次"而不是只报 0', /没有给出可用的幕次/.test(bad.data.note || ''), bad.data.note);
+
+  // ④ 模型返回的根本不是 JSON：这次调用算**失败**（500 + 原因），卡片一张都不许动
+  await api('PUT', `/api/story/cards/${badCard.id}`, { stage: '', name: '__GARBAGE__ 改名' });
+  const gar = await api('POST', '/api/story/stage-fill', { source_id: src.id });
+  eq('不可解析时是失败（500）而不是"成功补了 0 个"', gar.status, 500);
+  ok('并说清是"没有返回可解析的 JSON"', /可解析的 JSON/.test(gar.data.error || ''), gar.data.error);
+  eq('失败时卡片未被改动', (await listPlots()).find((c) => c.id === badCard.id).stage, '');
+
+  // ⑤ 模型把幕次写倒退：不替它"修顺"（那是我们编数据），只如实报出位置。
+  // 注意**要倒退的那一拍必须真的是"待定"的**：mock 把"起"给了最后一拍，
+  // 若那一拍已经有幕次，服务端按纪律不会写它 —— 那样"倒退"就只是个没落库的提议（见 selftest 的同名钉）
+  await api('PUT', `/api/story/cards/${badCard.id}`, { stage: '', name: '补幕次测试拍点' });
+  await api('PUT', `/api/story/cards/${lastBeat.id}`, { stage: '', name: '__BACKSTEP__ 改名' });
+  const back = await api('POST', '/api/story/stage-fill', { source_id: src.id });
+  ok('报出幕次倒退的位置', (back.data.back_steps || []).length >= 1, JSON.stringify(back.data.back_steps));
+  eq('倒退的那一拍照样落库（不修数据、只报事实）', (await listPlots()).find((c) => c.id === lastBeat.id).stage, '起');
+
+  // ⑥ 都标好了：不该再调模型（calls = 0），也不该报错
+  const done = await api('POST', '/api/story/stage-fill', { source_id: src.id });
+  eq('没有待定拍时 calls = 0（不白花一次钱）', done.data.calls, 0);
+  ok('并说明原因', /都已经有幕次/.test(done.data.note || ''), done.data.note);
+
+  // ⑦ 没有剧情卡时给的是"先解析"而不是空成功
+  const pj2 = await api('POST', '/api/projects', { name: '补幕次空库' });
+  const empty = await api('POST', '/api/story/stage-fill', { source_id: 'nope' });
+  eq('原著不存在时 404', empty.status, 404);
+  ok('新建项目确实没有卡片（对照用）', Array.isArray((await api('GET', `/api/story/cards?project_id=${pj2.data.id}`)).data));
 }
 
 // ══════════════════════════════════════════════════════════════
