@@ -887,12 +887,17 @@ export default async function novel(container, params = {}) {
       </div>`;
     // 只把**该管的段**列出来：把几十段"已抽取"全铺开，真正要看的反而找不到
     const show = (d.chunks || []).filter((x) => x.needs_retry || x.state === 'unknown' || x.state === 'empty');
+    // 原文与解析时对不上时，补抽**一定会被服务端拒绝**（按段号重抽会抽到别的段落）。
+    // 那就别摆一个"点了必然失败"的按钮 —— 那是"没有出口的假承诺"的镜像：有出口、但出口是墙。
+    // 这里直接把按钮换成一句说明 + 该走的路（重新解析）
+    const broken = d.verified === true && (d.mismatched_chunks || []).length > 0;
     box.innerHTML = `
       <div class="card" style="margin-bottom:10px;padding:12px">
         <div class="row wrap" style="gap:6px;align-items:center">
           <b>抽取覆盖：${esc(d.note || '')}</b>
           <div class="spacer"></div>
-          ${bad ? `<button class="btn btn-xs btn-primary" id="nov-cover-retry">${icon('refresh', 12)}补抽这 ${bad} 段</button>` : ''}
+          ${bad && !broken ? `<button class="btn btn-xs btn-primary" id="nov-cover-retry">${icon('refresh', 12)}补抽这 ${bad} 段</button>` : ''}
+          ${bad && broken ? `<button class="btn btn-xs" id="nov-cover-reparse" title="这些段的原文已经和解析时不一样了：按段号重抽会抽到别的段落，只能重新解析">${icon('refresh', 12)}重新解析这份原著</button>` : ''}
           <button class="btn btn-xs" id="nov-cover-close">收起</button>
         </div>
         ${(d.notes || []).map((n) => `<div class="hint-xs" style="margin-top:4px">${esc(n)}</div>`).join('')}
@@ -900,6 +905,21 @@ export default async function novel(container, params = {}) {
       </div>`;
     const close = box.querySelector('#nov-cover-close');
     if (close) close.onclick = () => { box.innerHTML = ''; };
+    // "重新解析"要真的把用户送到"只差一次点击"的位置：原文直接填回输入框，
+    // 否则点了只把选中项清掉，用户还得自己去把几十万字再粘一遍（那等于没有出口）
+    const reBtn = box.querySelector('#nov-cover-reparse');
+    if (reBtn) reBtn.onclick = async () => {
+      setBusy(reBtn, true, '取原文');
+      const r2 = await api.storySource(sourceId);
+      setBusy(reBtn, false);
+      if (!r2.ok) { toast.err(r2.error); return; }
+      textEl.value = r2.data.text || '';
+      if (!titleEl.value.trim()) titleEl.value = r2.data.title || '';
+      plan = null;
+      renderPlanBox();
+      location.hash = `#/novel?project=${encodeURIComponent(projectId)}`;
+      toast.ok('原文已填好：确认后点「开始解析」，重新解析会新建一份（旧卡片与绑定都留着）', 'info');
+    };
     const btn = box.querySelector('#nov-cover-retry');
     if (!btn) return;
     btn.onclick = async () => {

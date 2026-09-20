@@ -1171,6 +1171,34 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('源码里写明了 ZIP64 会被拒绝而不是猜着读（猜错的后果是一堆乱码，比报错难查）',
     /ZIP64/.test(fileSrc) && /暂不支持/.test(fileSrc));
   ok('不引第三方解压库（零依赖是硬约束）', !/from '(?!\.)|require\(/.test(fileSrc.replace(/\/\*[\s\S]*?\*\//g, '')));
+  // 旧代码防护（批 8 补 27）：服务端跑的是旧代码时必须主动说 —— 前端每次从磁盘读、后端只在启动时读一次
+  {
+    const appSrc = read(path.join(PUB, 'js', 'app.js'));
+    const srv = read(path.join(ROOT, 'server.js'));
+    const rts = read(path.join(ROOT, 'lib', 'routes.js'));
+    ok('壳层留了"旧代码"横幅容器', read(path.join(PUB, 'index.html')).includes('id="stale-bar"'));
+    ok('健康体带代码指纹 / 陈旧标记 / 陈旧文件清单',
+      /code_sig/.test(rts) && /code_stale/.test(rts) && /stale_files/.test(rts));
+    ok('页面顶部真的会渲染这条横幅（读的是服务端给的结论，不是前端自己猜）',
+      // 注意必须是**调用**而不是定义：`function renderStaleBar(h) {` 里也含 `renderStaleBar(h)`，
+      // 只匹配到定义就等于没测到底调没调（对照 HD 抓出来的：把调用删掉，断言照样绿）
+      /function renderStaleBar/.test(appSrc) && /h\.data\.code_stale/.test(appSrc) && /renderStaleBar\(h\);/.test(appSrc));
+    ok('横幅给出可执行的下一步（结束哪个 PID + 重启 + 刷新）',
+      /PID/.test(appSrc) && /重新启动/.test(appSrc) && /刷新本页/.test(appSrc));
+    ok('404 会补一句"跑的是旧代码"（"接口不存在"是最容易被误读的那句）',
+      /staleHint\(\)/.test(srv) && /接口不存在: \$\{req\.method\}/.test(srv));
+    ok('端口被旧代码实例占着时，不再只说"已在运行"把用户堵在门外',
+      /跑的是\*\*旧代码\*\*/.test(srv) && /kill \$\{alive\.pid/.test(srv));
+  }
+
+  // 逐段核对（批 8 补 26）：段号对不上时，补抽按钮不能点了必然失败，也不能假装"可以补"
+  ok('原文对不上时不摆"点了必然被拒"的补抽按钮（有出口、但出口是墙，等于没出口）',
+    /const broken = d\.verified === true/.test(novel) && /bad && !broken/.test(novel));
+  ok('对不上时给的是真出口：重新解析，并把原文填回输入框（只差一次点击）',
+    /nov-cover-reparse/.test(novel) && /textEl\.value = r2\.data\.text/.test(novel));
+  ok('界面不自己猜"核对过没有"：核对结论由服务端给（verified）',
+    /d\.mismatched_chunks/.test(novel) && /d\.verified/.test(novel));
+
   // 已改的卡不被覆盖（批 8 补 25）：界面写了"不会覆盖"，就得真的不覆盖，而且要**说出来**
   ok('追加确认里事先说明保护规则（花钱之前就把预期讲清楚）',
     /人工值优先/.test(novel) && /不会被覆盖/.test(novel));

@@ -243,6 +243,26 @@ function connectSSE() {
   } catch { /* SSE 不可用时静默降级为手动刷新 */ }
 }
 
+/**
+ * 服务端跑的是**旧代码**时，在页面顶部把话说清楚（批 8 补 27）。
+ *
+ * 为什么会走到这里：前端静态文件每次请求都从磁盘读（`no-store`），后端代码只在启动那一刻读一次。
+ * 于是页面显示的是新功能、接口还是旧的，报错偏偏是"接口不存在: POST /api/story/plan"——
+ * 看起来像"这个功能根本没做"，而不像"你该重启服务"。这句话必须由页面主动说，
+ * 否则用户只能靠自己猜到"重启"上去（本轮就真的这么被卡住了）。
+ */
+function renderStaleBar(h) {
+  const bar = document.getElementById('stale-bar');
+  if (!bar) return;
+  if (!h.ok || !h.data.code_stale) { bar.innerHTML = ''; return; }
+  const files = (h.data.stale_files || []).slice(0, 4).map(esc).join('、');
+  bar.innerHTML = `<div style="margin:0 0 12px;padding:10px 12px;border:1px solid var(--warn);border-radius:8px;background:rgba(214,181,109,.10)">
+    <div style="font-weight:600;color:var(--warn)">服务端跑的是旧代码：新功能会报"接口不存在"</div>
+    <div class="hint-xs" style="margin-top:4px">${files ? `启动之后这些文件改过：${files}${(h.data.stale_files || []).length > 4 ? ' 等' : ''}。` : ''}前端每次都从磁盘读，后端只在启动时读一次 —— 所以页面上是新功能、接口还是旧的。</div>
+    <div class="hint-xs" style="margin-top:4px">处理：结束正在运行的服务进程（当前 PID ${esc(String(h.data.pid || '?'))}），再重新启动本工作台，然后刷新本页。</div>
+  </div>`;
+}
+
 // ── 启动 ────────────────────────────────────────────────────
 async function boot() {
   const h = await api.health();
@@ -250,6 +270,7 @@ async function boot() {
     state.home = h.data.data_home || '';
     state.version = h.data.version || '';
   }
+  renderStaleBar(h);
   await refreshState();
   window.addEventListener('hashchange', render);
   await render();

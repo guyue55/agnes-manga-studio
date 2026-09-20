@@ -11,6 +11,9 @@
   <div class="app">
     <aside class="sidebar" id="sidebar"></aside>
     <main class="main">
+      <!-- 服务端跑的是旧代码时的横幅（批 8 补 27）：前端是每次从磁盘读的、后端只在启动时读一次，
+           不说明白的话，页面上的新功能会报"接口不存在"，看起来像功能没做 -->
+      <div id="stale-bar"></div>
       <div id="view"></div>
     </main>
   </div>

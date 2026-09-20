@@ -51,6 +51,60 @@ function resolveHome() {
 }
 
 const CODE_HOME = __dirname;
+const storyLib = require('./lib/story.js');
+
+// ─────────────────────────────────────────────────────────────
+// 代码指纹与"进程跑的是旧代码"防护（批 8 补 27）
+// ─────────────────────────────────────────────────────────────
+/**
+ * 为什么需要：本项目是**本地长驻**服务，一轮一轮地加功能；而前端静态文件是
+ * 每次请求从磁盘读的（`Cache-Control: no-store`）、**后端代码只在启动那一刻读一次**。
+ * 于是页面显示的是新功能、接口却还是旧的 —— 报错偏偏是最容易误导人的那一句
+ * "接口不存在: POST /api/story/plan"，看起来像"这个功能根本没做"，而不像"你该重启了"。
+ * 更糟的是再敲一次 `node server.js` 也救不了：端口被占用时走的是 X4 防护那条分支，
+ * 它只会说"工作台已在运行"，然后退出 —— 把唯一的补救动作也堵住了。
+ * 所以：启动时留一份代码指纹，运行期随时能回答"我现在跑的是哪版代码"。
+ * exe 形态代码在二进制里、进程跑着就不可能变，给个固定值即可。
+ */
+function codeSignature() {
+  if (IS_SEA) return { sig: `sea-${VERSION}-${ASSETS_VERSION}`, files: {} };
+  const files = {};
+  const names = ['server.js'];
+  try {
+    for (const f of fs.readdirSync(path.join(CODE_HOME, 'lib')).sort()) if (f.endsWith('.js')) names.push(`lib/${f}`);
+  } catch { /* 没有 lib 目录就只算 server.js */ }
+  for (const f of names) {
+    try { files[f] = storyLib.digestText(fs.readFileSync(path.join(CODE_HOME, f), 'utf8')); }
+    catch { files[f] = '?'; }
+  }
+  return { sig: storyLib.digestText(names.map((f) => `${f}:${files[f]}`).join('|')), files };
+}
+
+const BOOT = codeSignature();
+const BOOTED_AT = new Date().toISOString();
+
+/** 代码有没有在启动之后被改过（带 2s 缓存：健康检查可能被反复调，别每次重读几百 KB） */
+let _staleCache = { at: 0, val: null };
+function staleInfo() {
+  if (IS_SEA) return { stale: false, changed: [], checked: false };
+  const t = Date.now();
+  if (_staleCache.val && t - _staleCache.at < 2000) return _staleCache.val;
+  const now = codeSignature();
+  const changed = [];
+  for (const f of Object.keys(now.files)) if (BOOT.files[f] !== now.files[f]) changed.push(f);
+  for (const f of Object.keys(BOOT.files)) if (!(f in now.files)) changed.push(`${f}（已删除）`);
+  const val = { stale: changed.length > 0, changed, checked: true };
+  _staleCache = { at: t, val };
+  return val;
+}
+
+/** 给"接口不存在"这类最容易被误读的报错补一句实话 */
+function staleHint() {
+  const st = staleInfo();
+  if (!st.stale) return '';
+  return `（注意：服务端代码在启动后被改过 —— ${st.changed.slice(0, 3).join('、')}${st.changed.length > 3 ? ' 等' : ''}，`
+    + '当前进程跑的还是旧代码。这个接口可能是新加的：请重启服务后再试）';
+}
 const APP_HOME = IS_SEA ? resolveHome() : (process.env.AGNES_STUDIO_HOME
   ? path.resolve(process.env.AGNES_STUDIO_HOME)
   : path.join(CODE_HOME, 'data'));
@@ -109,7 +163,10 @@ for (const d of [store.imagesDir(), store.videosDir(), store.exportsDir()]) {
 poller.init(store);
 seedLib.seedTemplates(store);
 
-const routes = createRoutes({ store, agnes, poller, jobs, version: VERSION });
+const routes = createRoutes({
+  store, agnes, poller, jobs, version: VERSION,
+  boot: { sig: storyLib.digestText(BOOT.sig), at: BOOTED_AT, pid: process.pid, staleInfo },
+});
 
 // B4：任何持久化失败都进任务中心日志与终端，不再静默"保存成功"
 store.onWriteError((where, e) => {
@@ -370,7 +427,7 @@ async function handleRequest(req, res) {
     const query = Object.fromEntries(u.searchParams.entries());
     try {
       const result = routes.dispatch(req.method, pathname, body, query, req, res);
-      if (result === undefined) return sendJson(res, 404, { ok: false, error: `接口不存在: ${req.method} ${pathname}` });
+      if (result === undefined) return sendJson(res, 404, { ok: false, error: `接口不存在: ${req.method} ${pathname}${staleHint()}` });
       const out = await result;
       if (out && typeof out === 'object' && typeof out.raw === 'string') return sendText(res, 200, out.raw, res.getHeader('Content-Type') || 'text/plain; charset=utf-8');
       return sendJson(res, 200, out === undefined ? { ok: true } : out);
@@ -407,8 +464,18 @@ function listen(port, attempt = 0) {
     if (e.code === 'EADDRINUSE' && attempt < MAX_TRY) {
       // X4 防护：若占用者就是"同一数据目录的本工作台"，绝不静默起第二个影子实例——
       // persist 是整库快照全量写，两个实例互踩会静默丢数据（exe 双击两次即中招）。
-      if (await sameAppAlive(port)) {
+      const alive = await sameAppAlive(port);
+      if (alive) {
         console.log(`\n✓ 工作台已在运行：http://127.0.0.1:${port}（相同数据目录），不再启动第二个实例。`);
+        // 正在跑的那个是不是**旧代码**？是的话只报"已在运行"会把用户堵死在门外：
+        // 页面显示新功能、接口报"不存在"，而唯一的补救动作（再启动一次）恰好被这条分支挡住
+        if (alive.code_sig && alive.code_sig !== storyLib.digestText(BOOT.sig)) {
+          console.log('');
+          console.log('  ⚠ 但那个进程跑的是**旧代码**（服务端代码在它启动之后改过）。');
+          console.log(`    页面上的新功能会报"接口不存在"，看起来像没做，其实是没重启。`);
+          console.log(`    请先结束它再启动：kill ${alive.pid || '<PID>'}${alive.pid ? '' : '（用 lsof -nP -iTCP:' + port + ' -sTCP:LISTEN 查 PID）'}`);
+          console.log('    （它用的是同一份数据，直接结束是安全的：数据是落盘的 JSON。）');
+        }
         console.log('  若要重新打开页面，直接访问上面的地址即可。');
         if (!process.env.NO_OPEN) openBrowser(`http://127.0.0.1:${port}`);
         process.exit(0);
@@ -437,13 +504,17 @@ function listen(port, attempt = 0) {
   server.listen(port, '127.0.0.1');
 }
 
-/** 探测目标端口上是否已有一个使用相同数据目录的本应用实例 */
+/**
+ * 探测目标端口上是否已有一个使用相同数据目录的本应用实例。
+ * @returns {false|object} 不是本应用 → false；是 → 健康体（带 `pid` / `code_sig`，
+ *   调用方据此判断"跑的是不是旧代码"，见批 8 补 27）
+ */
 async function sameAppAlive(port) {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1500) });
     if (!r.ok) return false;
     const j = await r.json();
-    return Boolean(j.ok) && path.resolve(String(j.data_home || '')) === APP_HOME;
+    return Boolean(j.ok) && path.resolve(String(j.data_home || '')) === APP_HOME ? j : false;
   } catch {
     return false;
   }

@@ -975,6 +975,55 @@ group('安全');
   const afterX4 = await api('GET', '/api/health');
   eq('X4 后原实例仍健康（未被抢端口）', afterX4.status, 200);
 
+  // ── 批 8 补 27：进程跑的是**旧代码**时必须说清楚 ──────────────────
+  // 这条不是假想：服务跑了 3 天，而前端静态文件每次请求都从磁盘读（no-store）、后端只在启动那一刻读一次。
+  // 于是页面显示的是新功能、接口还是旧的，报错偏偏是"接口不存在: POST /api/story/plan" ——
+  // 看起来像"这个功能根本没做"，而不像"你该重启服务"。更糟的是再敲一次 node server.js
+  // 只会得到"已在运行"然后退出（X4 防护），把唯一的补救动作也堵住了。
+  const hFresh = (await api('GET', '/api/health')).data;
+  ok('健康体带代码指纹与 PID（启动时留的，用来判断"跑的是哪版代码"）',
+    typeof hFresh.code_sig === 'string' && hFresh.code_sig.length > 0 && Number(hFresh.pid) > 0,
+    JSON.stringify({ sig: hFresh.code_sig, pid: hFresh.pid }));
+  eq('刚启动时不是"旧代码"', hFresh.code_stale, false);
+
+  const storyPath = path.join(ROOT, 'lib', 'story.js');
+  const storyOrig = fs.readFileSync(storyPath, 'utf8');
+  try {
+    fs.writeFileSync(storyPath, `${storyOrig}\n// 探针：模拟"启动之后代码被改"\n`);
+    await sleep(2300); // 指纹有 2s 缓存，别拿缓存当结论
+    const hStale = (await api('GET', '/api/health')).data;
+    eq('启动后改过代码 → 健康体如实报"跑的是旧代码"', hStale.code_stale, true);
+    ok('并点名是哪个文件变了（不然用户不知道该不该重启）',
+      (hStale.stale_files || []).includes('lib/story.js'), JSON.stringify(hStale.stale_files));
+    ok('说明里明确给出"请重启服务"', /请重启服务/.test(hStale.stale_hint || ''), String(hStale.stale_hint));
+
+    const miss = await api('POST', '/api/story/definitely-not-here');
+    eq('不存在的接口仍然是 404（不掩盖真实错误）', miss.status, 404);
+    ok('但 404 里补了一句实话：最容易被误读的那句话旁边说清是旧代码',
+      /当前进程跑的还是旧代码/.test(miss.data?.error || ''), String(miss.data?.error));
+
+    const again = await new Promise((resolve) => {
+      const c = spawn(NODE, [path.join(ROOT, 'server.js')], {
+        env: { ...process.env, PORT: String(srvPort), NO_OPEN: '1', AGNES_STUDIO_HOME: HOME },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let o = '';
+      c.stdout.on('data', (d) => (o += d));
+      c.stderr.on('data', (d) => (o += d));
+      const t = setTimeout(() => { c.kill(); resolve({ code: 'TIMEOUT', out: o }); }, 8000);
+      c.on('exit', (code) => { clearTimeout(t); resolve({ code, out: o }); });
+    });
+    eq('陈旧时再启动一次仍然拒绝起第二实例（X4 不变）', again.code, 0);
+    ok('但它会点名"跑的是旧代码"，而不是只说"已在运行"把用户堵在门外',
+      /旧代码/.test(String(again.out)) && /kill \d+/.test(String(again.out)), String(again.out).slice(0, 240));
+  } finally {
+    // 改的是仓库源文件，必须还原（失败也要还原：否则后面所有测试都在改过的代码上跑）
+    fs.writeFileSync(storyPath, storyOrig);
+    await sleep(2300);
+  }
+  const hBack = (await api('GET', '/api/health')).data;
+  eq('还原后不再报陈旧（不能挂着一条永远不消的假警报）', hBack.code_stale, false);
+
   // H5：video_url 只收 http(s) 或空——javascript:/data: 等形状会进 <video src> 与"打开链接"按钮
   const vmk = await api('POST', '/api/videos', { prompt: 'H5 协议白名单探针', mode: 'text_to_video' });
   const vid = vmk.data && (vmk.data.id || (vmk.data.asset && vmk.data.asset.id));
@@ -2596,6 +2645,48 @@ group('追加解析（批 8 补 10：只解析新增章节 / 已有卡 id 不变
     Number(src3.protected_cards) >= 1, JSON.stringify(src3.protected_cards));
   ok('并点名是哪几张（用户要能核对）',
     (src3.protected_names || []).includes('林晚'), JSON.stringify(src3.protected_names));
+
+  // ── 批 8 补 26：段数一样 ≠ 切出来的是同一段原文 ──────────────────
+  // 追加解析是"先切 A、再切 B"，而补抽/溯源是"重切整篇 A+B"。两者在接缝处必然不同，
+  // **而段数可能刚好相同** —— 只比段数会把这个当成"切回来了"，于是补抽按段号抽到**别的段落**、
+  // 溯源把错的段落当成"这张卡的原文依据"，两者都不报错。
+  const mkSeg = (n, base) => Array.from({ length: n }, (_, i) => `第${base + i}章 夜访。` + '林晚走进茶馆，顾寒已在等她。'.repeat(8)).join('\n\n');
+  const segA = mkSeg(20, 1), segB = mkSeg(10, 21); // A≈2400 字切 1 段、B≈1200 字切 1 段，合起来 3600 字切 2 段
+  const anA = await api('POST', '/api/story/analyze', { project_id: PID, title: '逐段核对 A', text: segA, reduce: false });
+  eq('解析 A 200', anA.status, 200);
+  await wait(anA.data.jobId);
+  const srcA = anA.data.source.id;
+  const apB = await api('POST', '/api/story/append', { project_id: PID, source_id: srcA, text: segB, reduce: false });
+  eq('追加 B 200', apB.status, 200);
+  await wait(apB.data.jobId);
+  const srcAB = (await api('GET', `/api/story/sources/${srcA}`)).data;
+  eq('A+B 的段数 = 1+1 = 2（这正是"只比段数"会放过的情形）', srcAB.chunk_count, 2);
+  eq('逐块指纹按"先切 A 再切 B"往后接（长度与段数一致）',
+    (srcAB.chunk_digests || []).length, srcAB.chunk_count);
+  ok('指纹不是空的（否则等于没核对）', (srcAB.chunk_digests || []).every((d) => /^[0-9a-f]{8}$/.test(d)), JSON.stringify(srcAB.chunk_digests));
+
+  // 覆盖体检：必须如实说"逐段核对过，而且对不上"，并点出是第几段
+  const cov = (await api('GET', `/api/story/coverage?source_id=${srcA}`)).data;
+  eq('覆盖体检：逐段核对过（verified=true）', cov.verified, true);
+  eq('覆盖体检：段数判据看不出来，但逐段核对判"对不上"', cov.aligned, false);
+  ok('覆盖体检点出对不上的段号（不是只说"对不上"）',
+    (cov.mismatched_chunks || []).length > 0, JSON.stringify(cov.mismatched_chunks));
+  ok('覆盖体检的说明里点明了"补抽会被拒绝"（用户不用点一次才知道）',
+    (cov.notes || []).join('；').includes('补抽会被拒绝'), JSON.stringify(cov.notes));
+
+  // 溯源：绝不能把**错的段落**当成这张卡的原文依据摆出来
+  const anyCard = (await api('GET', `/api/story/cards?source_id=${srcA}`)).data[0];
+  const cs = (await api('GET', `/api/story/card-source?card_id=${anyCard.id}`)).data;
+  eq('溯源：如实标出段落已对不上', cs.aligned, false);
+  eq('溯源：并说明是逐段核对出来的', cs.verified, true);
+  ok('溯源：明确提醒"下面的原文可能对不上这张卡"',
+    (cs.notes || []).join('；').includes('可能对不上这张卡'), JSON.stringify(cs.notes));
+
+  // 补抽：**必须拒绝**（旧行为是放行并真的调模型，抽回来一堆指向错段落的卡片）
+  const rc = await api('POST', '/api/story/retry-chunks', { source_id: srcA, indexes: [1] });
+  eq('原文对不上时补抽被拒绝 → 400', rc.status, 400);
+  ok('拒绝的理由说清了后果（会抽到别的段落 / 卡片会指向错误的原文）',
+    /别的段落|指向错误的原文/.test(rc.data?.error || rc.text || ''), JSON.stringify(rc.data?.error || rc.text));
 
   // 参数校验：缺 source_id / 不属于本项目 / 空文本都要明确报错，而不是静默新建一份
   eq('缺 source_id → 400', (await api('POST', '/api/story/append', { project_id: PID, text: 'x' })).status, 400);

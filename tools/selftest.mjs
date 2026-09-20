@@ -661,6 +661,34 @@ group('Word 文档读取（批 8 补 23：.docx 就是个 zip，零依赖就能�
   ok('ZIP64 明确拒绝（而不是按 32 位读出一堆乱码）', !r64.ok && /ZIP64/.test(r64.error || ''), JSON.stringify(r64));
 }
 
+group('逐段核对（批 8 补 26：段数一样 ≠ 切出来的是同一段原文）');
+{
+  const st = require(path.join(ROOT, 'lib/story.js'));
+  const mk = (n, base) => Array.from({ length: n }, (_, i) => `第${base + i}章 夜访。` + '林晚走进茶馆，顾寒已在等她。'.repeat(8)).join('\n\n');
+  const A = mk(20, 1), B = mk(10, 21);
+  const opts = { maxChars: 3000, maxChunks: 200 };
+  const sA = st.splitChunks(A, opts), sB = st.splitChunks(B, opts), sAB = st.splitChunks(A + '\n\n' + B, opts);
+
+  // 追加解析的事实是"先切 A、再切 B"：chunk_count 就是两段之和
+  eq('先切 A 再切 B 各得 1 段（存储的 chunk_count = 2）', sA.chunks.length + sB.chunks.length, 2);
+  eq('重切整篇也是 2 段 —— **只看段数根本看不出来有问题**', sAB.chunks.length, 2);
+
+  const stored = st.chunkDigests([...sA.chunks, ...sB.chunks]);
+  const fresh = st.chunkDigests(sAB.chunks);
+  eq('段数一样，但逐段文本全对不上（这就是"切不回原样"）',
+    st.mismatchedDigests(stored, fresh).join(','), '0,1');
+  // 光说"对不上"不够：要能点出**具体哪一段**，用户与界面才知道该怎么办
+  eq('对不上的段号逐个点出来（第 1 段变了、第 2 段没变）',
+    st.mismatchedDigests(stored, st.chunkDigests([sAB.chunks[0], sB.chunks[0]])).join(','), '0');
+  // 与"过期体检"同一条纪律：没有指纹 = **不知道**，不能当成"对不上"（否则老原著全被判死）
+  eq('没存指纹时返回空 —— "不知道"不等于"对不上"', st.mismatchedDigests([], fresh).length, 0);
+  // 少了一段时，**移位的那段**与**消失的那段**都要报出来（只说段数不对没法定位）
+  eq('段数不同时：移位的段与消失的段都点出来', st.mismatchedDigests(stored, st.chunkDigests(sAB.chunks.slice(0, 1))).join(','), '0,1');
+  eq('指纹只按文本算：同一段文本再切一次，指纹一模一样（不是按块号或偏移）',
+    st.chunkDigests(st.splitChunks(A, opts).chunks).join(','), stored.slice(0, 1).join(','));
+  eq('指纹按段数一一对应', st.chunkDigests(sAB.chunks).length, 2);
+}
+
 group('已改的卡不被覆盖（批 8 补 25：界面写着"不会覆盖"，那代码就得真的不覆盖）');
 {
   const st = require(path.join(ROOT, 'lib/story.js'));
