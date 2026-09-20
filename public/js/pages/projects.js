@@ -6,7 +6,8 @@ import { icon, esc, fmtTime, relTime, PROJECT_TYPES, PLATFORMS, ASPECTS, aspectF
 import { api } from '../api.js';
 import { modal, confirm, toast, empty, spinner, skeleton, options, setBusy } from '../ui.js';
 import { head } from './helpers.js';
-import { navigate, softRefresh } from '../app.js';
+import { navigate, navLabel, softRefresh } from '../app.js';
+import { rememberedStage } from '../pipeline.js';
 
 export default async function projects(container, params) {
   container.innerHTML = `
@@ -81,7 +82,15 @@ export default async function projects(container, params) {
           <div class="s"><span class="n">${esc(p.planned_episodes || 0)}</span><span class="l">预计集数</span></div>
         </div>
         <div class="row" style="gap:6px;flex-wrap:wrap">
-          <button class="btn btn-xs" data-act="open">${icon('arrowRight', 12)}进入分镜</button>
+          ${(() => {
+            // "继续创作"走的是**上次停在哪一段**（只有本机记得住），不是"这个项目下一步该做什么"
+            // （那个事实在七段链里，属于流程条）。两件事不同，所以标签上写清是"上次在…"。
+            const st = rememberedStage(p.id);
+            const lbl = st ? navLabel(st) : '';
+            return lbl
+              ? `<button class="btn btn-xs btn-primary" data-act="open" title="回到你上次停下的那一段">${icon('arrowRight', 12)}继续创作 · ${esc(lbl)}</button>`
+              : `<button class="btn btn-xs" data-act="open">${icon('arrowRight', 12)}进入分镜</button>`;
+          })()}
           <button class="btn btn-xs" data-act="edit">${icon('edit', 12)}编辑</button>
           <button class="btn btn-xs" data-act="dup">${icon('copy', 12)}复制</button>
           <button class="btn btn-xs" data-act="export">${icon('download', 12)}导出资料</button>
@@ -95,7 +104,10 @@ export default async function projects(container, params) {
         b.onclick = async (e) => {
           e.stopPropagation();
           const act = b.getAttribute('data-act');
-          if (act === 'open') navigate('storyboards', { project: id });
+          if (act === 'open') {
+            const st = rememberedStage(id);
+            navigate(st && navLabel(st) ? st : 'storyboards', { project: id });
+          }
           else if (act === 'edit') openForm(list.find((x) => x.id === id));
           else if (act === 'dup') {
             if (b.dataset.busy === '1') return; // R6 残留：复制防连点（成功即重渲染，失败恢复）
@@ -129,7 +141,9 @@ export default async function projects(container, params) {
       });
       card.onclick = (e) => {
         if (e.target.closest('[data-act]')) return;
-        navigate('storyboards', { project: id });
+        // 点整张卡与点"继续创作"同一个落点（有记忆就回记忆，没有才回默认的分镜页）
+        const st = rememberedStage(id);
+        navigate(st && navLabel(st) ? st : 'storyboards', { project: id });
       };
     });
   }

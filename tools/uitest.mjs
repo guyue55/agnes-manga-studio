@@ -2002,6 +2002,35 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     const offChain = ['characters', 'tasks', 'assets', 'settings', 'projects'];
     ok('不在链上的页面不会出现"上游产物/下一步"这一行', offChain.every((f) => !usesProg(f)));
   }
+  // B5.6：项目级"上次停在哪一段"（参考项目把 stage 持久化 + "继续创作 →"）。
+  // 这条功能的**唯一**难点是"哪些页在链上"这个判据从哪儿来 —— 手抄一份页面清单就会在加/删步骤时分叉。
+  ok('"上次停在哪一段"只记链上的页，且"在不在链上"取自**服务端**的 steps[].nav（不手抄页面清单）',
+    /export function rememberStage/.test(pipeSrc) && /isChainNav\(navId\)/.test(pipeSrc)
+    && /chainNavs = new Set\(r\.data\.steps\.map\(\(x\) => x\.nav\)/.test(pipeSrc));
+  // 反事实：手抄一份 ['novel','scripts',...] 就等于给"链上有哪几步"添第二份口径
+  ok('pipeline.js 里没有手抄的链页面清单（链上有哪几步是服务端的事实）',
+    !/\[\s*'novel'\s*,\s*'scripts'/.test(pipeSrc));
+  {
+    // 记录时机：`state.projectId` 是**页面**在挂载时解析出来的，在挂载之前记会记到上一个项目头上
+    const iMount = appSrcP.indexOf('await nav.page(page, params)');
+    const iRec = appSrcP.indexOf('rememberStage(state.current, state.projectId)');
+    ok('"停在哪一段"在页面**挂载之后**才记（挂载前记会记到上一个项目头上）',
+      iMount > 0 && iRec > iMount);
+  }
+  {
+    const projSrc = read(path.join(PUB, 'js', 'pages', 'projects.js'));
+    // 出口走的是**记住的那一段**，不是写死的分镜页（写死就等于这个功能没接上）
+    ok('项目卡有"继续创作"出口，且落点是**记住的那一段**（不是写死分镜页）',
+      /继续创作/.test(projSrc) && /rememberedStage\(p\.id\)/.test(projSrc)
+      && /navigate\(st && navLabel\(st\) \? st : 'storyboards'/.test(projSrc));
+    // 反向：没记忆时必须有回落（导航到空字符串会白屏）
+    ok('没有记忆时回落到分镜页（不许把空字符串交给 navigate）',
+      /: 'storyboards'/.test(projSrc) && !/navigate\(rememberedStage/.test(projSrc));
+    // 入口名只有一份（侧栏那张表），别在项目卡里再写一张
+    ok('入口中文名取自侧栏那张表（navLabel），项目卡不另写一张',
+      /export function navLabel/.test(appSrcP) && /navLabel\(st\)/.test(projSrc)
+      && !/const NAV_LABEL|STAGE_LABEL/.test(projSrc));
+  }
   // 跨文件棘轮：服务端每一步标的 nav 必须是**真实存在**的侧栏入口。
   // 拼错一个字母的后果是那个入口永远没有徽标 —— 而"没有徽标"看起来跟"这一步没做"一样。
   {

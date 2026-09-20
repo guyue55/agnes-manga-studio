@@ -3083,6 +3083,23 @@ try {
         const navTitle = await cdp.eval(`return (document.querySelector('#sidebar [data-nav="novel"] .badge')||{}).title||'';`);
         ok('侧栏徽标的说法与流程条的"下一步"同源（都指解析卡片，且状态词一致）',
           navTitle.includes('解析出卡片') && navTitle.includes('该做了'), JSON.stringify(navTitle));
+
+        // ⑧ UI 重构 B5.6：项目级"上次停在哪一段" —— 项目卡上的"继续创作"要回到**记住的那一段**，
+        //    而不是写死的分镜页（写死就等于这功能没接上，用户还以为被记住了）。
+        //    上一段我们停在设置页（**不在链上**），所以它绝不该被记成"上次停下的位置" ——
+        //    否则"继续创作"会把人带去设置页，那比没有这个按钮更糟。
+        const stageNow = await cdp.eval(`return localStorage.getItem('agnes.project.${pid}.stage');`);
+        ok('不在链上的页（设置）不会被记成"上次停在哪一段"', stageNow === 'novel', String(stageNow));
+        await cdp.eval(`location.hash = '#/projects'; return true;`);
+        await sleep(900);
+        const cont = await cdp.eval(`return (document.querySelector('.proj-card[data-id="${pid}"] [data-act="open"]')||{}).innerText||'';`);
+        ok('项目卡上是"继续创作 · <上次那一段>"（入口名与侧栏同一份，不是另写一张表）',
+          /继续创作/.test(cont) && /原著解析/.test(cont), JSON.stringify(cont));
+        await cdp.eval(`document.querySelector('.proj-card[data-id="${pid}"] [data-act="open"]').click(); return true;`);
+        await sleep(1000);
+        const hash6 = await cdp.eval(`return location.hash;`);
+        ok('点"继续创作"真的回到那一段所在页，并带上项目 id',
+          /^#\/novel\?/.test(hash6) && hash6.includes(pid), hash6);
       } finally {
         await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
       }

@@ -4,7 +4,7 @@
 import { icon, esc } from './consts.js';
 import { api } from './api.js';
 import { toast } from './ui.js';
-import { cachedPipeline, loadPipeline, pipelineBadge, refreshPageProgress, renderStrip } from './pipeline.js';
+import { cachedPipeline, loadPipeline, pipelineBadge, refreshPageProgress, rememberStage, renderStrip } from './pipeline.js';
 
 import dashboard from './pages/dashboard.js';
 import projects from './pages/projects.js';
@@ -162,6 +162,12 @@ export function syncViewParams(patch) {
   history.replaceState(null, '', '#/' + id + (qs ? '?' + qs : ''));
 }
 
+/** 侧栏那张表是**唯一**一份"入口 id → 中文名"（别处再写一张就会分叉）。 */
+export function navLabel(id) {
+  const n = NAV.find((x) => x.id === id);
+  return n ? n.label : '';
+}
+
 export function navigate(path, params = {}) {
   const qs = new URLSearchParams(params).toString();
   location.hash = `#/${path}${qs ? `?${qs}` : ''}`;
@@ -205,6 +211,9 @@ async function render() {
     page.innerHTML = `<div class="note red">页面加载失败：${esc(e.message)}</div>`;
   }
   if (seq !== renderSeq) return;
+  // 挂完页面才记"停在哪一段"：`state.projectId` 是**页面**在挂载时解析出来的，
+  // 在挂载之前记会记到上一个项目头上（B5.6）。
+  rememberStage(state.current, state.projectId);
   window.scrollTo({ top: 0 });
 }
 

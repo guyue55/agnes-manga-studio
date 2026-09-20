@@ -58,6 +58,10 @@ export async function loadPipeline(projectId, opts = {}) {
       }
       lastErr.delete(projectId);
       cache.set(projectId, { data: r.data, at: Date.now() });
+      if (r.data && Array.isArray(r.data.steps)) {
+        // 服务端说链上有哪几步，就是哪几步（这是"在不在链上"的**唯一**来源）
+        chainNavs = new Set(r.data.steps.map((x) => x.nav).filter(Boolean));
+      }
       return r.data;
     } catch (e) {
       lastErr.set(projectId, { error: (e && e.message) || '网络错误', trace: '' });
@@ -95,6 +99,42 @@ export function chipHtml(x) {
   const tail = x.state === 'done' ? amount(x) : ` ${STEP_WORD[x.state] || ''}${amount(x)}`;
   return `<span class="pipe-chip ${STEP_TONE[x.state] || 'gray'}" title="${esc(chipTitle(x))}">`
     + `${x.state === 'done' ? `${icon('check', 11)} ` : ''}${esc(x.label)}<b>${esc(tail)}</b></span>`;
+}
+
+const STAGE_KEY = (projectId) => `agnes.project.${projectId}.stage`;
+
+/**
+ * "哪些侧栏入口在链上" —— 取自**服务端** `steps[].nav` 的去重集合（每次拉取成功后更新）。
+ * 为什么不手抄一份页面清单：链上有哪几步是**服务端的事实**，手抄一份会在加/删步骤时静默分叉。
+ * 为什么不留成"每次现查缓存"：缓存是**按项目**的，刚换项目时可能还没回来 ——
+ * 那时"这一页在不在链上"会被答成"不在"，于是**第一次访问某个项目永远记不住位置**（偶发、极难查）。
+ * 首次拉取在 boot 里是**被 await 的**，所以任何页面挂载时这个集合都已经有了。
+ */
+let chainNavs = null;
+export function isChainNav(navId) {
+  return !!(chainNavs && chainNavs.has(navId));
+}
+
+/**
+ * 记住"这个项目上次停在哪一段"（UI 重构 B5.6）。
+ *
+ * 写入口**自己**把关：不在链上的页面（设置/素材/任务…）不记 —— 否则项目卡上的
+ * "继续创作"会把人带去设置页，那比没有这个按钮更糟。
+ * 判据就是 `progressOf`（"这一页在不在链上"只有这一个来源，不另抄一张页面清单）。
+ */
+export function rememberStage(navId, projectId) {
+  if (!projectId || !isChainNav(navId)) return;
+  try { localStorage.setItem(STAGE_KEY(projectId), navId); } catch { /* 隐私模式：记不住就算了 */ }
+}
+
+/**
+ * 读回"上次停在哪一段"。**故意不做"这个 id 还有效吗"的二次校验** ——
+ * 写入口已经只放链上的页进来，而这里的读方（项目卡）手上没有那个项目的七段链数据；
+ * 真要造一个静态白名单，就是给"哪些页在链上"添第二份口径。
+ */
+export function rememberedStage(projectId) {
+  if (!projectId) return '';
+  try { return localStorage.getItem(STAGE_KEY(projectId)) || ''; } catch { return ''; }
 }
 
 /**
