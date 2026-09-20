@@ -11,9 +11,9 @@ import {
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback, notice } from '../ui.js';
-import { head, projectPicker, renderBatchBar, makeTokenStore } from './helpers.js';
+import { head, projectLabel, renderBatchBar, makeTokenStore } from './helpers.js';
 import { charCount, limitState, FIELD_SOFT_LIMIT } from '../textstats.js';
-import { state, onEvent, syncViewParams, loadCharacters, resolveProjectId, rememberProject } from '../app.js';
+import { state, onEvent, syncViewParams, loadCharacters, resolveProjectId } from '../app.js';
 
 export default async function storyboards(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -37,7 +37,7 @@ export default async function storyboards(container, params) {
       title: '分镜制作',
       desc: '管理分镜表：补提示词 → 批量出图 → 批量出视频，一条龙',
       actions: `
-        ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
+        ${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}
         <select class="select select-sm" id="ep" style="width:110px"></select>
         <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
@@ -89,11 +89,9 @@ export default async function storyboards(container, params) {
   container.querySelector('#script-in').oninput = syncScriptStat;
   syncScriptStat();
 
-  const picker = container.querySelector('#p-picker');
   const epSel = container.querySelector('#ep');
   epSel.innerHTML = Array.from({ length: 30 }, (_, i) => i + 1)
     .map((n) => `<option value="${n}"${n === episode ? ' selected' : ''}>第 ${n} 集</option>`).join('');
-  picker.onchange = () => { projectId = rememberProject(picker.value); selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
   epSel.onchange = () => { episode = Number(epSel.value); selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#gen-sb').onclick = genFromScript;

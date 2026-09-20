@@ -20,8 +20,8 @@ import {
 } from '../consts.js';
 import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, dataOf, options, imgWithFallback } from '../ui.js';
 import { charCount, countLabel, limitState } from '../textstats.js';
-import { head, projectPicker, renderBatchBar } from './helpers.js';
-import { state, onEvent, syncViewParams, navigate, resolveProjectId, rememberProject } from '../app.js';
+import { head, projectLabel, renderBatchBar } from './helpers.js';
+import { state, onEvent, syncViewParams, navigate, resolveProjectId } from '../app.js';
 import { parseStoryFiles, STORY_FILE_ACCEPT } from '../storyfile.js';
 
 const JOB_KEY = 'agnes.novel.job'; // 解析任务 id：刷新/切页回来能续上进度（与分镜批量的做法一致）
@@ -46,7 +46,7 @@ export default async function novel(container, params = {}) {
     ${head({
       title: '原著解析',
       desc: '粘贴或上传故事/小说，自动抽取人物卡、地点卡、道具卡、剧情卡等信息卡，反向驱动剧本、资产库与分镜',
-      actions: `${projectPicker(state.projects, projectId, { id: 'p-picker' })}
+      actions: `${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}
         <button class="btn btn-sm" id="reload">${icon('refresh', 14)}刷新</button>`,
     })}
     <div class="grid" style="grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px">
@@ -1527,19 +1527,6 @@ export default async function novel(container, params = {}) {
   container.querySelector('#nov-cast').onclick = (e) => fillFields('cast_card', e.currentTarget);
   container.querySelector('#nov-fillall').onclick = (e) => fillAll(e.currentTarget);
 
-  const picker = container.querySelector('#p-picker');
-  picker.onchange = () => {
-    projectId = rememberProject(picker.value);
-    sourceId = '';
-    kindFilter = '';
-    plan = null;
-    editingId = null;
-    syncViewParams({ project: projectId, source_id: '', kind: '' });
-    renderPlanBox();
-    loadSources();
-    cards = [];
-    renderCards();
-  };
   container.querySelector('#reload').onclick = () => { loadSources(); if (sourceId) loadCards(); };
 
   syncCount();

@@ -5,8 +5,8 @@
 import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAspect, PRESET_TERMS, downloadUrl } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
-import { head, projectPicker } from './helpers.js';
-import { state, navigate, syncViewParams, resolveProjectId, rememberProject } from '../app.js';
+import { head, projectLabel } from './helpers.js';
+import { state, navigate, syncViewParams, resolveProjectId } from '../app.js';
 
 export default async function images(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -21,7 +21,7 @@ export default async function images(container, params) {
       title: '图片生成',
       desc: 'Agnes 图像模型 · 生成结果自动保存到本机素材库',
       actions: `
-        ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
+        ${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}
         <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="grid" style="grid-template-columns:minmax(320px,0.85fr) minmax(0,2fr);gap:20px">
@@ -103,9 +103,6 @@ export default async function images(container, params) {
       };
     });
   })();
-  const picker = container.querySelector('#p-picker');
-  // 这里以前连 URL 都没写（切了项目刷新就回去），现在统一走 rememberProject
-  picker.onchange = () => { projectId = rememberProject(picker.value); loadStoryboards(); load(); };
   container.querySelector('#reload').onclick = () => { loadStoryboards(); load(); };
   container.querySelector('#gen').onclick = generate;
   container.querySelectorAll('#mode [data-mode]').forEach((b) => {

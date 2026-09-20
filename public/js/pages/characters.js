@@ -12,8 +12,8 @@
 import { icon, esc, relTime, CHARACTER_ROLES, IMAGE_USAGES, CHARACTER_FIELD_MAX } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, skeleton, twoClick, options, setBusy, errBox, imgWithFallback } from '../ui.js';
-import { head, projectPicker } from './helpers.js';
-import { state, softRefresh, syncViewParams, resolveProjectId, rememberProject } from '../app.js';
+import { head, projectLabel } from './helpers.js';
+import { state, softRefresh, syncViewParams, resolveProjectId } from '../app.js';
 
 export default async function characters(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -27,7 +27,7 @@ export default async function characters(container, params) {
       title: '角色库',
       desc: '把角色的长相与服装固化成档案，分镜引用后跨镜头保持一致',
       actions: `
-        ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
+        ${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}
         <button class="btn btn-primary" id="new-char">${icon('plus', 16)}新建角色</button>
         <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
@@ -46,9 +46,7 @@ export default async function characters(container, params) {
     </div>
     <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill,minmax(212px,1fr))">${skeleton('asset', 8)}</div>`;
 
-  const picker = container.querySelector('#p-picker');
   const qInput = container.querySelector('#q');
-  picker.onchange = () => { projectId = rememberProject(picker.value); syncViewParams({ project: projectId }); load(); };
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#new-char').onclick = () => openForm(null);
   // 搜索防抖 + 写回 URL（R11 同款）：刷新/分享链接要能还原筛选

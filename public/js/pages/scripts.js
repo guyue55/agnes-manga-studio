@@ -12,8 +12,8 @@ import {
 } from '../textstats.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, options, confirm, setBusy, notice } from '../ui.js';
-import { head, projectPicker } from './helpers.js';
-import { state, softRefresh, syncViewParams, resolveProjectId, rememberProject } from '../app.js';
+import { head, projectLabel } from './helpers.js';
+import { state, softRefresh, syncViewParams, resolveProjectId } from '../app.js';
 
 const TAB_TPL = {
   story_concept: 'story_concept',
@@ -68,7 +68,7 @@ export default async function scripts(container, params) {
       title: '故事脚本',
       desc: '用 Agnes 文本模型从构思走到单集脚本，提示词模板可在设置页调整',
       actions: `
-        ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
+        ${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}
         <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
     <div class="grid" style="grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px">
@@ -110,11 +110,6 @@ export default async function scripts(container, params) {
       </div>
     </div>`;
 
-  const picker = container.querySelector('#p-picker');
-  picker.onchange = () => {
-    projectId = rememberProject(picker.value); results.clear(); clearResult(); loadSaved();
-    epNo = 1; loadEpisodes();
-  };
   container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); loadEpisodes(); };
   container.querySelector('#tabs').querySelectorAll('[data-tab]').forEach((b) => {
     b.onclick = () => {

@@ -27,6 +27,20 @@ export function projectPicker(projects, selected, opts = {}) {
 }
 
 /**
+ * 当前项目（**只读标签**，UI 重构 B5.2）。
+ *
+ * 为什么把页头那个下拉换成标签：换项目是"我在哪个项目"这一件事，全站只该有**一个**控件
+ * （壳层侧栏那个）。页头再放一个下拉就是同一个事实的第二份来源 —— 两份必然分叉
+ * （页头换过、侧栏没换，用户看到两个答案，谁也不知道哪个算）。这里只**显示**，不提供切换。
+ */
+export function projectLabel(projects, selected, opts = {}) {
+  const p = projects.find((x) => x.id === selected);
+  const name = p ? p.name : (opts.emptyLabel || '未选择项目');
+  return `<span class="proj-tag${p ? '' : ' muted'}" title="当前项目（换项目请用左侧栏的「当前项目」）">`
+    + `${icon('folder', 12)}<b>${esc(name)}</b></span>`;
+}
+
+/**
  * 批量任务进度（SSE 驱动）。
  *
  * R22：进度条上方多一条**逐项状态链**。只给 "5/12" 是没用的——用户真正要知道的是

@@ -9,8 +9,8 @@ import {
 } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback, errorOutlet } from '../ui.js';
-import { head, projectPicker, makeTokenStore } from './helpers.js';
-import { state, navigate, onEvent, resolveProjectId, rememberProject } from '../app.js';
+import { head, projectLabel, makeTokenStore } from './helpers.js';
+import { state, navigate, onEvent, resolveProjectId } from '../app.js';
 
 export default async function videos(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -45,7 +45,7 @@ export default async function videos(container, params) {
       title: '视频生成',
       desc: 'Agnes Video · 异步任务，提交后由本地服务后台轮询，关掉页面也不丢',
       actions: `
-        ${projectPicker(state.projects, projectId, { id: 'p-picker', allowEmpty: true, emptyLabel: '未选择项目' })}
+        ${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}
         <select class="select select-sm" id="model" style="width:180px"></select>
         <button class="btn" id="reload" title="刷新">${icon('refresh', 16)}</button>`,
     })}
@@ -66,15 +66,6 @@ export default async function videos(container, params) {
       </div>
     </div>`;
 
-  const picker = container.querySelector('#p-picker');
-  // 素材下拉的数据源是 images 数组：切项目必须重渲染表单，否则选到旧项目的图。
-  // 提交进行中不重建（会移除 #submit 按钮打断回调链）
-  picker.onchange = async () => {
-    projectId = rememberProject(picker.value);
-    await loadImages();
-    if (!submitting) renderForm();
-    loadRecent();
-  };
   container.querySelector('#reload').onclick = async () => {
     await loadImages();
     if (!submitting) renderForm();

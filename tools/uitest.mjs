@@ -1672,8 +1672,18 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
       ownResolve.length === 0, ownResolve.join(','));
     const notUsing = creators.filter((f) => !/resolveProjectId\(params\)/.test(read(path.join(PUB, 'js', 'pages', `${f}.js`))));
     ok('6 个创作页都走同一个入口', notUsing.length === 0, notUsing.join(','));
-    ok('页内换项目也写回壳层与记忆（否则壳层显示的项目与页面用的不是一回事）',
-      creators.every((f) => !/projectId = picker\.value/.test(read(path.join(PUB, 'js', 'pages', `${f}.js`)))));
+    // B5.2：换项目**只有**侧栏那一个控件 —— 页头再放一个下拉就是同一个事实的第二份来源
+    ok('6 个创作页都没有自己的项目下拉了（换成只读标签，换项目统一走侧栏）',
+      creators.every((f) => {
+        const src = read(path.join(PUB, 'js', 'pages', `${f}.js`));
+        return !/projectPicker\(/.test(src) && !/picker\.onchange/.test(src) && /projectLabel\(state\.projects, projectId/.test(src);
+      }));
+    ok('只读标签是真的只读（渲染成 span，不带 value/onchange 这类可切换语义）',
+      /export function projectLabel\(/.test(read(path.join(PUB, 'js', 'pages', 'helpers.js')))
+      && /<span class="proj-tag/.test(read(path.join(PUB, 'js', 'pages', 'helpers.js'))));
+    // 反事实：素材库那个下拉是**跨项目筛选器**（另一件事），必须留着 —— 别把"删下拉"一刀切
+    ok('素材库的跨项目筛选下拉还在（它筛的是素材，不是创作上下文）',
+      /projectPicker\(state\.projects, '', \{ id: 'p-picker', allOption: true \}\)/.test(read(path.join(PUB, 'js', 'pages', 'assets.js'))));
     ok('素材库的项目控件是**跨项目筛选器**，不是创作上下文（本轮有意不动它）',
       /agnes\.assets\.project/.test(read(path.join(PUB, 'js', 'pages', 'assets.js'))));
   }

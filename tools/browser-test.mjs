@@ -4265,8 +4265,11 @@ try {
         // ① 壳层与页面用的是**同一个**项目
         ok('侧栏的项目选择器跟着 URL 走（"我在哪个项目"只有一份答案）',
           (await selVal('#sb-project')) === pa, JSON.stringify(await selVal('#sb-project')));
-        ok('页内选择器与侧栏是同一个项目（两份控件一份真相）',
-          (await selVal('#p-picker')) === pa, JSON.stringify(await selVal('#p-picker')));
+        ok('页头显示的就是同一个项目（B5.2：页头是只读标签，全站只有侧栏一个控件）',
+          (await cdp.eval(`return (document.querySelector('.proj-tag b')||{}).innerText||'';`)) === '上下文甲剧',
+          JSON.stringify(await cdp.eval(`return (document.querySelector('.proj-tag b')||{}).innerText||'';`)));
+        ok('页头确实没有第二个项目下拉（一个事实一个控件）',
+          (await cdp.eval(`return document.querySelectorAll('#view select').length;`)) === 0);
         ok('页面显示的是这个项目的角色（不是"第一个项目"的）', /甲角/.test(await names()), JSON.stringify(await names()));
 
         // ② 从侧栏换项目：URL / 记忆 / 页面数据全部跟着走，而**旧项目的参数不许跟着走**
