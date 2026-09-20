@@ -306,10 +306,16 @@ function serveStatic(req, res, urlPath) {
   const ext = path.extname(file).toLowerCase();
   const type = MIME[ext] || 'application/octet-stream';
   const stat = fs.statSync(file);
+  // `no-store` 而不是 `no-cache`：本项目的核心前提是"前端改一行、刷新就该看到"（本地长驻服务，
+  // 后端只在启动时读一次代码、前端每次请求都从磁盘读）。今天两者**效果相同** —— 这里不发 ETag/Last-Modified，
+  // 所以 `no-cache` 的重验证请求也是无条件的，照样拿到新文件。但那是**碰巧**成立：
+  // 哪天有人为了性能在这里加上 ETag，`no-cache` 就会开始 304、而注释与 AGENTS.md 里"每次都从磁盘读"
+  // 这句话就悄悄不成立了（且只在"只改了后端"这类场景下暴露）。`no-store` 让它**结构上**不可能被缓存，
+  // 与本文件其余四个响应助手（sendJson/sendText/SSE）也保持一致。
   res.writeHead(200, {
     'Content-Type': type,
     'Content-Length': stat.size,
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-store',
   });
   if (req.method === 'HEAD') { res.end(); return; }
   fs.createReadStream(file).pipe(res);
