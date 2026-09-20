@@ -3231,6 +3231,84 @@ group('原著解析（批 8：分块抽取 / 跨块合并 / 卡片 CRUD / 反向
 }
 
 // ══════════════════════════════════════════════════════════════
+// 批 8 补 31：角色（资产库）字段的唯一漏斗
+// ══════════════════════════════════════════════════════════════
+group('角色字段的唯一漏斗（批 8 补 31：appearance 会进每一次出图提示词）');
+{
+  const pj = await api('POST', '/api/projects', { name: '角色上限测试剧' });
+  const PID = pj.data.id;
+  const MAX = storyLib.CHARACTER_FIELD_MAX;
+  const LONG = '长'.repeat(20000);
+
+  // ① 建角色：超长必须被截（修前实测 20000 字原样落库，而 characterPhrase 会原文注入每一次出图提示词）
+  const made = await api('POST', '/api/characters', {
+    project_id: PID, name: '林晚', appearance: LONG, outfit: LONG, notes: LONG, alias: LONG,
+  });
+  eq('建角色返回 200', made.status, 200);
+  const cid = made.data.id;
+  eq('appearance 被截到上限', String(made.data.appearance || '').length, MAX.appearance);
+  eq('outfit 被截到上限', String(made.data.outfit || '').length, MAX.outfit);
+  eq('notes 被截到上限', String(made.data.notes || '').length, MAX.notes);
+  eq('alias 被截到上限', String(made.data.alias || '').length, MAX.alias);
+  ok('截断了哪些字段如实上报', Array.isArray(made.data.truncated) && made.data.truncated.includes('appearance'),
+    JSON.stringify(made.data.truncated));
+
+  // ② 漏斗最容易弄坏的地方：**非文本字段必须原样带过**。
+  //    is_locked 一旦被 str() 成 "false"（非空字符串）就会变成**真值** —— 外貌会在用户没勾选时被锁定；
+  //    reference_image_ids 一旦被 str() 成字符串，出图时就再也带不上参考图。
+  const flags = await api('PUT', `/api/characters/${cid}`, {
+    is_locked: true, reference_image_ids: ['img_a', 'img_b'],
+  });
+  eq('is_locked 仍是布尔 true（没被 str 成 "true"）', flags.data.is_locked, true);
+  ok('reference_image_ids 仍是数组（没被 str 成字符串）', Array.isArray(flags.data.reference_image_ids)
+    && flags.data.reference_image_ids.join(',') === 'img_a,img_b', JSON.stringify(flags.data.reference_image_ids));
+  const unlocked = await api('PUT', `/api/characters/${cid}`, { is_locked: false });
+  eq('is_locked 能改回 false', unlocked.data.is_locked, false);
+
+  // ③ 手改：超长截断 + 如实上报；没超限不许乱报（否则提示变成狼来了）
+  const put1 = await api('PUT', `/api/characters/${cid}`, { appearance: LONG });
+  eq('手改超长 appearance 被截', String(put1.data.appearance || '').length, MAX.appearance);
+  ok('手改也如实上报', Array.isArray(put1.data.truncated) && put1.data.truncated.includes('appearance'),
+    JSON.stringify(put1.data.truncated));
+  const put2 = await api('PUT', `/api/characters/${cid}`, { appearance: '白衣' });
+  eq('没超限不报 truncated', put2.data.truncated, undefined);
+  eq('没超限的值原样保留', put2.data.appearance, '白衣');
+  const put3 = await api('PUT', `/api/characters/${cid}`, { outfit: '  黑甲  ' });
+  eq('手改也 trim', put3.data.outfit, '黑甲');
+  eq('只是 trim 不算截断', put3.data.truncated, undefined);
+
+  // ④ 清空仍可用（合并语义的回归防线，与卡片那边同一条）
+  await api('PUT', `/api/characters/${cid}`, { appearance: '' });
+  const cleared = (await api('GET', `/api/characters?project_id=${PID}`)).data.find((x) => x.id === cid) || {};
+  eq('空串能清空角色字段', cleared.appearance, '');
+
+  // ⑤ 落库的确实是截断后的值（不是只在响应里截）
+  await api('PUT', `/api/characters/${cid}`, { notes: LONG });
+  const reread = (await api('GET', `/api/characters?project_id=${PID}`)).data.find((x) => x.id === cid) || {};
+  eq('落库的也是截断后的值', String(reread.notes || '').length, MAX.notes);
+
+  // ⑥ 从人物卡导入这条路也过同一个漏斗（它以前 alias 完全没截、notes 写死 400）
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '漏斗·原著', reduce: false, max_chars: 800, max_chunks: 10,
+    text: `林晚在临江茶馆见到顾寒。\n${'两人对峙，林晚拔剑。'.repeat(40)}`,
+  });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const card = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((c) => c.kind === 'character' && c.name === '林晚');
+  ok('拿到了人物卡', !!card, JSON.stringify((await api('GET', `/api/story/cards?project_id=${PID}`)).data.map((c) => c.name)));
+  const conv = await api('POST', `/api/story/cards/${(card || {}).id}/to-character`, { project_id: PID });
+  eq('人物卡导入资产库返回 200', conv.status, 200);
+  const imported = conv.data.character || conv.data;
+  // 先证明它**不是空壳**：字段全是空的话，"每个字段都在上限内"会毫无意义地通过（注意事项 11）
+  ok('导入的角色确实带着内容（否则下面那条上限断言是白过的）',
+    String(imported.name || '').length > 0 && String(imported.appearance || '').length > 0,
+    JSON.stringify({ name: imported.name, appearance: imported.appearance }));
+  ok('导入的角色每个字段都在上限内（走的是同一个漏斗）',
+    Object.entries(MAX).every(([k, max]) => String(imported[k] || '').length <= max),
+    JSON.stringify(Object.fromEntries(Object.entries(MAX).map(([k]) => [k, String(imported[k] || '').length]))));
+}
+
+// ══════════════════════════════════════════════════════════════
 // 批 8 补 30：手改卡片也要过同一把尺子（FIELD_MAX）
 // ══════════════════════════════════════════════════════════════
 group('手改卡片的两把尺子（批 8 补 30：模型写有上限、人写也得有）');

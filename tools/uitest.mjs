@@ -302,19 +302,21 @@ group('B4 画风分层');
     return m ? [...m[1].matchAll(/(\w+):\s*\[/g)].map((x) => x[1]).sort().join(',') : '';
   };
   ok('4.1 前后端可注入类别表同构', injectKeys(routesSrc) !== '' && injectKeys(routesSrc) === injectKeys(constsSrc));
-  // 批 8 补 30：字段长度上限的前后端镜像。它是编辑框 maxlength 的来源 ——
-  // 漂了就会出现"界面允许输入 300 字、服务端砍到 200"，而用户只在保存后才发现少了一截
-  const maxKeys = (src) => {
-    // 后端叫 FIELD_MAX、前端叫 STORY_CARD_FIELD_MAX（名字不同，内容必须同构）
-    const m = src.match(/(?:STORY_CARD_FIELD_MAX|FIELD_MAX) = \{([\s\S]*?)\n\};/);
-    if (!m) return '';
-    return [...m[1].matchAll(/(\w+):\s*(\d+)/g)].map((x) => `${x[1]}=${x[2]}`).sort().join(',');
+  // 批 8 补 30 / 补 31：字段长度上限的前后端镜像。它是编辑框 maxlength 的来源 ——
+  // 漂了就会出现"界面允许输入 300 字、服务端砍到 200"，而用户只在保存后才发现少了一截。
+  // ⚠️ 后端那张表有一半是**推导**出来的（`...Object.fromEntries(...)`，源码里没有字面数字），
+  // 所以**不能**用正则去抠后端的数字（只会抠到显式的那几个，比较就成了"半张表对整张表"）。
+  // 这里把后端 require 进来比**求值结果**，前端那份仍是普通字面量、按名字抠。
+  const storyModEarly = createRequire(import.meta.url)(path.join(ROOT, 'lib', 'story.js'));
+  const feTable = (src, name) => {
+    const m = src.match(new RegExp(name + ' = \\{([\\s\\S]*?)\\n\\};'));
+    return m ? [...m[1].matchAll(/(\w+):\s*(\d+)/g)].map((x) => `${x[1]}=${x[2]}`).sort().join(',') : '';
   };
-  // 注意：这个块在 storySrc 定义之前，所以自己读一份（别引用后面才声明的 const）
-  const storyMaxSrc = read(path.join(ROOT, 'lib', 'story.js'));
+  const beTable = (obj) => Object.entries(obj).map(([k, v]) => `${k}=${v}`).sort().join(',');
   ok('4.1 前后端字段长度上限表同构（编辑框 maxlength 的唯一来源）',
-    maxKeys(storyMaxSrc) !== '' && maxKeys(storyMaxSrc) === maxKeys(constsSrc),
-    `后端 ${maxKeys(storyMaxSrc).slice(0, 60)} / 前端 ${maxKeys(constsSrc).slice(0, 60)}`);
+    feTable(constsSrc, 'STORY_CARD_FIELD_MAX') !== ''
+    && beTable(storyModEarly.FIELD_MAX) === feTable(constsSrc, 'STORY_CARD_FIELD_MAX'),
+    `后端 ${beTable(storyModEarly.FIELD_MAX).slice(0, 50)} / 前端 ${feTable(constsSrc, 'STORY_CARD_FIELD_MAX').slice(0, 50)}`);
   const novelMaxSrc = read(path.join(PUB, 'js', 'pages', 'novel.js')); // 同上：novelSrc 在更后面才声明
   ok('4.1 编辑框按上限表设 maxlength（输入时就挡住，而不是保存后被悄悄砍掉）',
     /maxlength="\$\{STORY_CARD_FIELD_MAX\[f\] \|\| 200\}"/.test(novelMaxSrc)
@@ -322,6 +324,25 @@ group('B4 画风分层');
     && /maxlength="\$\{STORY_CARD_FIELD_MAX\.summary\}"/.test(novelMaxSrc));
   ok('4.1 服务端截断时界面会说话（不静默少一截文字）',
     /r\.data\.truncated/.test(novelMaxSrc) && /已截断/.test(novelMaxSrc));
+  // 批 8 补 31：角色字段上限表的前后端镜像（角色的 appearance 会原文进每一次出图提示词）
+  ok('4.1 前后端角色字段上限表同构（角色编辑框 maxlength 的唯一来源）',
+    feTable(constsSrc, 'CHARACTER_FIELD_MAX') !== ''
+    && beTable(storyModEarly.CHARACTER_FIELD_MAX) === feTable(constsSrc, 'CHARACTER_FIELD_MAX'),
+    `后端 ${beTable(storyModEarly.CHARACTER_FIELD_MAX).slice(0, 50)} / 前端 ${feTable(constsSrc, 'CHARACTER_FIELD_MAX').slice(0, 50)}`);
+  const chrSrc = read(path.join(PUB, 'js', 'pages', 'characters.js'));
+  ok('4.1 角色编辑框按上限表设 maxlength（输入时就挡住，而不是保存后被悄悄砍掉）',
+    (chrSrc.match(/maxlength="\$\{CHARACTER_FIELD_MAX\.\w+\}"/g) || []).length >= 8);
+  ok('4.1 角色保存被截断时界面会说话（不静默少一截文字）',
+    /r\.data\.truncated/.test(chrSrc) && /已截断/.test(chrSrc));
+  // 结构棘轮：角色有 7 个写入点，绕过漏斗的那个就是"前面所有截断都只是看起来有"
+  {
+    const outside = routesSrc.split('\n').filter((ln) => /store\.(insert|update)\('characters'/.test(ln));
+    ok('4.1 写角色只有漏斗一个出口（任何直写 store 都会绕过那把尺子）',
+      outside.length === 2 && /clipCharacterPatch/.test(outside.join('\n')),
+      `直写行数 ${outside.length}`);
+    ok('4.1 角色的 7 个写入点都走 insertCharacter / updateCharacter',
+      (routesSrc.match(/insertCharacter\(|updateCharacter\(/g) || []).length >= 9);
+  }
   // 可编辑白名单必须是**推导**的：手抄的清单漏一个字段 = "界面上能填、保存后静默丢失"
   ok('4.1 可编辑白名单从 story.CARD_EDITABLE_FIELDS 推导（不再手抄一份字段清单）',
     /story\.CARD_EDITABLE_FIELDS/.test(routesSrc)

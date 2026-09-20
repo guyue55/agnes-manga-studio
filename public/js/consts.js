@@ -102,6 +102,18 @@ export const STORY_CARD_FIELD_LABELS = {
   when: '时间', order_note: '顺序说明',
 };
 /**
+ * 角色（资产库）字段长度上限（批 8 补 31）—— 与 `lib/story.js` 的 `CHARACTER_FIELD_MAX`
+ * **逐字同构**（uitest 有比对钉）。用途与卡片那张表一样：编辑框 `maxlength` **在输入时就挡住**。
+ * 为什么这件事对角色尤其要紧：`appearance`/`outfit` 会被 `characterPhrase` **原文**注入
+ * 每一次出图提示词 —— 一个粘错的长文本会把整条出图链撑爆（实测修前存 20000 字就注入 20000 字）。
+ */
+export const CHARACTER_FIELD_MAX = {
+  name: 40, role: 20, gender: 10, age: 20,
+  appearance: 200, outfit: 120, personality: 160, alias: 300,
+  notes: 500,
+};
+
+/**
  * 字段长度上限（批 8 补 30）—— 与 `lib/story.js` 的 `FIELD_MAX` **逐字同构**（uitest 有比对钉）。
  * 两个用途，缺一不可：
  * ① 编辑框的 `maxlength`：**在输入时就挡住**，用户不会写完再被悄悄砍掉；

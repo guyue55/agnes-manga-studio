@@ -2293,6 +2293,54 @@ group('写入路径的两把尺子（批 8 补 30）');
   eq('每个字段都有明确的上限（缺了会退到兜底 200，是错的上限）', noMax.length, 0, noMax.join(','));
 }
 
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 31：角色（资产库）字段也要有尺子，而且只能有一个漏斗
+// ══════════════════════════════════════════════════════════════
+// 病根：角色的 appearance/outfit 会被 `characterPhrase` **原文**注入每一次出图提示词，
+// 而角色表的写入路径**任何一条都没有上限**（实测 POST 20000 字就存 20000 字、注入 20000 字）。
+// 更糟的是它不是一个"洞"，是 **7 个写入点各自 clip 了一部分**：notes 有 400/400/500 三个数，
+// alias 在"人物卡导入"与"体检同步"两条路上完全没截。补 30 的教训：先数清楚有几条写入路径。
+group('角色字段的唯一漏斗（批 8 补 31）');
+{
+  // ① 与人物卡**同名**的字段必须用**同一个数**（否则"卡里存得下、资产库手改被砍"又是一个静默差异）
+  const shared = ['name', 'role', 'gender', 'age', 'appearance', 'outfit', 'personality'];
+  const drift = shared.filter((f) => story.CHARACTER_FIELD_MAX[f] !== story.FIELD_MAX[f]);
+  eq('与人物卡同名的字段用同一把尺子（不另定一套）', drift.length, 0,
+    drift.map((f) => `${f}: ${story.CHARACTER_FIELD_MAX[f]} vs ${story.FIELD_MAX[f]}`).join(','));
+
+  // ② 角色独有的两个字段要有**算得出来**的理由，不能借用别的表的数
+  ok('alias 不是借用 FIELD_MAX.alias（那是"单个别名"的上限，形状不同）',
+    story.CHARACTER_FIELD_MAX.alias !== story.FIELD_MAX.alias);
+  // 合法数据不能被截：卡片别名最多 6 个、每个 ≤20 字，拼起来最长 125；并集同步约 250
+  eq('6 个满编别名拼起来（125）必须装得下 —— 上限小了就是截合法数据',
+    story.CHARACTER_FIELD_MAX.alias >= 6 * story.FIELD_MAX.alias + 5, true);
+
+  // ③ 每个可编辑字段都要有**明确**上限：漏一个会静默退到兜底 200（那是"看起来能用"的错上限）
+  const noMax = story.CHARACTER_EDITABLE_FIELDS.filter((f) => !Number.isInteger(story.CHARACTER_FIELD_MAX[f]));
+  eq('每个角色字段都有明确的上限', noMax.length, 0, noMax.join(','));
+  eq('角色字段清单没有重复项', story.CHARACTER_EDITABLE_FIELDS.length, new Set(story.CHARACTER_EDITABLE_FIELDS).size);
+  // 反向：表里不该有清单外的字段（否则是"配了但永远用不到"的死配置）
+  const stray = Object.keys(story.CHARACTER_FIELD_MAX).filter((f) => !story.CHARACTER_EDITABLE_FIELDS.includes(f));
+  eq('上限表里没有来路不明的字段', stray.length, 0, stray.join(','));
+
+  // ④ 尺子本身的行为
+  eq('clipCharacterField 截到角色表的上限', story.clipCharacterField('长'.repeat(20000), 'appearance').length, 200);
+  eq('clipCharacterField 顺手 trim', story.clipCharacterField('  林晚  ', 'name'), '林晚');
+  eq('clipCharacterField 空值仍是空（清空字段是正常操作）', story.clipCharacterField('', 'notes'), '');
+  eq('clipCharacterField 数字也归一成字符串', story.clipCharacterField(18, 'age'), '18');
+
+  // ⑤ 导入路径（cardToCharacter）以前 alias 完全没截、notes 写死 400 —— 现在同一张表
+  const fat = { kind: 'character', name: '甲', appearance: '长'.repeat(900), summary: '摘'.repeat(900),
+    aliases: Array.from({ length: 6 }, (_, i) => `别名${i}号`.padEnd(20, '字')) };
+  fat.id = 'card_fat';
+  const conv = story.cardToCharacter(story.normalizeCard(fat, {}), 'p1');
+  ok('导入时 alias 也被截到上限内（这条以前完全没截，会随名册进每一次 LLM 请求）',
+    conv.alias.length <= story.CHARACTER_FIELD_MAX.alias, `实际 ${conv.alias.length}`);
+  eq('导入时 appearance 被截到上限内', conv.appearance.length, story.CHARACTER_FIELD_MAX.appearance);
+  ok('导入时 notes 也被截到上限内（以前写死 400、与表里另一个数）',
+    conv.notes.length <= story.CHARACTER_FIELD_MAX.notes, `实际 ${conv.notes.length}`);
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

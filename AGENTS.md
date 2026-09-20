@@ -128,6 +128,21 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   注入链有断言、字段也在表里，可模型从来不知道要抽它，**凡是两端各有一套字段表的地方都要对差集**；
   ② **钉不变量别钉快照**（版本号每轮都涨，钉 `≥2` 与"历史表里有上一版指纹"，别钉 `= 2`）；
   ③ **造"旧版本"fixture 必须用真的旧内容**（用现成默认值或占位文本造出的"老库"本来就对，等于测空气）
+- **角色字段的唯一漏斗（批 8 补 31）：同一个实体有 7 个写入点，正确答案不是"每处都改对"**：
+  补 30 修完卡片接着问"同一类实体还有谁" —— 角色的 `appearance`/`outfit` 由 `characterPhrase`
+  **原文**注入**每一次出图提示词**，而 `characterFields` 只有 `str().trim()`，**任何路径都没有上限**
+  （实测 POST 20000 字存 20000 字）。但真正的问题不是"少了一句 clip"：`characters` 有 **7 个写入点**，
+  各自只 clip 了一部分 —— `notes` 出现过 **400/400/500 三个数**，`alias` 在"人物卡导入"与"体检同步"上**完全没截**。
+  所以在每处补一句 clip 不是修、是**把病根再抄一遍**。现在只留 `insertCharacter` / `updateCharacter`
+  两个出口，尺子在出口里**绕不过去**；uitest 有**结构棘轮**（`store.insert/update('characters'` 只许出现在漏斗那两行）。
+  与人物卡**同名**的字段**直接取 `FIELD_MAX` 同一个数**（同名同尺，selftest 钉死），
+  角色独有的 `alias`/`notes` 单列 —— **数字是算出来的**：卡片别名最多 6×20+5=125、并集同步约 250，故定 300
+  （一开始拍的 120 **会截合法数据**）。前端镜像 + `maxlength`（预防）与"截断点名上报"（验收）成对。
+  **教训**：① **写入点必须真的数一遍，数量本身就是问题** —— 2 条路能靠"两边都记得"维持，**7 条不行**，
+  正解是让"绕过去"在结构上不可能；② **上限要算不要拍**，"更严 = 更安全"是错的，**小于合法输入就是静默丢数据**；
+  ③ **文本字段的归一化不能顺手用在非文本字段上** —— 一个 `str()` 能把 `is_locked` 变 `"false"`（非空字符串＝真值，
+  用户没勾选却被锁定）、把 `reference_image_ids` 变字符串（出图再也带不上参考图），而且都不报错；
+  漏斗里"只动文本字段、其余原样带过"要**显式写出来**并有断言
 - **写入路径的两把尺子（批 8 补 30）：同一个字段，模型写有上限、人写也得有**：`normalizeCard` 一直用 `clip`
   把字段截到 `FIELD_MAX`，但"用户手改"那条路（`PUT /api/story/cards/:id`）把提交的原文**直接落库** ——
   实测 PUT 一个 5000 字的 `appearance` **存回 5000 字**（上限 200）。要命的是它的下游：`appearance`/`outfit`
@@ -251,7 +266,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 809 / apitest 929 / uitest 1091 / browser-test 506），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 822 / apitest 951 / uitest 1097 / browser-test 506），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

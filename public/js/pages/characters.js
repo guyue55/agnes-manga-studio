@@ -9,7 +9,7 @@
  *  · 参考图指向 image_assets（本地文件），不是让用户填公网 URL —— 本地优先下外链必然抓不到。
  *  · 「外貌锁定」是给注入用的开关：锁定 = 该角色的长相以档案为准，单镜头提示词不得覆盖。
  */
-import { icon, esc, relTime, CHARACTER_ROLES, IMAGE_USAGES } from '../consts.js';
+import { icon, esc, relTime, CHARACTER_ROLES, IMAGE_USAGES, CHARACTER_FIELD_MAX } from '../consts.js';
 import { api } from '../api.js';
 import { modal, toast, empty, skeleton, twoClick, options, setBusy, errBox, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
@@ -182,15 +182,15 @@ export default async function characters(container, params) {
       wide: true,
       body: `
         <div class="grid g2" style="gap:0 14px">
-          <div class="field"><label for="c-name">角色名 *</label><input class="input" id="c-name" value="${esc(c.name)}" placeholder="例：林岚" /></div>
-          <div class="field"><label for="c-alias">别名 / 称呼</label><input class="input" id="c-alias" value="${esc(c.alias)}" placeholder="例：小岚、岚姐（对白里怎么叫）" /></div>
+          <div class="field"><label for="c-name">角色名 *</label><input class="input" id="c-name" maxlength="${CHARACTER_FIELD_MAX.name}" value="${esc(c.name)}" placeholder="例：林岚" /></div>
+          <div class="field"><label for="c-alias">别名 / 称呼</label><input class="input" id="c-alias" maxlength="${CHARACTER_FIELD_MAX.alias}" value="${esc(c.alias)}" placeholder="例：小岚、岚姐（对白里怎么叫）" /></div>
           <div class="field"><label for="c-role">定位</label><select class="select" id="c-role">${options(CHARACTER_ROLES, 'v', 'v', c.role || '主角')}</select></div>
-          <div class="field"><label for="c-gender">性别</label><input class="input" id="c-gender" value="${esc(c.gender)}" placeholder="例：女" /></div>
-          <div class="field"><label for="c-age">年龄感</label><input class="input" id="c-age" value="${esc(c.age)}" placeholder="例：18 岁少女 / 四十岁中年" /></div>
-          <div class="field"><label for="c-outfit">标志性服装</label><input class="input" id="c-outfit" value="${esc(c.outfit)}" placeholder="例：白色衬衫配深蓝外套" /></div>
-          <div class="field" style="grid-column:1/-1"><label for="c-appear">外貌描述（会被注入提示词）</label><textarea class="textarea" id="c-appear" rows="3" placeholder="例：黑色长直发、丹凤眼、左眉尾有一颗小痣">${esc(c.appearance)}</textarea></div>
-          <div class="field" style="grid-column:1/-1"><label for="c-persona">性格 / 小传</label><textarea class="textarea" id="c-persona" rows="2" placeholder="只给编剧看，不进提示词">${esc(c.personality)}</textarea></div>
-          <div class="field" style="grid-column:1/-1"><label for="c-notes">备注</label><textarea class="textarea" id="c-notes" rows="2">${esc(c.notes)}</textarea></div>
+          <div class="field"><label for="c-gender">性别</label><input class="input" id="c-gender" maxlength="${CHARACTER_FIELD_MAX.gender}" value="${esc(c.gender)}" placeholder="例：女" /></div>
+          <div class="field"><label for="c-age">年龄感</label><input class="input" id="c-age" maxlength="${CHARACTER_FIELD_MAX.age}" value="${esc(c.age)}" placeholder="例：18 岁少女 / 四十岁中年" /></div>
+          <div class="field"><label for="c-outfit">标志性服装</label><input class="input" id="c-outfit" maxlength="${CHARACTER_FIELD_MAX.outfit}" value="${esc(c.outfit)}" placeholder="例：白色衬衫配深蓝外套" /></div>
+          <div class="field" style="grid-column:1/-1"><label for="c-appear">外貌描述（会被注入提示词）</label><textarea class="textarea" id="c-appear" maxlength="${CHARACTER_FIELD_MAX.appearance}" rows="3" placeholder="例：黑色长直发、丹凤眼、左眉尾有一颗小痣">${esc(c.appearance)}</textarea></div>
+          <div class="field" style="grid-column:1/-1"><label for="c-persona">性格 / 小传</label><textarea class="textarea" id="c-persona" maxlength="${CHARACTER_FIELD_MAX.personality}" rows="2" placeholder="只给编剧看，不进提示词">${esc(c.personality)}</textarea></div>
+          <div class="field" style="grid-column:1/-1"><label for="c-notes">备注</label><textarea class="textarea" id="c-notes" maxlength="${CHARACTER_FIELD_MAX.notes}" rows="2">${esc(c.notes)}</textarea></div>
         </div>
         <label class="row" style="gap:8px;margin-top:4px;cursor:pointer">
           <input type="checkbox" id="c-lock" ${c.is_locked ? 'checked' : ''} />
@@ -247,7 +247,13 @@ export default async function characters(container, params) {
           inflight = true; setBusy(yes, true, '保存中');
           try {
             const r = isEdit ? await api.updateCharacter(c.id, payload) : await api.createCharacter(payload);
-            if (r.ok) { toast.ok(isEdit ? '已保存' : '角色已创建'); close(); load(); softRefresh(); }
+            // 服务端截断了要说话：静默少一截文字，用户只会以为"我明明写了的"
+            const cut = (r.data && r.data.truncated) || [];
+            if (r.ok) {
+              if (cut.length) toast.err(`有字段超出长度上限、已截断：${cut.join('、')}`);
+              else toast.ok(isEdit ? '已保存' : '角色已创建');
+              close(); load(); softRefresh();
+            }
             else toast.err(r.error);
           } finally { inflight = false; setBusy(yes, false); }
         };
