@@ -2569,6 +2569,34 @@ group('追加解析（批 8 补 10：只解析新增章节 / 已有卡 id 不变
     (src2.text || '').includes('第二卷'), String(src2.chars) !== '0');
   ok('来源字数变多', src2.chars > an1.data.source.chars);
 
+  // ── 批 8 补 25：用户改过的卡不能被追加解析覆盖 ──────────────────
+  // 界面上的"已改"chip 一直写着"重新解析不会覆盖它"，但合并规则是"更详细的描述取胜"，
+  // 用户改短的值照样会被模型的长描述冲掉 —— 那是一条**假承诺**。这里钉住它真的成立。
+  const target = cards2.find((c) => c.kind === 'character' && c.name === '林晚');
+  ok('找到要手工修改的人物卡', !!target, JSON.stringify(cards2.map((c) => c.name)));
+  // 这里必须用一个**比模型返回值更短**的外貌：追加的块用的是**局部**块号，
+  // mock 对第 1 段返回"白衣"（2 字）。原先写"黑衣"（也是 2 字）时，"更长者取胜"根本不触发，
+  // 断言会因为**错误的原因**通过 —— 对照 FE 就是靠这条抓出来的（保护被关掉、外貌那行却还是绿的）。
+  await api('PUT', `/api/story/cards/${target.id}`, { appearance: '玄', aliases: ['阿晚'] });
+  const editedCard = (await api('GET', `/api/story/cards?source_id=${srcId}`)).data.find((c) => c.id === target.id);
+  ok('手工改过的卡被标记为"已改"', editedCard.edited === true);
+  eq('别名改动生效（体检删别名也走这条路）', (editedCard.aliases || []).join(','), '阿晚');
+
+  const ap3 = await api('POST', '/api/story/append', { project_id: PID, source_id: srcId, text: '第三卷：夜访密室。'.repeat(30), reduce: false });
+  eq('再次追加解析 200', ap3.status, 200);
+  const j3 = await wait(ap3.data.jobId);
+  ok('第二次追加跑完', j3 && j3.status === 'done');
+
+  const kept = (await api('GET', `/api/story/cards?source_id=${srcId}`)).data.find((c) => c.id === target.id);
+  eq('用户改短的外貌没有被模型的描述覆盖（人工值优先）', kept.appearance, '玄');
+  eq('用户删掉的别名没有被并回来（否则撞名问题静默复发）', (kept.aliases || []).join(','), '阿晚');
+  ok('卡片的 id 没变（分镜绑定不悬空）', kept.id === target.id);
+  const src3 = (await api('GET', `/api/story/sources/${srcId}`)).data;
+  ok('来源上留痕"保住了 N 张已改的卡"（保护不能是无声的）',
+    Number(src3.protected_cards) >= 1, JSON.stringify(src3.protected_cards));
+  ok('并点名是哪几张（用户要能核对）',
+    (src3.protected_names || []).includes('林晚'), JSON.stringify(src3.protected_names));
+
   // 参数校验：缺 source_id / 不属于本项目 / 空文本都要明确报错，而不是静默新建一份
   eq('缺 source_id → 400', (await api('POST', '/api/story/append', { project_id: PID, text: 'x' })).status, 400);
   eq('空文本 → 400', (await api('POST', '/api/story/append', { project_id: PID, source_id: srcId, text: '   ' })).status, 400);

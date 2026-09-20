@@ -205,7 +205,7 @@ export default async function novel(container, params = {}) {
     const go = await costConfirm({
       count: plan.calls,
       what: '追加解析',
-      note: `只解析新增的 ${plan.chunk_count} 段（${countLabel(plan.covered_chars)}），已有 ${src.chunk_count || 0} 段不重跑、已有卡片 id 不变。`,
+      note: `只解析新增的 ${plan.chunk_count} 段（${countLabel(plan.covered_chars)}），已有 ${src.chunk_count || 0} 段不重跑、已有卡片 id 不变。你改过的卡（标了"已改"的）不会被覆盖：人工值优先，模型只能补它空着的字段。`,
     });
     if (!go) return;
     const btn = container.querySelector('#nov-append');
@@ -275,16 +275,19 @@ export default async function novel(container, params = {}) {
   }
 
   let doneFor = ''; // 防重：SSE 与轮询可能同时报"结束"，卡片列表不能被刷两遍
-  function onJobDone(j) {
+  async function onJobDone(j) {
     if (doneFor === j.id) return;
     doneFor = j.id;
     localStorage.removeItem(JOB_KEY);
-    loadSources();
+    await loadSources();
     if (sourceId) loadCards();
     // 批 8 补 18：以前这里写"可在卡片列表重试"，但卡片列表根本没有重试入口（假承诺）。
     // 现在真有出口了：点名"哪几段要补抽"，并且**自动把覆盖面板打开**，不让用户自己找。
     if (j.status === 'done') {
-      toast.ok(`解析完成：成功 ${j.ok} 项${j.fail ? `，${j.fail} 段需要补抽` : ''}`);
+      // 用户改过的卡有没有被保住，必须**说出来**：改过的卡"没被覆盖"和"被覆盖了却看不出来"
+      // 在界面上长得一模一样（批 8 补 25）
+      const keepN = Number((sources || []).find((x) => x.id === sourceId)?.protected_cards) || 0;
+      toast.ok(`解析完成：成功 ${j.ok} 项${j.fail ? `，${j.fail} 段需要补抽` : ''}${keepN ? `；你改过的 ${keepN} 张卡保持原样` : ''}`);
       if (j.fail) runCoverage();
     }
     else if (j.status === 'cancelled') toast('解析已取消——已抽出的卡片仍然保留', 'info');
@@ -1004,7 +1007,7 @@ export default async function novel(container, params = {}) {
         <div class="row" style="margin-bottom:6px">
           <span class="chip">${esc(storyKindLabel(c.kind))}</span>
           <b>${esc(c.name)}</b>
-          ${c.edited ? '<span class="chip on" title="你改过这张卡，重新解析不会覆盖它">已改</span>' : ''}
+          ${c.edited ? '<span class="chip on" title="你改过这张卡：追加解析/重新归并都不会覆盖它，模型只能补它空着的字段">已改</span>' : ''}
           <div class="spacer"></div>
           ${c.kind === 'character' ? `<button class="btn btn-xs" data-tochar="${esc(c.id)}">${icon('users', 12)}入资产库</button>` : ''}
           <button class="btn btn-xs" data-src-of="${esc(c.id)}" title="看这张卡是从原文哪一段读出来的">${icon('book', 12)}看原文</button>

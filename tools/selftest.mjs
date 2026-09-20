@@ -661,6 +661,58 @@ group('Word 文档读取（批 8 补 23：.docx 就是个 zip，零依赖就能�
   ok('ZIP64 明确拒绝（而不是按 32 位读出一堆乱码）', !r64.ok && /ZIP64/.test(r64.error || ''), JSON.stringify(r64));
 }
 
+group('已改的卡不被覆盖（批 8 补 25：界面写着"不会覆盖"，那代码就得真的不覆盖）');
+{
+  const st = require(path.join(ROOT, 'lib/story.js'));
+  const base = (over) => ({
+    id: 'c1', kind: 'character', name: '林晚', summary: '', aliases: [],
+    appearance: '', personality: '', mentions: 1, evidence: [0], order: 1, ...over,
+  });
+
+  // ① 用户改短的描述不能被模型的"更详细描述"冲掉（合并规则本来是"更长者取胜"）
+  const edited = base({ edited: true, appearance: '短发，左眉有疤' });
+  const incoming = base({ appearance: '短发，左眉有一道很浅的疤痕，笑起来眼睛会眯成一条缝，常穿藏青外套' });
+  const ap = st.mergeAppend([edited], [incoming]);
+  const got = ap.cards[0];
+  ok('用户改过的短描述不会被模型的长描述覆盖（人工值优先）',
+    got.appearance === '短发，左眉有疤', JSON.stringify(got.appearance));
+  ok('保住的张数被如实报出来（不是默默保护）',
+    ap.protected === 1 && ap.protected_names.join(',') === '林晚', JSON.stringify({ p: ap.protected, n: ap.protected_names }));
+  ok('已有卡的 id 与记账照旧（mentions 累加、evidence 并集）',
+    got.id === 'c1' && got.mentions === 2 && got.evidence.join(',') === '0', JSON.stringify(got));
+
+  // ② 体检删掉的撞名别名不能被追加解析"并回来"（否则那个撞名问题静默复发）
+  const cleaned = base({ edited: true, aliases: ['晚晚'] });
+  const back = base({ aliases: ['晚晚', '小晚'] });
+  const ap2 = st.mergeAppend([cleaned], [back]);
+  eq('体检删掉的别名不会被并回来（否则撞名问题静默复发）',
+    (ap2.cards[0].aliases || []).join(','), '晚晚');
+
+  // ③ 空字段仍然可以被补上 —— 保护的是"人工值"，不是"禁止补全"
+  const edited2 = base({ edited: true, appearance: '短发' });
+  const ap3 = st.mergeAppend([edited2], [base({ identity: '绣坊学徒', appearance: '很长很长的描述' })]);
+  ok('用户没填的字段仍然由模型补上（保护 ≠ 拒绝补全）',
+    ap3.cards[0].identity === '绣坊学徒' && ap3.cards[0].appearance === '短发', JSON.stringify(ap3.cards[0]));
+
+  // ④ 没改过的卡行为一点不变（这条保护不能误伤正常的跨块合并）
+  const ap4 = st.mergeAppend([base({ appearance: '短' })], [base({ appearance: '短发，左眉有疤' })]);
+  eq('没改过的卡仍然"更详细的描述取胜"', ap4.cards[0].appearance, '短发，左眉有疤');
+  eq('没改过的卡不计入"保住的张数"', ap4.protected, 0);
+
+  // ⑤ 重新归并（applyBibleCards）也要保护：它原本是"整张替换"
+  const oldBible = [base({ id: 'b1', origin: 'bible', edited: true, appearance: '人工写的长相', order: 3 })];
+  const plan = st.applyBibleCards(oldBible, [base({ id: undefined, appearance: '模型重写的更长更详细的长相描述', origin: 'bible' })]);
+  eq('重新归并不覆盖已改的卡', plan.update[0].appearance, '人工写的长相');
+  eq('重新归并仍然按新结果重排 order（内容听人、顺序听模型）', plan.update[0].order, 1);
+  ok('重新归并也报出保住的张数', plan.protected === 1 && plan.protected_names.join(',') === '林晚', JSON.stringify(plan.protected_names));
+  ok('重新归并保留原 id（绑定不悬空）', plan.update[0].id === 'b1');
+
+  // ⑥ 灵敏度对照：把 edited 拿掉，同样的输入就会被覆盖（证明这条断言真的在管这件事）
+  const ap6 = st.mergeAppend([base({ appearance: '短发，左眉有疤' })], [incoming]);
+  ok('灵敏度：没有"已改"标记时确实会被长描述覆盖（不是恒真的空断言）',
+    ap6.cards[0].appearance !== '短发，左眉有疤', JSON.stringify(ap6.cards[0].appearance));
+}
+
 group('多文件上传（批 8 补 24：很多作者一章一个文件）');
 {
   const zlib = await import('node:zlib');
