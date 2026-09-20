@@ -4460,6 +4460,71 @@ try {
       } finally { mock.close(); }
     }
 
+    group('生成模板改过之后，旧稿自己会说话、出口落在对的页签上（批 8 补 41）');
+    {
+      // 服务端判定有 selftest、端到端有 apitest，但"**页面上真的看得见、点得动、点完到了该去的地方**"
+      // 只有真机看得见 —— 而这一轮要治的正是"改了设置页的模板、已生成的剧本照旧报 ok，界面上两条都正常"。
+      // 不需要 mock 网关：这一组只走"落库 → 改模板 → 列表标记 → 点出口"。
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const jpost = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      const jput = (u, b) => J(u, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      const pid = (await jpost('/api/projects', { name: '模板指纹真机剧' })).id;
+      const tpls = await J('/api/templates');
+      const P = tpls.find((t) => t.template_type === 'episode_script');
+      // 集号用 3（页面初始停在 1）—— 出口有没有真的"把这一集的素材载回来"因此看得见
+      await jpost('/api/scripts', {
+        project_id: pid, script_type: 'episode_script', episode_number: 3, title: '第 3 集',
+        content: '这一集是旧模板写的。', template_id: P.id,
+      });
+      // 新建项目要走 Page.reload（注意事项 8：API 现建的项目不在壳层 state.projects 里）
+      await cdp.send('Page.reload', {});
+      await sleep(400);
+      await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+      // 等"已保存列表里的数据行"，不是等静态按钮
+      await waitFor(() => cdp.eval(`document.querySelectorAll('#saved [data-use]').length >= 1`), '剧本列表数据行');
+
+      // ① 模板没改 → **不许**出现任何"模板已改"标记（否则这个标记一出现就会被无视）
+      ok('① 模板没改时列表里没有「模板已改」（标记要稀有才有信息量）',
+        !(await cdp.eval(`document.querySelector('#saved').innerText.includes('模板已改')`)));
+      const epBefore = await cdp.eval(`(document.querySelector('#ep-status')||{}).innerText || ''`);
+
+      // ② 改模板 → 刷新后列表自己标出来
+      await jput(`/api/templates/${P.id}`, { content: `${P.content}\n（真机探针改的这一行）` });
+      await cdp.send('Page.reload', {});
+      await sleep(400);
+      await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+      await waitFor(() => cdp.eval(`document.querySelectorAll('#saved [data-use]').length >= 1`), '剧本列表数据行（改模板后）');
+      let marked = true;
+      try { await waitFor(() => cdp.eval(`!!document.querySelector('[data-regen-tpl]')`), '「模板已改」标记', 15000); }
+      catch { marked = false; }
+      ok('② 改了生成模板 → 旧稿自己标出「模板已改·去重生成」', marked);
+      ok('② 标记文案说清是"按改动之前的模板生成的"（不是含糊的"已过期"）',
+        await cdp.eval(`document.querySelector('#saved').innerText.includes('模板已改')`));
+
+      // ③ 点出口 → 切到用这个模板的页签，并把**这一集**的素材载回来
+      let acted = true;
+      try {
+        await cdp.eval(`document.querySelector('[data-regen-tpl]').click(); return true;`);
+        await waitFor(() => cdp.eval(`((document.querySelector('#ep-status')||{}).innerText||'').includes('第 3 集')`), '这一集的素材被载回来', 15000);
+      } catch { acted = false; }
+      ok('③ 点「去重生成」真的把**这一集**的素材载回来（只切页签、素材还是别的集＝点了等于没点）',
+        acted, `点之前 ep-status=${JSON.stringify(epBefore)}`);
+      const errors = await cdp.eval(`(window.__uiErrors || []).map((e) => String(e && e.message || e))`);
+      ok('③ 页面控制台零错误', errors.length === 0, JSON.stringify(errors.slice(0, 3)));
+
+      // ④ 把模板改回来 → 刷新后标记消失（结论跟着真的那一份走，不是一次性状态）
+      await jput(`/api/templates/${P.id}`, { content: P.content });
+      await cdp.send('Page.reload', {});
+      await sleep(400);
+      await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+      await waitFor(() => cdp.eval(`document.querySelectorAll('#saved [data-use]').length >= 1`), '剧本列表数据行（改回来）');
+      let cleared = true;
+      try { await waitFor(() => cdp.eval(`!document.querySelector('[data-regen-tpl]')`), '标记消失', 15000); }
+      catch { cleared = false; }
+      ok('④ 模板改回来 → 标记自己消失（说明它读的是服务端算出来的结论，不是存下来的标记）', cleared);
+      await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+    }
+
     const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);
     ok('异常钩子存活（自证非空跑：reload 后仍可捕获）', collected?.hookLive === true, JSON.stringify(collected));
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));

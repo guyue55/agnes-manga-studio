@@ -3316,6 +3316,89 @@ group('润色产物的派生过期（批 8 补 40：清单上的第 ② 条）')
   ok('反事实：把指纹换掉必须变 stale（证明上面那条 ok 不是恒真）',
     audit([srcRow, mk({ source_digest: 'deadbeef' })]).states.p1 === 'stale');
 }
+group('生成模板也是输入：剧本/脚本链的模板指纹（批 8 补 41）');
+{
+  // 补 12/36/37 建的是剧本的**数据侧**指纹（拍表 + 前情 + 设定 + 名册），
+  // 补 39/40 把"模板也是输入"钉在提示词链与润色链上 —— 可**第一条链自己的模板**一直不在指纹里。
+  // 而且四个非分集页签**连数据侧指纹都没有**（`plan_digest` 为空 → 一律 unknown），
+  // 所以这一维对它们是**唯一**能查的东西。纯函数层钉四件事：指纹只覆盖模板、
+  // 三态分明、只判槽位最新那条、没记模板的行一条都不报。
+  const st = require('./lib/story.js');
+  const { templateDigest, auditScriptTemplate } = st;
+  const T = { id: 't1', name: '分集剧本', system: 'SYS-A', content: '写第 {{集号}} 集' };
+
+  // ① 指纹只覆盖模板本身（数据侧由 episodeInputDigest 管，两件事分开才能把文案说清）
+  const d0 = templateDigest(T);
+  ok('模板指纹是 8 位十六进制', /^[0-9a-f]{8}$/.test(d0), d0);
+  ok('同一份模板 → 同一个指纹（可复算）', templateDigest(T) === d0);
+  ok('改 content → 指纹变', templateDigest({ ...T, content: '换' }) !== d0);
+  // 这一条正是 B102/B103 尾部那个缺口在"输入指纹"这一侧的补课：只改 system 也必须被看见
+  ok('只改 system → 指纹也变（模板是 system + content 两份）', templateDigest({ ...T, system: 'SYS-B' }) !== d0);
+  ok('模板的 id/name 不进指纹（改个名字不该让所有剧本过期）',
+    templateDigest({ ...T, id: 'zzz', name: '改个名' }) === d0);
+  ok('空模板 → 空串（"不知道"要与"内容一致"分开）', templateDigest({}) === '' && templateDigest(null) === '');
+
+  // ② 三态 + 只判槽位最新那条
+  const row = (over) => ({
+    id: 's1', title: '第 1 集', project_id: 'pj', script_type: 'episode_script', episode_number: 1,
+    template_id: 't1', template_digest: d0, created_at: '2024-01-01', ...over,
+  });
+  const audit = (rows, tpls = [T]) => auditScriptTemplate(rows, { templates: tpls });
+  const one = (x) => (x.issues && x.issues[0]) || { go: { params: {} } };
+
+  let r = audit([row({})]);
+  eq('模板没变 → ok', r.states.s1, 'ok');
+  eq('没变时 issues 为空', r.issues.length, 0);
+  eq('stamped 数出"有几条记了模板"（分母要看得见）', r.stamped, 1);
+
+  r = audit([row({})], [{ ...T, content: '换' }]);
+  eq('模板改了 → stale', r.states.s1, 'stale');
+  eq('过期项带 code', one(r).code, 'script_template_stale');
+  eq('过期项是 warn（该重生成，不是错）', one(r).level, 'warn');
+  eq('过期项不可一键修复（要花钱重生成）', one(r).fixable, false);
+  eq('过期项点名是哪个模板（人要能自己核对）', one(r).template_id, 't1');
+  eq('出口：剧本页', one(r).go.page, 'scripts');
+  // 出口必须落到**用这个模板的那个页签**：只跳剧本页、页签停在别处，用户会以为没反应
+  eq('出口带页签（否则跳过去还停在别的页签上）', one(r).go.params.tab, 'episode_script');
+  eq('出口带具体那一条', one(r).go.params.script, 's1');
+  ok('标题说清是"按改动之前的模板生成的"', /改动之前/.test(one(r).title), one(r).title);
+
+  r = audit([row({ template_digest: '' })]);
+  eq('没记指纹 → unknown（不是 stale）', r.states.s1, 'unknown');
+  eq('unknown 不报 issue（宁可说不知道，也不喊狼来了）', r.issues.length, 0);
+  r = audit([row({})], []);
+  eq('模板被删 → unknown（不猜）', r.states.s1, 'unknown');
+  eq('模板被删也不计入 warn', r.counts.warn, 0);
+
+  // 只判槽位最新那条：改模板后历史上每一次尝试都报，面板会被一串早被取代的草稿淹没
+  const older = row({ id: 's1', created_at: '2024-01-01' });
+  const newer = row({ id: 's2', created_at: '2024-02-01' });
+  r = audit([older, newer], [{ ...T, content: '换' }]);
+  eq('同一槽位只判最新那条', r.states.s2, 'stale');
+  eq('被取代的旧稿不再被判（否则每次改模板都刷出一串过期）', r.states.s1, undefined);
+  eq('旧稿不产生 issue', r.issues.length, 1);
+  eq('报的是最新那条', one(r).target_id, 's2');
+  r = audit([older, newer]);
+  eq('最新那条是新的模板 → ok', r.states.s2, 'ok');
+  eq('都 ok 时没有 issue', r.issues.length, 0);
+  // 不同槽位互不干扰（页签不同 / 集号不同 / 项目不同）
+  r = audit([row({ id: 's1', script_type: 'story_concept', episode_number: 0, created_at: '2024-01-01' }),
+    row({ id: 's2', script_type: 'episode_script', episode_number: 1, created_at: '2024-02-01' })],
+  [{ ...T, content: '换' }]);
+  eq('不同页签是两个槽位，各自判各自', [r.states.s1, r.states.s2].join(','), 'stale,stale');
+  eq('两个槽位各报一条', r.issues.length, 2);
+
+  // ③ 没记模板的行（本轮之前生成的）**一条都不报** —— 不猜，也不凭空多出一批过期
+  const old = { id: 'old', title: '老稿', project_id: 'pj', script_type: 'story_concept', episode_number: 0 };
+  r = audit([old, row({})], [{ ...T, content: '换' }]);
+  eq('没记模板的行拿不到状态（界面据此不显示任何标记）', r.states.old, undefined);
+  eq('没记模板的行不产生 issue', r.issues.filter((i) => i.target_id === 'old').length, 0);
+  eq('stamped 只数记了模板的行', audit([old, row({})]).stamped, 1);
+
+  // ④ 反事实：把判定关掉，上面那些绿必须变红
+  ok('反事实：指纹换掉必须变 stale（证明上面那条 ok 不是恒真）',
+    audit([row({ template_digest: 'deadbeef' })], [T]).states.s1 === 'stale');
+}
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

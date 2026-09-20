@@ -30,6 +30,18 @@ function ok(name, cond, extra = '') {
   return false;
 }
 function eq(name, a, b) { return ok(name, a === b, `期望 ${JSON.stringify(b)}，实际 ${JSON.stringify(a)}`); }
+/**
+ * 体检返回体里各分组 warn 之和（**从返回体推导，不手抄清单**）。
+ *
+ * 这条棘轮要抓的错是"新增一组却忘了并进总数" —— 而手抄的清单本身就会犯同一个错：
+ * 补 39 加 `prompt_counts`、补 40 加 `polish_counts`、补 41 加 `template_counts` 时，
+ * 每一条既有清单都漏了别的组（`drift_counts` 一度也被漏掉），却因为那些组恰好是 0 而**照样绿**。
+ * 推导出来之后，"新增一组"自动进等式，忘了并进总数就一定会红。
+ */
+function groupWarnSum(d) {
+  return Object.keys(d).filter((k) => k.endsWith('_counts'))
+    .reduce((n, k) => n + ((d[k] && d[k].warn) || 0), 0);
+}
 function group(t) { console.log(`\n── ${t} ──`); }
 
 const HOME = path.join(os.tmpdir(), `agnes-apitest-${process.pid}`);
@@ -1859,12 +1871,10 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   ok('体检报出扫描到的镜头数', audit.data.shots_scanned >= 4, String(audit.data.shots_scanned));
   ok('体检里同时有卡片侧与镜头侧两组（各自计数）',
     !!audit.data.card_counts && !!audit.data.shot_counts, JSON.stringify(Object.keys(audit.data)));
+  // 这个等式是"新增一组必须同时进总数"的棘轮；**分组从返回体推导**（见 groupWarnSum）——
+  // 手抄清单本身会犯同一个错：补 39/40/41 各加一组时，既有清单都漏了别的组却照样绿
   eq('总数 = 各分组之和（不许只算一边；漏一组就会在界面上少报问题）',
-    audit.data.counts.warn,
-    audit.data.card_counts.warn + audit.data.shot_counts.warn + audit.data.ref_counts.warn
-      + audit.data.style_counts.warn + audit.data.drift_counts.warn + audit.data.cast_counts.warn
-      // 批 8 补 39：又加了一组（提示词过期）—— 这个等式是"新增一组必须同时进总数"的棘轮
-      + audit.data.prompt_counts.warn);
+    audit.data.counts.warn, groupWarnSum(audit.data));
   // 把镜头 2 的绑定清掉，制造一条确定的漏绑
   await api('PUT', `/api/storyboards/${s2.id}`, { character_ids: [] });
   const audit2 = await api('GET', `/api/story/audit?project_id=${PID}`);
@@ -4603,11 +4613,7 @@ group('润色产物的派生过期（批 8 补 40：清单上的第 ② 条）')
   eq('体检报出 script_polish_stale', oneOf(aud).code, 'script_polish_stale');
   eq('过期项并进 issues（面板渲染的是 issues，只在分组字段里等于没显示）',
     aud.data.issues.some((x) => x.code === 'script_polish_stale'), true);
-  eq('总数 = 各分组之和（新增一组必须同时进总数）',
-    aud.data.counts.warn,
-    aud.data.card_counts.warn + aud.data.shot_counts.warn + aud.data.style_counts.warn
-      + aud.data.ref_counts.warn + aud.data.cast_counts.warn + aud.data.prompt_counts.warn
-      + aud.data.polish_counts.warn);
+  eq('总数 = 各分组之和（新增一组必须同时进总数）', aud.data.counts.warn, groupWarnSum(aud.data));
   eq('体检报出"有几条润色稿"（分母要看得见）', aud.data.polish_derived, 1);
   eq('过期项带出口：剧本页', oneOf(aud).go.page, 'scripts');
   eq('出口点名具体那一条（否则"只有结论没有出口"）', oneOf(aud).go.params.script, PID2);
@@ -4679,6 +4685,104 @@ group('润色产物的派生过期（批 8 补 40：清单上的第 ② 条）')
   const aud2 = await api('GET', `/api/story/audit?project_id=${PID}`);
   ok('标题说清是"失去了来源"而不是"来源已变"',
     /失去了来源/.test((aud2.data.polish_issues[0] || {}).title || ''), JSON.stringify((aud2.data.polish_issues[0] || {}).title));
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+
+group('生成模板也是输入：剧本链的模板指纹（批 8 补 41）');
+{
+  // 补 12/36/37 建的是剧本的**数据侧**指纹，补 39/40 把"模板也是输入"钉在提示词链与润色链上，
+  // 而**第一条链自己的模板**一直不在指纹里。四个非分集页签更是连数据侧指纹都没有
+  // （`plan_digest` 为空 → 一律 unknown）—— 这一维是它们**唯一**能查的东西。
+  const pj = await api('POST', '/api/projects', { name: '模板指纹剧' });
+  const PID = pj.data.id;
+  const tpls = (await api('GET', '/api/templates')).data;
+  const T = tpls.find((t) => t.template_type === 'story_concept');
+  const P = tpls.find((t) => t.template_type === 'episode_script');
+  const rowOf = async (id) => (await api('GET', `/api/scripts?project_id=${PID}`)).data.find((r) => r.id === id);
+
+  // ① 生成时记下"用哪个模板"（指纹服务端按自己库里那份模板算）
+  const a = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'story_concept', title: '概念稿', content: 'A',
+    template_id: T.id,
+    template_digest: 'deadbeef', // 前端说"我的指纹是这个" —— 必须被覆盖
+  });
+  const rowA = await rowOf(a.data.id);
+  eq('落库记下了生成模板', rowA.template_id, T.id);
+  ok('模板指纹由**服务端**算（8 位十六进制）', /^[0-9a-f]{8}$/.test(String(rowA.template_digest)), String(rowA.template_digest));
+  ok('前端传的假指纹被覆盖', rowA.template_digest !== 'deadbeef', String(rowA.template_digest));
+  eq('刚生成完 → 逐行状态 ok', rowA.template_state, 'ok');
+  eq('非分集页签从前连数据侧指纹都没有（plan_digest 为空）', String(rowA.plan_digest || ''), '');
+
+  // ② 改模板 → 界面逐行说过期、体检也报，且**出口落到用这个模板的那个页签**
+  await api('PUT', `/api/templates/${T.id}`, { content: `${T.content}\n改一下` });
+  eq('改了生成模板 → 逐行状态 stale', (await rowOf(a.data.id)).template_state, 'stale');
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const one = (d) => (d.template_issues && d.template_issues[0]) || { go: { params: {} } };
+  eq('体检报出 script_template_stale', one(aud.data).code, 'script_template_stale');
+  eq('过期项并进 issues（面板渲染的是 issues）',
+    aud.data.issues.some((x) => x.code === 'script_template_stale'), true);
+  eq('总数 = 各分组之和（新增一组必须同时进总数）', aud.data.counts.warn, groupWarnSum(aud.data));
+  eq('体检报出"有几条记了模板"（分母要看得见）', aud.data.template_stamped, 1);
+  eq('出口：剧本页', one(aud.data).go.page, 'scripts');
+  // 出口必须带**页签**：只跳剧本页、页签停在别处，用户会以为点了没反应
+  eq('出口带页签（跳到用这个模板的那个页签）', one(aud.data).go.params.tab, 'story_concept');
+  eq('出口带具体那一条', one(aud.data).go.params.script, a.data.id);
+
+  // ③ **只改 system** 也要报 —— 这正是 B102/B103 尾部那个缺口在"输入指纹"这一侧的补课
+  await api('PUT', `/api/templates/${T.id}`, { content: T.content });
+  eq('模板改回来 → 回到 ok', (await rowOf(a.data.id)).template_state, 'ok');
+  await api('PUT', `/api/templates/${T.id}`, { system: '换个 system' });
+  eq('**只改 system**（不改 content）→ 也报 stale', (await rowOf(a.data.id)).template_state, 'stale');
+  await api('PUT', `/api/templates/${T.id}`, { system: T.system });
+  eq('system 改回来 → 回到 ok', (await rowOf(a.data.id)).template_state, 'ok');
+
+  // ④ 精确性：改模板的名字/备注**不许**报（改个名字不该让所有剧本过期）
+  await api('PUT', `/api/templates/${T.id}`, { name: `${T.name}（改名）`, notes: '改备注' });
+  eq('只改模板的名字/备注 → 仍然 ok', (await rowOf(a.data.id)).template_state, 'ok');
+  await api('PUT', `/api/templates/${T.id}`, { name: T.name, notes: T.notes || '' });
+
+  // ⑤ 只判槽位最新那条：重生成之后标记自己消失，**旧稿不再刷出一串过期**
+  await api('PUT', `/api/templates/${T.id}`, { content: `${T.content}\n再改` });
+  eq('改模板后旧稿 stale', (await rowOf(a.data.id)).template_state, 'stale');
+  const b = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'story_concept', title: '概念稿2', content: 'B', template_id: T.id,
+  });
+  eq('重新生成的新稿 → ok', (await rowOf(b.data.id)).template_state, 'ok');
+  eq('被取代的旧稿不再被判（否则每次改模板都刷出一串过期）',
+    String((await rowOf(a.data.id)).template_state || ''), '');
+  const aud5 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('体检的模板分组归零', aud5.data.template_counts.warn, 0);
+  // 注：这里**不**把 T 改回原样 —— 新稿 b 是按"改过的 T"生成的，改回去反而会让 b 变 stale
+  //（第一版就是顺手改回来了，于是后面三条断言一起红；失败模式想反了就改断言/测试，不是改代码）
+
+  // ⑥ 不同页签是两个槽位，互不干扰
+  const c = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'episode_script', episode_number: 2, title: '第 2 集', content: 'C', template_id: P.id,
+  });
+  await api('PUT', `/api/templates/${P.id}`, { content: `${P.content}\n改分集` });
+  eq('改分集模板 → 分集稿 stale', (await rowOf(c.data.id)).template_state, 'stale');
+  eq('概念稿不受影响（模板不同）', (await rowOf(b.data.id)).template_state, 'ok');
+  const aud6 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('出口的页签是 episode_script', one(aud6.data).go.params.tab, 'episode_script');
+  await api('PUT', `/api/templates/${P.id}`, { content: P.content });
+
+  // ⑦ 没记模板的行（本轮之前生成的）一条都不报 —— 不猜，也不凭空多出一批过期
+  const d = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'plot_summary', title: '老稿', content: 'D',
+  });
+  const rowD = await rowOf(d.data.id);
+  eq('没记模板的行拿不到状态', String(rowD.template_state || ''), '');
+  const aud7 = await api('GET', '/api/story/audit?project_id=${PID}');
+  eq('没记模板的行不产生 issue',
+    (aud7.data.template_issues || []).filter((i) => i.target_id === d.data.id).length, 0);
+  eq('分母只数记了模板的行', aud7.data.template_stamped, 3);
+
+  // ⑧ 模板被删 → unknown（宁可说不知道，也不猜）
+  await api('DELETE', `/api/templates/${P.id}`);
+  eq('模板被删 → unknown', (await rowOf(c.data.id)).template_state, 'unknown');
+  eq('unknown 不计入 warn', (await api('GET', `/api/story/audit?project_id=${PID}`)).data.template_counts.warn, 0);
 
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }

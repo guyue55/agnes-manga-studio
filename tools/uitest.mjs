@@ -1784,7 +1784,9 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /d\.asset \|\| '空'/.test(novel) && /→「\$\{esc\(d\.card\)\}」/.test(novel));
   ok('确认文案说明只动外貌/服饰/别名（不影响出图的不动）',
     /只动外貌\/服饰\/别名三项/.test(novel));
-  ok('后端漂移体检用纯函数、并进了 issues（面板渲染的是 issues）',
+  // 这条断言从"漂移体检"一路长成了**所有分组都必须并进 issues**的棘轮（补 39/40/41 各加一组）——
+  // 名字跟着改，否则它红了会把人指向错的地方（"漂移体检"看着没问题，实际红在模板那一组）
+  ok('体检的每一组都并进了 issues（面板渲染的是 issues；新增一组必须同时进来）',
     /story\.auditCharacterDrift\(cards/.test(routesSrc) && /drift_issues/.test(routesSrc)
     // 批 8 补 28：又加了卡片侧人物闭环一组 —— 这行断言要跟着走，否则"新增一组却忘了并进 issues"
     // （= 界面永远看不见）会静默通过
@@ -1793,8 +1795,11 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     // 批 8 补 39：又加一组（提示词过期）—— 同上，"新增一组却忘了并进 issues"必须红
     && /prompt_issues: promptStale\.issues/.test(routesSrc)
     // 批 8 补 40：再加一组（润色派生过期）—— 同一条棘轮，新增一组必须同时进 issues
-    && /polishStale\.issues\)/.test(routesSrc)
-    && /polish_issues: polishStale\.issues/.test(routesSrc));
+    && /polishStale\.issues/.test(routesSrc)
+    && /polish_issues: polishStale\.issues/.test(routesSrc)
+    // 批 8 补 41：再加一组（生成模板被改过）—— 同上
+    && /tplStale\.issues\)/.test(routesSrc)
+    && /template_issues: tplStale\.issues/.test(routesSrc));
   ok('同步修复只写外貌/服饰/别名，不碰角色定位与性格',
     /code === 'sync_character'/.test(routesSrc) && !/patch\.(role|personality|gender|age) =/.test(routesSrc));
 
@@ -1952,6 +1957,51 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     ok('逐行下发润色状态（界面标记读的是服务端结论，不是前端猜的）',
       /polish_state: audit\.states\[r\.id\] \|\| ''/.test(routesSrc)
       && /s\.polish_state === 'stale'/.test(scriptsSrc));
+  }
+
+  // ── 生成模板也是输入（批 8 补 41）──
+  // 补 12/36/37 建的是剧本的**数据侧**指纹，补 39/40 把"模板也是输入"钉在提示词链与润色链上 ——
+  // 这一轮补的是**第一条链自己的模板**。结构上要钉的是"模板在**生成那一刻**记下来"：
+  // 保存时再按当前页签取就晚了（用户完全可能生成完切到别的页签再保存）。
+  {
+    ok('服务端有模板指纹与"模板被改过"的判定（唯一一份实现）',
+      /function templateDigest\(tpl\)/.test(storySrc)
+      && /function auditScriptTemplate\(scripts, opts = \{\}\)/.test(storySrc)
+      && /story\.templateDigest\(genTpl\)/.test(routesSrc)
+      && /story\.auditScriptTemplate\(/ .test(routesSrc));
+    ok('模板指纹覆盖 system + content（只改 system 也必须被看见）',
+      /digestText\(\[system, content\]\.join\('\\n---\\n'\)\)/.test(storySrc));
+    ok('指纹一律服务端算（前端传的 template_digest 不许被采信）',
+      /row\.template_digest = genTpl \? story\.templateDigest\(genTpl\) : ''/.test(routesSrc)
+      && !/body\.template_digest/.test(routesSrc));
+    // 这条是这一轮的关键：模板 id 必须在**生成那一刻**记进页面状态，而不是保存时按当前页签现取
+    ok('模板在**生成那一刻**记下来（保存时再取会记成别的模板）',
+      /resultGenTemplateId = tpl && tpl\.id \? tpl\.id : null/.test(scriptsSrc)
+      && /template_id: resultGenTemplateId \|\| null/.test(scriptsSrc)
+      && !/template_id: tplOf\(/.test(scriptsSrc));
+    ok('逐集生成那条路也记模板（否则那批行的模板维度永远是"没记"）',
+      /template_id: tpl\.id,\s+\/\/ 批 8 补 41/.test(scriptsSrc));
+    // 三条路（润色产出 / 载入既有 / 清空结果）都必须把它清掉：少一条，那份内容就会冒充
+    // "这次生成"的产物去记另一个模板的指纹（数出现次数比钉某一处的上下文更稳）
+    ok('载入 / 清空 / 润色之后不冒充"这次生成"的模板',
+      /resultGenTemplateId = null; \/\/ 润色产物的来源是/.test(scriptsSrc)
+      && /resultGenTemplateId = null; \/\/ 载入的既有内容/.test(scriptsSrc)
+      // 行首（缩进后直接是它）才算"清空点"——`let resultGenTemplateId = null` 那行是声明，不能数进来
+      && (scriptsSrc.match(/\n\s*resultGenTemplateId = null;/g) || []).length === 3);
+    ok('标记与出口在同一行上，且出口**切到用这个模板的那个页签**',
+      /data-regen-tpl=/.test(scriptsSrc) && /模板已改·去重生成/.test(scriptsSrc)
+      && /el\.querySelectorAll\('\[data-regen-tpl\]'\)/.test(scriptsSrc)
+      && /tab = want;/.test(scriptsSrc) && /syncViewParams\(\{ tab \}\);/.test(scriptsSrc));
+    ok('逐行下发模板状态（界面标记读的是服务端结论）',
+      /template_state: tplAudit\.states\[r\.id\] \|\| ''/.test(routesSrc)
+      && /s\.template_state === 'stale'/.test(scriptsSrc));
+    // 钉**收口那一行判据本身**，不是"出现过一个 latest.get(key)" ——
+    // 第一版钉的是短语，而 `const prev = latest.get(key);` 那行一直在，把收口逻辑换掉它照样绿
+    //（注意事项 11 的第四次复发：钉了"这个词出现过"，没钉"这件事发生了"；一条正对照抓出来的）
+    ok('只判**槽位最新那条**（否则改一次模板就刷出一串早被取代的草稿）',
+      /const latest = new Map\(\)/.test(storySrc)
+      && /if \(!prev \|\| String\(s\.created_at \|\| ''\) >= String\(prev\.created_at \|\| ''\)\) latest\.set\(key, s\)/.test(storySrc)
+      && /for \(const s of latest\.values\(\)\)/.test(storySrc));
   }
 
   // ── 角色名册（批 8 补 6）──

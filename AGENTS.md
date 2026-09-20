@@ -196,26 +196,29 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   只改 `personality`/`role` 不许报过期）。**反事实写反了**：漏挂 `characters` 的真实后果是**每集永久假警报**
   （不是静默 ok）—— 按真实失败模式改断言，没按预想去改代码。顺带补上**从没被钉过的前提**：
   `shotsFromText` 少传第三个参数不报错、但整批分镜指纹变空串 → 体检**永远只能说 `unknown`**，现在真机钉住。
-  清单上还剩两条：图片/视频提示词（原地写回，"派生字段过期"）与剧本润色（另存一条）——**第 ① 条已由补 39 做掉**。
-- **图片/视频提示词（批 8 补 39）+ 剧本润色（批 8 补 40）：派生字段与派生记录是"输入变了产物没变"的第三、四种形态**：
+  清单上剩下的两条（提示词"原地写回"、润色"另存一条"）连同**模板那一维**见下一条。
+- **图片/视频提示词（补 39）+ 剧本润色（补 40）+ 生成模板（补 41）："输入变了产物没变"的第三、四、五种形态**：
   补 39 治**原地写回**（`image_prompt`/`video_prompt` 由"这一镜内容 + 提示词模板"生成后写回同一行 ——
   改了描述，提示词一个字不变，出图照**旧描述**出，而体检答的是"该不该重生成分镜"、照不到它）；
   补 40 治**另存一条**（润色稿由"来源正文 + optimize 模板 + 角色名册"派生，改了来源它一个字不变，
   却带着 `plan_digest`（本集上下文）报到 `ok` —— **一个与真实来源无关的 ok**）。两者**病根同一条**：
   **合成在前端**（`batchPrompts` 硬编码 system/user、`optimize()` 自己 `replace` 模板变量），
   而 `POST /api/agnes/text` 把 `messages` **原样转发** → 服务端**看不到**真正发出去的那一份，
-  **不可能**给它算指纹（补 36/37/38 同一条理由）。修法都是**搬家**：`story.promptInput` /
+  **不可能**给它算指纹。修法都是**搬家**：`story.promptInput` /
   `story.polishInput` 各是**唯一一份**合成（指纹覆盖 **system + user 逐字**；润色的名册按**被润色的那份文本**算
   —— 页面上的生成表单字段服务端**复算不到**，而**复算不到的输入进不了指纹**），
   `POST /api/storyboards/:id/prompt` / `POST /api/scripts/polish` 把**合成 → 调模型 → 落库/回传 → 记指纹**一次做完。
   剧本行新增 `source_script_id`/`source_template_id`/`source_digest`，**指纹一律服务端算**（前端说了不算）；
-  **编辑过的草稿不冒充来源**（比对正文逐字相同才认，否则留空 → `unknown`）—— 照记会让复算的指纹**永远对不上**
-  ＝永久假警报（对照 NG 实测）。精确性：`ok`/`stale`（变了）/`stale`（来源被删，文案不同）/`unknown` 四态分明，
+  **编辑过的草稿不冒充来源**（正文逐字相同才认，否则留空 → `unknown`；照记会让复算的指纹**永远对不上**）。精确性：`ok`/`stale`（变了）/`stale`（来源被删，文案不同）/`unknown` 四态分明，
   **不是派生稿的行一条都不报**；**不进指纹的字段改了不许报**（`camera_move`/`personality` 等）。
-  出口都在用户动作发生的那一页：分镜列表逐行 `image_prompt_state`、剧本列表逐行 `polish_state`，
-  标记旁边就是重做入口（润色重润**就地更新**那一条，不另存）。顺手抓到**整分区级别的假承诺**：`seed.js` 的
-  `image_prompt`/`video_prompt` 模板**没有任何一行代码读过**（补 25 同类），现已生效并把补 7 的三条禁令搬进 `system`。
-  对照 MA–MF / NA–NG、残留的 `builtin_digest` 只覆盖 `content` 不覆盖 `system` 见 §6.39/§6.40 与 `docs/issues.md` B102/B103。
+  出口都在用户动作发生的那一页：分镜/剧本列表逐行标状态，标记旁边就是重做入口（润色重润**就地更新**那一条）。
+  顺手抓到**整分区级别的假承诺**：`seed.js` 的两个提示词模板**没有任何代码读过**（补 25 同类），现已生效。
+  **补 41 补第三种落点：模板那一维** —— 前两轮只数了**数据**一维，而**模板与链正交**：逐维×逐链打勾才发现
+  **第一条链（剧本生成，最贵）漏了模板**，四个非分集页签连 `plan_digest` 都空。模板是服务端库里的一行、
+  **不需要搬家**：`templateDigest`（覆盖 `system + content`）+ `auditScriptTemplate`，指纹服务端算；
+  页面 `resultGenTemplateId` **在生成那一刻**记（保存时现取＝永久假警报）；**只判"槽位最新那条"**
+  （否则改一次模板、历史每次尝试全报过期）。教训：**"清单数完了"要问清"数的是哪一维"**。
+  对照 MA–MF / NA–NM、残留的 `builtin_digest` 只覆盖 `content` 不覆盖 `system` 见 §6.39–§6.41 与 `docs/issues.md` B102–B104。
 
 - **AI 补分幕次（批 8 补 32）：把"该由模型干的分类"和"不该由模型编的事实"分开**：补 31 之后回头数一遍体检里
   **所有 `fixable: false`** 的项（那就是"必须用户自己动手"的清单）：`no_inject`/`char_no_look` 要**写内容**（创作），
@@ -352,7 +355,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 1174 / apitest 1276 / uitest 1202 / browser-test 563），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，弹窗与内联面板两类动作钩子都有"声明了动作就必须有产出"的自检）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 1208 / apitest 1305 / uitest 1211 / browser-test 569），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，弹窗与内联面板两类动作钩子都有"声明了动作就必须有产出"的自检）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
@@ -405,9 +408,8 @@ CJS `module.exports` 面为读源人工校正）、`imports`（ESM 解析结果�
 
 `frontend-pages`（页面模块）、`frontend-shell`（壳层与共享模块）、`backend-api`（路由层）、
 `backend-service`（agnes/jobs/poller）、`data-persistence`（store/seed/**story**，同属"无 IO 的领域内核"）、
-`test`、`build-tooling`、`documentation`、`config`。**每个文件级节点有且只有一个归属**（校验脚本会强制）；
-具体文件数**不写死**（每轮重建都变，且批 8 之后这张表的数字已经不准）—— 要数就
-`g.layers.map(l => l.id + ':' + l.nodeIds.length)`。
+`test`、`build-tooling`、`documentation`、`config`。**每个文件级节点有且只有一个归属**（校验脚本会强制）；文件数**不写死**（每轮重建都变）——
+要数就 `g.layers.map(l => l.id + ':' + l.nodeIds.length)`。
 
 ### 常用查询
 
@@ -439,18 +441,16 @@ git diff --name-only "$(node -p "require('./.understand-anything/meta.json').git
 2. **全量重建**：`/understand --full`（换语言、大规模重构后用）。
 3. **自动更新钩子**：`/understand --auto-update` 会在 `config.json` 写入 `autoUpdate: true`，提交时自动维护图谱；`--no-auto-update` 关闭。
 4. 更新后把 `.understand-anything/`（至少 `knowledge-graph.json` + `meta.json` + `fingerprints.json`）与代码改动一起提交，保证锚点一致。
-5. **重建时容易踩的坑（实测）**：① 派发 file-analyzer 前先备好各批 `tmp/ua-file-extract-results-<批号>.json`，
-   否则每个子代理都自己补跑一遍提取（无害但浪费）；② 合并脚本**不认** `tools/*test*.mjs`，`tested_by` 会全丢，
-   须在合并之后、写最终图之前补回（见注意事项 2），**且补回后别再跑合并脚本**；③ "20 个孤儿文件挤一批"的
-   misc 批（CJS 没有 `imports` 边，全被当孤儿）建议按体积拆成 `batch-<N>-part-<k>.json`，否则一个子代理读不完
-   `routes.js` + 四个上千行测试。
+5. **重建踩坑（实测三条）**：提前备好各批 `tmp/ua-file-extract-results-<批号>.json`；合并脚本会丢
+   `tested_by`，须在合并后、写最终图前补回（见注意事项 2）**且别再跑合并脚本**；孤儿 misc 批按体积拆成
+   `batch-<N>-part-<k>.json`。细节见 `docs/research/10-knowledge-graph-rebuild.md`。
 
 ---
 
 ## ⚠️ 注意事项与已知边界
 
 1. **CJS 依赖不在 `imports` 边里**：`server.js`、`lib/routes.js`、`tools/selftest.mjs` 等用 CommonJS `require()` / `createRequire()`（SEA 兼容），tree-sitter import 解析返回空。它们的真实依赖被捕获为 `depends_on` / `calls` 边（例：`file:server.js → file:lib/routes.js`）。查后端依赖时**务必同时看这两种边**，只看 `imports` 会漏。
-2. **`tested_by` 必须手工补回（每轮重建都要做）**：本项目测试脚本在 `tools/` 下叫 `selftest/apitest/uitest/browser-test`（非 `*.test.*` 约定命名），而合并脚本 `merge-batch-graphs.py` 的 `is_test_path()` 对 JS 只认 stem 以 `.test`/`.spec` 结尾 —— 于是**所有** `tested_by` 都被判成"生产↔生产"丢掉，且它的路径约定补链（Pass 2）也一条补不出来。当前图里的 **22 条**是重建后逐对**按源码证据**复核补回的（证据 = 测试脚本正文里出现被测算文件的完整相对路径，或唯一 basename；例如 `tools/uitest.mjs` 用 `readdirSync('public/js/pages')` 动态列举并逐文件断言，故**每个**页面文件都算被它覆盖，批 8 之后是 11 个）。补边脚本逻辑见 `docs/issues.md` 的 B61 条目；补回的边一律 `weight 0.5`、`direction forward`，并给生产节点打 `tested` 标签。
+2. **`tested_by` 必须手工补回（每轮重建都要做）**：本项目测试脚本在 `tools/` 下叫 `selftest/apitest/uitest/browser-test`（非 `*.test.*` 约定命名），而合并脚本 `merge-batch-graphs.py` 的 `is_test_path()` 对 JS 只认 stem 以 `.test`/`.spec` 结尾 —— 于是**所有** `tested_by` 都被判成"生产↔生产"丢掉，且它的路径约定补链（Pass 2）也一条补不出来。当前图里的 **22 条**是重建后逐对**按源码证据**复核补回的（证据 = 测试正文里出现该文件的相对路径或唯一 basename；`uitest.mjs` 动态列举 `public/js/pages`，故**每个**页面文件都算被覆盖）。补边逻辑见 `docs/issues.md` 的 B61 条目；补回的边一律 `weight 0.5`、`direction forward`，并给生产节点打 `tested` 标签。
 3. **当前无孤立节点（0 个）**：上一版曾把 `.understand-anything/` 的 `.understandignore` 与 `config.json` 记为"仅有的两个孤立节点"，本轮重建后二者各有 `related` 互链边、且各有一条来自 `AGENTS.md` 的 `documents` 边，已不再孤立（`layers` 里 `layer:config` 恰好也是这两个 + `package.json`）。校验脚本会把"无任何边的节点"列为 warning，重建后应为 0。
 4. **两套"知识图谱"，不要混淆**：
    - `.understand-anything/knowledge-graph.json` — 本文档描述的**工具生成全图**（278 节点），机器消费、可增量更新；

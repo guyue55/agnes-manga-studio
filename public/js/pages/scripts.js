@@ -42,6 +42,10 @@ export default async function scripts(container, params) {
   // 用户手改过之后这两个值就"不作数了" —— 由服务端比对正文后说了算（见 optimize）。
   let resultSourceId = null;
   let resultTemplateId = null;
+  // 批 8 补 41：这份结果是**用哪个生成模板**跑出来的。必须在**生成那一刻**记下来 ——
+  // 保存时再按当前页签去取就晚了：用户完全可能"生成完切到别的页签再保存"，
+  // 那样记下的是另一个模板，指纹从此对不上（"同一个事实不要有两份来源"）。
+  let resultGenTemplateId = null;
   // R17：每个页签各自保留自己的结果。切页签不再丢弃中间产物——"抽取出来的东西"必须回得去，
   // 否则两段式里的"确认"环节没有对象可确认（旧行为：切走即清空，模型产出只能靠手动保存留住）。
   const results = new Map(); // tab -> { text, pristine }
@@ -396,11 +400,13 @@ export default async function scripts(container, params) {
           model_name: container.querySelector('#model')?.value || '',
           generation_prompt: '',
           plan_digest: epDigest,   // 这一集生成时的输入指纹（服务端算的）
+          template_id: tpl.id,     // 批 8 补 41：生成模板也是输入（逐集生成同样要记）
         });
         if (!savedR.ok) { done.push({ ep, ok: false, error: savedR.error }); continue; }
         // 结果区停在最后一集，用户可以直接看/改（逐集产物都已经存好了）
         result = content; pristine = content; resultCtx = { projectId, tab };
         resultSourceId = null; resultTemplateId = null; // 刚生成的是"本集上下文"的产物，不是派生稿
+        resultGenTemplateId = tpl.id; // 同上：逐集生成也要在生成那一刻记下模板
         stashResult(); renderResult();
         done.push({ ep, ok: true });
       } catch (e) {
@@ -620,6 +626,9 @@ export default async function scripts(container, params) {
     pristine = result;      // R17：留一份"原样"，供撤销改动
     resultCtx = { projectId, tab };
     upstream = null;        // 新结果 = 本页签自己的产物，上游带入标记功成身退
+    // 批 8 补 41：记下"是哪个模板跑出来的"（生成那一刻的那个，不是保存时的当前页签）
+    resultGenTemplateId = tpl && tpl.id ? tpl.id : null;
+    resultSourceId = null; resultTemplateId = null; // 刚生成的是生成稿，不是润色稿
     stashResult();
     renderResult();
     renderUpstream();
@@ -627,6 +636,7 @@ export default async function scripts(container, params) {
   function clearResult() {
     result = ''; resultCtx = null; pristine = '';
     resultSourceId = null; resultTemplateId = null; // 结果没了，派生关系一并作废
+    resultGenTemplateId = null;
     const w = container.querySelector('#result-wrap');
     if (w) w.innerHTML = '';
   }
@@ -784,6 +794,8 @@ export default async function scripts(container, params) {
         // 声称派生却记不出模板，只会让体检多一条"未验"的噪音。
         source_script_id: resultTemplateId ? (resultSourceId || null) : null,
         source_template_id: resultTemplateId || null,
+        // 批 8 补 41：生成模板也是输入（指纹由服务端按它自己库里那份模板算）
+        template_id: resultGenTemplateId || null,
       });
       setBusy(saveBtn, false);
       if (r.ok) { toast.ok('已保存到项目'); loadSaved(); }
@@ -872,6 +884,7 @@ export default async function scripts(container, params) {
     // 而不是按那一条复算出永远对不上的指纹 → 天天喊狼来了）
     resultSourceId = r.data.source_script_id || null;
     resultTemplateId = r.data.template_id || null;
+    resultGenTemplateId = null; // 润色产物的来源是"另一条剧本 + 优化模板"，不是生成模板
     stashResult();
     renderResult();
     const how = r.data.source_matches_row
@@ -954,7 +967,7 @@ export default async function scripts(container, params) {
       <div class="card" style="margin-bottom:10px;padding:14px">
         <div class="row" style="align-items:flex-start">
           <div style="flex:1;min-width:0">
-            <div style="font-size:12.5px;font-weight:550">${s.episode_number ? `<span class="chip" style="margin-right:6px">第 ${s.episode_number} 集</span>` : ''}${esc(s.title)}${s.source_script_id ? '<span class="chip" style="margin-left:6px" title="这是从另一条剧本润色出来的稿子，不是本集直接生成的">润色稿</span>' : ''}${s.polish_state === 'stale' ? `<button type="button" class="prompt-tag prompt-stale" data-repolish="${esc(s.id)}" title="来源剧本/优化模板/角色名册改过了，这份稿还是按改动之前的来源润色的" style="margin-left:6px;cursor:pointer">来源已变·点此重润</button>` : ''}${s.polish_state === 'unknown' ? '<span class="prompt-tag" style="margin-left:6px" title="这份润色稿没有记下来源指纹（本轮之前润色的，或来源是编辑过的草稿）">未验</span>' : ''}</div>
+            <div style="font-size:12.5px;font-weight:550">${s.episode_number ? `<span class="chip" style="margin-right:6px">第 ${s.episode_number} 集</span>` : ''}${esc(s.title)}${s.source_script_id ? '<span class="chip" style="margin-left:6px" title="这是从另一条剧本润色出来的稿子，不是本集直接生成的">润色稿</span>' : ''}${s.polish_state === 'stale' ? `<button type="button" class="prompt-tag prompt-stale" data-repolish="${esc(s.id)}" title="来源剧本/优化模板/角色名册改过了，这份稿还是按改动之前的来源润色的" style="margin-left:6px;cursor:pointer">来源已变·点此重润</button>` : ''}${s.polish_state === 'unknown' ? '<span class="prompt-tag" style="margin-left:6px" title="这份润色稿没有记下来源指纹（本轮之前润色的，或来源是编辑过的草稿）">未验</span>' : ''}${s.template_state === 'stale' ? `<button type="button" class="prompt-tag prompt-stale" data-regen-tpl="${esc(s.id)}" title="这份脚本生成之后，设置页里它用的那个模板被改过——它当时是照着旧版提示词写的" style="margin-left:6px;cursor:pointer">模板已改·去重生成</button>` : ''}${s.template_state === 'unknown' ? '<span class="prompt-tag" style="margin-left:6px" title="这份脚本用的模板已经删了，或者没有记下当时的模板指纹">未验</span>' : ''}</div>
             <div style="font-size:11px;color:var(--text-4);margin-top:3px">${esc(relTime(s.created_at))}${s.model_name ? ` · ${esc(s.model_name)}` : ''}</div>
           </div>
           <button class="icon-btn" data-use="${esc(s.id)}" title="载入到结果区" style="background:rgba(255,255,255,0.07);color:var(--text-2)">${icon('edit', 13)}</button>
@@ -969,8 +982,35 @@ export default async function scripts(container, params) {
         if (s) {
           result = s.content; pristine = s.content; resultCtx = { projectId, tab: s.script_type || tab };
           resultSourceId = s.id; resultTemplateId = null; // 载入的是"某一条"本身：它没有模板来源
+          resultGenTemplateId = null; // 载入的既有内容不是"这次生成"的产物
           stashResult(); renderResult(); toast.ok('已载入');
         }
+      };
+    });
+    // 批 8 补 41：「模板已改」的出口也在标记旁边。生成模板是**可编辑的设置**，
+    // 改了之后旧产物不会自己更新，而"重新生成"需要当初那批素材 ——
+    // 分集剧本的素材能从分集骨架恢复（「载入第 N 集大纲」），所以顺手替用户载回来，
+    // 其余页签的素材是用户自己敲的，只能如实说清"要重新填一次"（不替他编）。
+    el.querySelectorAll('[data-regen-tpl]').forEach((b) => {
+      b.onclick = async () => {
+        const s = saved.find((x) => x.id === b.getAttribute('data-regen-tpl'));
+        if (!s) return;
+        const want = s.script_type || 'story_concept';
+        if (tab !== want) {
+          stashResult();
+          tab = want;
+          upstream = null;
+          syncTabs();
+          renderFields();
+          loadResultFor(tab);
+          syncViewParams({ tab });
+        }
+        const ep = Number(s.episode_number) || 0;
+        if (want === 'episode_script' && ep > 0) {
+          const brief = await loadEpisodeBrief(ep, priorOn);
+          if (brief) { renderFields(); toast.ok(`已切到「第 ${ep} 集」并载入这一集的素材 —— 确认后点「生成」即可`, 7000); return; }
+        }
+        toast(`已切到「${SCRIPT_TYPES.find((t) => t.value === want)?.label || want}」页签 —— 素材要重新确认一遍，再点「生成」`, 'info', 7000);
       };
     });
     // 批 8 补 40：「来源已变」的出口**就在标记旁边**。重润要用**它自己记下的那个模板**，
