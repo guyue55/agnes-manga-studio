@@ -87,6 +87,58 @@ function chipTitle(x) {
 }
 
 /**
+ * 一段链的芯片 —— **唯一一份**渲染（流程条、工作台面板、页头三处共用）。
+ * 三处各写一份的后果是同一个状态在三处长得不一样，用户会以为它们说的不是一回事。
+ */
+export function chipHtml(x) {
+  if (!x) return '';
+  const tail = x.state === 'done' ? amount(x) : ` ${STEP_WORD[x.state] || ''}${amount(x)}`;
+  return `<span class="pipe-chip ${STEP_TONE[x.state] || 'gray'}" title="${esc(chipTitle(x))}">`
+    + `${x.state === 'done' ? `${icon('check', 11)} ` : ''}${esc(x.label)}<b>${esc(tail)}</b></span>`;
+}
+
+/**
+ * 页头要的"上游产物 + 下一步"（UI 重构 B5.5）。
+ *
+ * 用户站在某一页时真正的问题只有两个：**"我是靠什么才做到这一步的"**（上游产物）
+ * 与**"做完这页下一步去哪儿"**。两者都能从七段链那一份数据推出来 ——
+ * 所以页面只报"我是哪个入口"，不自己写上游是谁（手写就是第二份口径，改链时会分叉）。
+ * 不在链上的页面（工作台/项目/角色库/任务/素材/设置）返回空对象，页头照旧。
+ */
+export function progressOf(navId, projectId) {
+  const steps = ((cachedPipeline(projectId) || {}).steps) || [];
+  const mine = steps.filter((s) => s.nav === navId);
+  if (!mine.length) return null;   // 不在链上（工作台/项目/角色库/任务/素材/设置）→ 页头照旧
+  const i = steps.indexOf(mine[0]);
+  const first = mine.filter((s) => s.state !== 'done')[0] || null;
+  // **blocked 的"下一步"不在这页**：这一页的步之所以没做，正是因为上游还没做（`gated_by`），
+  // 所以此时页头只能如实说"上游产物还没做完"，**不许**把这一步写成"下一步" ——
+  // 那样页头会说"下一步：分集剧本（待前置）"，而流程条同时说"下一步：解析出卡片"，
+  // 两处各说各的，用户没法判断该信哪个（这正是 B5.3/B5.4 要消灭的那种分叉）。
+  const next = first && first.state !== 'blocked' ? first : null;
+  return { from: i > 0 ? steps[i - 1] : null, next };
+}
+
+/** 页头那一行的内容（**唯一一份**，页头初次渲染与之后就地更新都走它）。 */
+export function progressLineHtml(p) {
+  if (!p) return '';
+  return [
+    p.from ? `<span class="page-prog-lbl">上游产物</span>${chipHtml(p.from)}` : '',
+    p.next ? `<span class="page-prog-lbl">下一步</span>${chipHtml(p.next)}` : '',
+  ].join('');
+}
+
+/**
+ * 进度刷新后**就地更新**页头那一行。
+ * 为什么必须更新：流程条就在页头上面，两处说的要是不同的"下一步"，用户没法判断该信哪个。
+ * 用 id 定位而不是重挂页面 —— 重挂会清掉用户正在编辑的输入。
+ */
+export function refreshPageProgress(navId, projectId) {
+  const el = document.getElementById('page-prog');
+  if (el) el.innerHTML = progressLineHtml(progressOf(navId, projectId));
+}
+
+/**
  * 侧栏入口的进度徽标：这个入口现在**欠着什么**。
  * 一个入口可能认领多步（原著入口认领"原著/卡片/分集"三步），取**最靠前那个没做完的** ——
  * 也就是这个入口的"下一步"（与 pipelineNext 同一个判据）；全做完则显示最后一步的战果。
@@ -114,11 +166,7 @@ export function renderStrip(el, d, opts = {}) {
   el.innerHTML = `
     <div class="pipe-strip">
       <span class="pipe-strip-lbl">${icon('film', 13)}<span class="lbl">七段链路</span></span>
-      <div class="pipe-chips">
-        ${(d.steps || []).map((x) => `<span class="pipe-chip ${STEP_TONE[x.state] || 'gray'}" title="${esc(chipTitle(x))}">
-          ${x.state === 'done' ? `${icon('check', 11)} ` : ''}${esc(x.label)}<b>${esc(x.state === 'done' ? amount(x) : ` ${STEP_WORD[x.state] || ''}${amount(x)}`)}</b>
-        </span>`).join('')}
-      </div>
+      <div class="pipe-chips">${(d.steps || []).map(chipHtml).join('')}</div>
       ${next
         ? `<button class="btn btn-sm" id="pipe-strip-go" title="去完成「${esc(next.label)}」：${esc(next.action)}">${icon('play', 12)}下一步：${esc(next.label)}</button>`
         : `<span class="badge green" title="七段都做完了">${icon('check', 11)} 整条链已跑完</span>`}
@@ -143,11 +191,7 @@ export function renderPanel(el, d, opts = {}) {
         ? `<button class="btn btn-sm btn-primary" id="pipe-go" title="${esc(next.action)}">${icon('play', 13)}去完成「${esc(next.label)}」</button>`
         : `<span class="badge green">整条链已跑完</span>`}
     </div>
-    <div class="chips" style="margin-top:10px">
-      ${(d.steps || []).map((x) => `<span class="chip ${x.state === 'blocked' ? '' : 'on'}" title="${esc(chipTitle(x))}">
-        ${x.state === 'done' ? `${icon('check', 12)} ` : ''}${esc(x.label)}<span class="badge ${STEP_TONE[x.state] || 'gray'}" style="margin-left:6px">${esc(STEP_WORD[x.state] || '')}${esc(amount(x))}</span>
-      </span>`).join('')}
-    </div>
+    <div class="pipe-chips" style="margin-top:10px;flex-wrap:wrap;overflow:visible">${(d.steps || []).map(chipHtml).join('')}</div>
     ${(d.notes || []).length ? `<div class="note" style="margin-top:10px">${(d.notes || []).map((n) => esc(n)).join('<br>')}</div>` : ''}
   </div>`;
   const go = el.querySelector('#pipe-go');

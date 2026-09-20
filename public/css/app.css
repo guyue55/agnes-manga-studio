@@ -142,6 +142,20 @@ html, body {
   margin-top: 1px;
 }
 
+/* 页头的"上游产物 + 下一步"（UI 重构 B5.5）：一行小芯片，说的是这一页在七段链上的位置 */
+.page-prog {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.page-prog-lbl {
+  font-size: 10.5px;
+  color: var(--text-4);
+  letter-spacing: 0.04em;
+}
+
 /* 当前项目（UI 重构步 A）：全站**唯一**的项目选择器 —— 选一次，所有创作页都跟着走 */
 .sb-project {
   padding: 0 10px 12px;

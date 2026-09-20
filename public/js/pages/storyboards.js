@@ -14,6 +14,7 @@ import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, set
 import { head, projectLabel, renderBatchBar, makeTokenStore } from './helpers.js';
 import { charCount, limitState, FIELD_SOFT_LIMIT } from '../textstats.js';
 import { state, onEvent, syncViewParams, loadCharacters, resolveProjectId } from '../app.js';
+import { progressOf } from '../pipeline.js';
 
 export default async function storyboards(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -34,6 +35,7 @@ export default async function storyboards(container, params) {
 
   container.innerHTML = `
     ${head({
+      progress: progressOf('storyboards', state.projectId),
       title: '分镜制作',
       desc: '管理分镜表：补提示词 → 批量出图 → 批量出视频，一条龙',
       actions: `

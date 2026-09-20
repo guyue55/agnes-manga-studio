@@ -1961,9 +1961,12 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('页面与壳层都不再自己写语气表（写死的第二份必然与第一份分叉）',
     !/BADGE = \{ done/.test(dashSrc) && !/WORD = \{ done/.test(dashSrc)
     && /STEP_TONE/.test(pipeSrc) && /STEP_WORD/.test(pipeSrc));
+  // 钉"两个状态真的画得不一样"，别钉某段标记的形状（形状一改，钉子就变成测空气）：
+  // 语气表里 todo 与 blocked 必须**既不同色又不同词** —— 只差颜色就是"靠颜色单一维度"。
   ok('"待前置"与"该做了"画得不一样（否则用户照着点却发现做不了）',
     /done: 'green', partial: 'gold', todo: 'blue', blocked: 'gray'/.test(pipeSrc)
-    && /x\.state === 'blocked' \? '' : 'on'/.test(pipeSrc));
+    && /todo: '该做了', blocked: '待前置'/.test(pipeSrc)
+    && /STEP_TONE\[x\.state\]/.test(pipeSrc) && /STEP_WORD\[x\.state\]/.test(pipeSrc));
   ok('下一步给一个直达按钮，并带上项目 id（省掉到那页再选一次项目）',
     /去完成「/.test(pipeSrc) && /navigate\(next\.page, \{ project: pid \}\)/.test(dashSrc));
   ok('侧栏徽标读的是**缓存**（renderSidebar 会被 SSE 高频调用，那里发请求就是灾难）',
@@ -1976,6 +1979,29 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     && /上面的进度可能是旧的/.test(dashSrc));
   ok('换项目时**强制**刷新（TTL 是给同一项目的重复请求用的，不是给换项目用的）',
     /refreshPipeline\(\{ force: true \}\)/.test(appSrcP));
+  // B5.5：页头写"上游产物 + 下一步"。上游是谁**推导**出来，页面只报"我是哪个入口"。
+  ok('页头支持"上游产物 + 下一步"，且不传时**一个字都不多渲染**（向后兼容）',
+    /o\.progress \?/.test(read(path.join(PUB, 'js', 'pages', 'helpers.js')))
+    && /progressLineHtml/.test(pipeSrc));
+  {
+    const chainPages = [['scripts', 'scripts'], ['novel', 'novel'], ['storyboards', 'storyboards'], ['images', 'images'], ['videos', 'videos']];
+    const usesProg = (f) => read(path.join(PUB, 'js', 'pages', `${f}.js`)).includes("progress: progressOf('");
+    const noProg = chainPages.filter(([f]) => !usesProg(f));
+    ok('链上的 5 个页面都报了"我是哪个入口"', noProg.length === 0, noProg.map(([f]) => f).join(','));
+    // 反事实：页面**不许**自己写上游是谁 —— 手写就是第二份口径，改链时会分叉
+    // 钉"页面有没有自己拼这一行的标记"，**不钉措辞** —— "上游产物"这四个字在 scripts.js 的注释里
+    // 也有（说的是另一件事：把上游产物带进模板变量），钉措辞会把那句正经注释判成违规（第一版就误伤了）
+    const handWritten = chainPages.filter(([f]) => read(path.join(PUB, 'js', 'pages', `${f}.js`)).includes('page-prog-lbl'));
+    ok('没有页面手写"上游是谁"（都由 progressOf 从七段链推导）', handWritten.length === 0, handWritten.map(([f]) => f).join(','));
+    // 页头那一行必须能被**就地**更新（否则流程条与页头会显示两个不同的"下一步"）
+    ok('页头那一行有 id 且刷新时会就地更新（不重挂页面 —— 重挂会清掉正在编辑的输入）',
+      /id="page-prog"/.test(read(path.join(PUB, 'js', 'pages', 'helpers.js')))
+      && /export function refreshPageProgress/.test(pipeSrc)
+      && /refreshPageProgress\(state\.current, pid\)/.test(appSrcP));
+    // 不在链上的页面不许出现那一行（免得给用户一个假的"下一步"）
+    const offChain = ['characters', 'tasks', 'assets', 'settings', 'projects'];
+    ok('不在链上的页面不会出现"上游产物/下一步"这一行', offChain.every((f) => !usesProg(f)));
+  }
   // 跨文件棘轮：服务端每一步标的 nav 必须是**真实存在**的侧栏入口。
   // 拼错一个字母的后果是那个入口永远没有徽标 —— 而"没有徽标"看起来跟"这一步没做"一样。
   {

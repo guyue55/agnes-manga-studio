@@ -2,13 +2,24 @@
  * helpers.js — 页面通用片段：页头、项目选择器、批量进度条
  */
 import { icon, esc } from '../consts.js';
+import { progressLineHtml } from '../pipeline.js';
 
+/**
+ * 页头。`progress` 可选（UI 重构 B5.5）：传 `progressOf(本页入口, 当前项目)` 的结果，页头就把
+ * "我是靠什么做到这一步的 / 做完这页下一步去哪儿"写在标题下面。
+ * 不传（或传 null，即不在链上的页面：工作台/项目/角色库/任务/素材/设置）就完全不渲染这一行 ——
+ * **向后兼容**：老的调用一个字都不用改。
+ * 内容由 `progressLineHtml` 渲染（唯一一份），并且带 `#page-prog` 这个 id —— 进度刷新后壳层要**就地**
+ * 更新它，否则流程条与页头会显示两个不同的"下一步"。
+ */
 export function head(o) {
+  const prog = o.progress ? `
+        <div class="page-prog" id="page-prog">${progressLineHtml(o.progress)}</div>` : '';
   return `
     <div class="page-head">
       <div>
         <h1 class="page-title">${esc(o.title)}</h1>
-        ${o.desc ? `<p class="page-desc">${esc(o.desc)}</p>` : ''}
+        ${o.desc ? `<p class="page-desc">${esc(o.desc)}</p>` : ''}${prog}
       </div>
       <div class="page-actions">${o.actions || ''}</div>
     </div>`;

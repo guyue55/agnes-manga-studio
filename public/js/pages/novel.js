@@ -22,6 +22,7 @@ import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, data
 import { charCount, countLabel, limitState } from '../textstats.js';
 import { head, projectLabel, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams, navigate, resolveProjectId } from '../app.js';
+import { progressOf } from '../pipeline.js';
 import { parseStoryFiles, STORY_FILE_ACCEPT } from '../storyfile.js';
 
 const JOB_KEY = 'agnes.novel.job'; // 解析任务 id：刷新/切页回来能续上进度（与分镜批量的做法一致）
@@ -44,6 +45,7 @@ export default async function novel(container, params = {}) {
 
   container.innerHTML = `
     ${head({
+      progress: progressOf('novel', state.projectId),
       title: '原著解析',
       desc: '粘贴或上传故事/小说，自动抽取人物卡、地点卡、道具卡、剧情卡等信息卡，反向驱动剧本、资产库与分镜',
       actions: `${projectLabel(state.projects, projectId, { emptyLabel: '未选择项目' })}

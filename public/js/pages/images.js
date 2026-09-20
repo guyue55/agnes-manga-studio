@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectLabel } from './helpers.js';
 import { state, navigate, syncViewParams, resolveProjectId } from '../app.js';
+import { progressOf } from '../pipeline.js';
 
 export default async function images(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -18,6 +19,7 @@ export default async function images(container, params) {
 
   container.innerHTML = `
     ${head({
+      progress: progressOf('images', state.projectId),
       title: '图片生成',
       desc: 'Agnes 图像模型 · 生成结果自动保存到本机素材库',
       actions: `

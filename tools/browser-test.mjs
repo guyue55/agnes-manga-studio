@@ -3049,13 +3049,36 @@ try {
         const navText = await cdp.eval(`return [...document.querySelectorAll('#sidebar [data-nav]')].map((b)=>b.getAttribute('data-nav')+':'+(b.querySelector('.badge')||{}).innerText).join(' | ');`);
         ok('侧栏入口带进度徽标（原著入口显示它欠的那一步）',
           /novel:[^|]*该做/.test(String(navText)), JSON.stringify(String(navText).slice(0, 200)));
-        // ⑤ 点流程条的按钮直达下一步所在页（与工作台那条路径同一个落点）
+        // ⑤ B5.5：页头写"上游产物 + 下一步"，而且与流程条**说同一件事**。
+        //    必须**停在 #/scripts 上量**：剧本页的上游是"分集骨架"，所以两行都在；
+        //    而下一步要去的是原著页（链上第一步，它**本来就没有上游**）——第一版量在跳转之后，
+        //    于是"缺上游"被当成 bug（其实那是链首的正确形态）。
+        const headProg = await cdp.eval(`return (document.querySelector('#page-prog')||{}).innerText||'';`);
+        ok('页头如实说"上游产物还没做完"（剧本页的上游是分集骨架）',
+          /上游产物/.test(headProg) && /分集骨架/.test(headProg) && /待前置/.test(headProg), JSON.stringify(headProg));
+        // 关键的反事实：这一页的步被上游挡住时，页头**不许**把它写成"下一步"
+        // （否则页头说"下一步：分集剧本（待前置）"、流程条说"下一步：解析出卡片"，两处各说各的）
+        ok('被上游挡住时页头不摆"下一步"（可行动的那一步在上游，流程条已经指了）',
+          !/下一步/.test(headProg), JSON.stringify(headProg));
+
+        // ⑥ 点流程条的按钮直达下一步所在页（与工作台那条路径同一个落点）
         await cdp.eval(`document.querySelector('#pipe-strip-go').click(); return true;`);
         await sleep(900);
         const hash5 = await cdp.eval(`return location.hash;`);
         ok('流程条的按钮直达那一步所在的页面，并带上项目 id',
           /^#\/novel\?/.test(hash5) && hash5.includes(pid), hash5);
-        // ⑥ 侧栏徽标与流程条必须说**同一件事**（两处各算一份就会出现两个答案，
+        // 链首本来就没有上游 —— 页头只该有"下一步"（缺上游不是 bug，是这一步的性质）
+        const novelProg = await cdp.eval(`return (document.querySelector('#page-prog')||{}).innerText||'';`);
+        ok('链首那一步（原著）页头没有"上游产物"，只有"下一步"',
+          !novelProg.includes('上游产物') && novelProg.includes('下一步'), JSON.stringify(novelProg));
+        ok('这一步可行动时，页头的"下一步"与流程条**完全同源**（都是解析出卡片）',
+          /解析出卡片/.test(novelProg) && /解析出卡片/.test(stripBox), JSON.stringify(novelProg));
+        // 反事实：不在链上的页面不许凭空出现"下一步"（假的下一步比没有更糟）
+        await cdp.eval(`location.hash = '#/settings?project=${pid}'; return true;`);
+        await sleep(800);
+        ok('不在链上的页面（设置）没有这一行',
+          !(await cdp.eval(`return !!document.querySelector('#page-prog');`)));
+        // ⑦ 侧栏徽标与流程条必须说**同一件事**（两处各算一份就会出现两个答案，
         //    而"两个数字都对不上"正是用户最没法判断的那种错）
         const navTitle = await cdp.eval(`return (document.querySelector('#sidebar [data-nav="novel"] .badge')||{}).title||'';`);
         ok('侧栏徽标的说法与流程条的"下一步"同源（都指解析卡片，且状态词一致）',

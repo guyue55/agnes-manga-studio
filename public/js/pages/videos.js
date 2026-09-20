@@ -11,6 +11,7 @@ import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback, errorOutlet } from '../ui.js';
 import { head, projectLabel, makeTokenStore } from './helpers.js';
 import { state, navigate, onEvent, resolveProjectId } from '../app.js';
+import { progressOf } from '../pipeline.js';
 
 export default async function videos(container, params) {
   let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
@@ -42,6 +43,7 @@ export default async function videos(container, params) {
 
   container.innerHTML = `
     ${head({
+      progress: progressOf('videos', state.projectId),
       title: '视频生成',
       desc: 'Agnes Video · 异步任务，提交后由本地服务后台轮询，关掉页面也不丢',
       actions: `

@@ -4,7 +4,7 @@
 import { icon, esc } from './consts.js';
 import { api } from './api.js';
 import { toast } from './ui.js';
-import { cachedPipeline, loadPipeline, pipelineBadge, renderStrip } from './pipeline.js';
+import { cachedPipeline, loadPipeline, pipelineBadge, refreshPageProgress, renderStrip } from './pipeline.js';
 
 import dashboard from './pages/dashboard.js';
 import projects from './pages/projects.js';
@@ -192,7 +192,9 @@ async function render() {
   renderSidebar();
   // 换页 = 刷新一次进度（**强制**）：流程条就在眼前，显示着上一个页面的旧数字是最容易被当成
   // "系统算错了"的那种错。一次本地 GET（~3ms），用户一次点击一次，不是高频路径。
-  refreshPipeline({ force: true }).catch(() => { /* 拉不到就保持现状 */ });
+  // 这里**等它回来**再挂页面：页头的"上游产物/下一步"（B5.5）读的就是这份缓存，
+  // 不等的话首访每页都会少那一行（页面挂完才到，页面不会自己重画）。
+  await refreshPipeline({ force: true }).catch(() => { /* 拉不到就保持现状 */ });
 
   try {
     const c = await nav.page(page, params);
@@ -312,6 +314,8 @@ async function refreshPipeline(opts = {}) {
     // 直达下一步：带上项目 id，省掉用户到那一页再选一次项目
     onGo: (next) => navigate(next.page, { project: pid }),
   });
+  // 页头那一行与流程条必须同步（两处显示不同的"下一步"，用户没法判断该信哪个）
+  refreshPageProgress(state.current, pid);
 }
 
 /**

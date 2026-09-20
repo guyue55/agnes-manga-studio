@@ -14,6 +14,7 @@ import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, options, confirm, setBusy, notice } from '../ui.js';
 import { head, projectLabel } from './helpers.js';
 import { state, softRefresh, syncViewParams, resolveProjectId } from '../app.js';
+import { progressOf } from '../pipeline.js';
 
 const TAB_TPL = {
   story_concept: 'story_concept',
@@ -65,6 +66,7 @@ export default async function scripts(container, params) {
 
   container.innerHTML = `
     ${head({
+      progress: progressOf('scripts', state.projectId),
       title: '故事脚本',
       desc: '用 Agnes 文本模型从构思走到单集脚本，提示词模板可在设置页调整',
       actions: `
