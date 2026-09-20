@@ -322,6 +322,35 @@ const mock = http.createServer((req, res) => {
         if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没提到这个人。' } }] });
         return all(people);
       }
+      // 批 8 补 45：AI 认名字。与补字段/补卡同一套机制，只有返回键不同（names），
+      // 而且**引文必须来自这个候选自己那些镜头的文字** —— 随手编一句的话，连顺利路径都过不去
+      if (/"names"\s*:/.test(userMsg)) {
+        // 只按**候选行**切（`1. 待确认的名字：…`）—— 模板正文里还有 "1. **必须给出…**" 这类编号要求，
+        // 用 /^\d+\. / 会把它们也切成条目，于是 mock 返回一堆越界编号（补 34/43 都这么错过一次）
+        const parts = userMsg.split(/^\d+\. 待确认的名字：/m).slice(1);
+        const rows = parts.map((part, i) => {
+          const name = (/^([^\n（]+)/.exec(part) || [])[1] || '';
+          const body = String(part.split('镜头文字：')[1] || '');
+          const lines = body.split('\n').map((x) => x.trim());
+          // 引文取**真的提到这个名字的那一行**（不是随手取第一行）—— 否则"引文指向这个名字"是空测
+          const line = lines.find((x) => name && x.includes(name) && !x.includes('__'))
+            || lines.find((x) => x.length >= 4 && !x.includes('__')) || '';
+          return { index: i + 1, target: '林晚', quote: line.slice(0, 14) };
+        });
+        const all = (list) => send(200, { choices: [{ message: { content: JSON.stringify({ names: list }) } }] });
+        // __SHOTNONE__：如实回"是路人" → 必须计 passerby、**一个都不绑**
+        if (userMsg.includes('__SHOTNONE__')) return all(rows.map((x) => ({ index: x.index, target: '', why: 'passerby', quote: x.quote })));
+        // __SHOTNEED__：如实回"原著里有、项目里没档案" → 必须计 need_card、**一个都不绑**
+        if (userMsg.includes('__SHOTNEED__')) return all(rows.map((x) => ({ index: x.index, target: '', why: 'need_card', quote: x.quote })));
+        // __SHOTFAKE__：引文是编的 → 整条丢弃、一个都不绑（绑错了会注入别人的脸）
+        if (userMsg.includes('__SHOTFAKE__')) return all(rows.map((x) => ({ ...x, quote: '此人生得英武不凡，天下无双' })));
+        // __SHOTOUT__：给的本名**不在角色名册里** → 必须计 unknown_target、一个都不绑
+        if (userMsg.includes('__SHOTOUT__')) return all(rows.map((x) => ({ ...x, target: '赵无此人' })));
+        // __SHOTLONG__：引文是真的，但回了一半就不回了 → 剩下的必须如实计 missing
+        if (userMsg.includes('__SHOTLONG__')) return all(rows.slice(0, 1));
+        if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这些镜头里好像认不出是谁。' } }] });
+        return all(rows);
+      }
       // 批 8 补 35：补时间点。**同一套机制**的第三份规格，只有返回键不同（whens）。
       // 引文同样必须来自**那张卡自己**的片段 —— 这一组的核心就是"推算出来的时间进不了库"，
       // 所以 mock 必须能给出"值看着合理、引文却是编的"这一种回答（__WHENFAKE__）。
@@ -4455,6 +4484,125 @@ group('AI 回原文补人物卡（批 8 补 43：体检报的名字，AI 回原�
   await mark('灯下问案');
   // 收尾：把这一组建的卡清掉（后面还有按项目统计的用例，别让它们被这一组影响）
   for (const c of await charsOf()) if (/沈砚/.test(c.name)) await api('DELETE', `/api/story/cards/${c.id}`);
+}
+
+group('AI 认名字（批 8 补 45：体检报的名字，AI 对着镜头文字认，认出来就绑定、不改用户的文本）');
+{
+  // 独立项目：这一组要"先有体检问题、再被 AI 关掉"，与别人的项目互相隔离。
+  // **候选只来自体检**（服务端拿 `auditShotBindings` 现算），所以先造出"角色库里没有的名字"
+  const pj = await api('POST', '/api/projects', { name: 'AI 认名字测试剧' });
+  const PID = pj.data.id;
+  // 名册里**只有**林晚（带别名与长相）—— 模型只能认到名册里有的名字上
+  const ch = await api('POST', '/api/characters', { project_id: PID, name: '林晚', alias: '晚娘', appearance: '素白衣裙', is_locked: true });
+  eq('前提：角色建好了（否则下面"名册外的名字不许绑"是空测）', ch.status, 200);
+  // 五个镜头、五个查无此人的名字，各带自己的**标记**（标记写在镜头文字里，随候选进提示词）
+  const rows = [
+    { project_id: PID, episode_number: 1, shot_number: 1, characters: '少女', scene_description: '少女推门进来，林晚在灯下缝衣' },
+    { project_id: PID, episode_number: 1, shot_number: 2, characters: '路人甲', scene_description: '__SHOTNONE__ 路人甲从门口走过' },
+    { project_id: PID, episode_number: 1, shot_number: 3, characters: '掌柜', scene_description: '__SHOTNEED__ 掌柜点了点头' },
+    { project_id: PID, episode_number: 1, shot_number: 4, characters: '丫鬟', scene_description: '__SHOTOUT__ 丫鬟端茶进来' },
+    { project_id: PID, episode_number: 1, shot_number: 5, characters: '小厮', scene_description: '__SHOTFAKE__ 小厮跑开了' },
+  ];
+  const mk = await api('POST', '/api/storyboards', { rows });
+  eq('前提：五个镜头建好了', mk.status, 200);
+  const shotsOf = async () => (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data;
+  const auditNames = async () => (await api('GET', `/api/story/audit?project_id=${PID}`)).data.shot_issues
+    .filter((x) => x.code === 'shot_char_unknown').map((x) => x.target_name).sort();
+  const au0 = await auditNames();
+  eq('体检先如实报出五个查无此人的名字', au0.join(','), '丫鬟,小厮,少女,掌柜,路人甲');
+  eq('这五条都带 AI 出口（名字由服务端给，界面不另写映射表）',
+    (await api('GET', `/api/story/audit?project_id=${PID}`)).data.shot_issues
+      .filter((x) => x.code === 'shot_char_unknown').every((x) => (x.ai_fix || {}).label === 'AI 认名字'), true);
+
+  // ① 干跑：如实报"要认几个名字、影响几个镜头、调几次"，且**一个绑定都不许写**
+  const dry = await api('POST', '/api/story/shot-char-fill', { project_id: PID, dry_run: true });
+  eq('干跑 200', dry.status, 200);
+  eq('干跑报出要认几个名字', dry.data.targets, 5);
+  eq('干跑报出调用次数（全部候选一次给完 = 1 次）', dry.data.calls, 1);
+  eq('干跑报出候选是谁（用户确认前要知道是哪些名字）',
+    (dry.data.candidates || []).map((c) => c.name).sort().join(','), '丫鬟,小厮,少女,掌柜,路人甲');
+  eq('干跑报出涉及几个镜头', dry.data.shots, 5);
+  eq('干跑不写库（镜头上一个绑定都没有）',
+    (await shotsOf()).every((x) => !(x.character_ids || []).length), true);
+
+  // ② 按名字收窄（界面上的按钮就是**只认这一条**）：候选随之只剩那一个
+  const one = await api('POST', '/api/story/shot-char-fill', { project_id: PID, dry_run: true, names: ['少女'] });
+  eq('按名字收窄：只认这一个', one.data.targets, 1);
+  eq('按名字收窄：候选就是那一个', (one.data.candidates || []).map((c) => c.name).join(','), '少女');
+  eq('按名字收窄：只涉及它自己那个镜头', one.data.shots, 1);
+  const ghost = await api('POST', '/api/story/shot-char-fill', { project_id: PID, dry_run: true, names: ['查无此人'] });
+  eq('名字不在体检清单里 → 400（候选只能来自体检，不许自己造）', ghost.status, 400);
+  ok('400 的文案说得清是"现在没有了"而不是"调用失败"', /没有这几个名字/.test(String(ghost.data && ghost.data.error)), JSON.stringify(ghost.data));
+
+  // ③ 真跑：认出来就**绑定**，且引文来自镜头文字。
+  // 镜头行要在**跑之前**留一份：跑完「出场人物」已经被换成本名了，拿跑完之后的那一份去比引文
+  // 会得到"引文对不上"——那是**断言取错了时机**，不是功能错了（对照的教训：断言不能因错误的原因红）
+  const before1 = (await shotsOf()).find((x) => Number(x.shot_number) === 1) || {};
+  const run = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['少女'] });
+  eq('真跑 200', run.status, 200);
+  eq('绑上了 1 个名字', run.data.assigned, 1);
+  eq('如实报出认的是谁', (run.data.assigned_names || []).join(','), '少女');
+  eq('绑定落在 1 个镜头上', run.data.shots, 1);
+  const s1 = (await shotsOf()).find((x) => Number(x.shot_number) === 1) || {};
+  eq('镜头 1 真的绑上了林晚（落库，不是只报了个数）', (s1.character_ids || []).join(','), ch.data.id);
+  // **两处一起写**：只绑不改的话 `shot_char_unknown` 永远消不掉（它判的是这段文本），
+  // 而它宣称的后果（没有外貌注入）其实已经被修好了 —— 那就是假警报，比不检查更糟
+  eq('「出场人物」里的代称**换成了本名**（体检判的就是这段文本，不改它问题永远消不掉）', s1.characters, '林晚');
+  eq('报告条目与补字段/补卡**同构**（界面因此共用同一个渲染器）',
+    `${typeof (run.data.assigned_items || [])[0]?.name}/${Array.isArray((run.data.assigned_items || [])[0]?.fields)}/${!!(run.data.assigned_items || [])[0]?.quote}`,
+    'string/true/true');
+  eq('报告把**写进去的两处**都列出来了（写了两处却只报一处，用户核对不到）',
+    ((run.data.assigned_items || [])[0]?.fields || []).join(','), '出场人物,绑定角色');
+  eq('报告里的值就是**真的写进去的那一份**（绑的是哪个角色）',
+    String((run.data.assigned_items || [])[0]?.values?.['绑定角色'] || ''), '林晚');
+  {
+    // 引文必须落在**这个镜头自己的文字**里。这里**不手抄一份"镜头文字"**：直接用服务端那一份
+    // （`storyLib.shotCharExcerpt` 是**唯一一份**合成）—— 手抄的那份会漏掉字段名标签，
+    // 于是断言以"引文对不上"的形式红，而功能其实是对的（本轮真踩到：这是**断言取错来源**，不是 bug）
+    const q = String((run.data.assigned_items || [])[0]?.quote || '');
+    const shotText = storyLib.shotCharExcerpt(before1);
+    ok('报告带着引文（唯一能让人核对的依据）', q.length > 0, q);
+    ok('引文真的来自这个镜头的文字（与服务端核对用的是同一份合成）',
+      shotText.replace(/\s/g, '').includes(q.replace(/\s/g, '')), JSON.stringify({ q, shotText }));
+    ok('镜头文字里带着字段名（模型要看得懂哪一句是什么，引文才落得进去）',
+      /出场人物：/.test(shotText) && /画面描述：/.test(shotText), JSON.stringify(shotText.slice(0, 80)));
+  }
+
+  // ④ 幂等：文本已经换成本名 → 体检里这一条真的没了 → 再点一次是 400"结论"，**且不花钱**
+  const again = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['少女'] });
+  eq('已经认过的名字再认一次 → 400（无从谈起，不是失败；也不会白花一次模型调用）', again.status, 400);
+  eq('重复调用不会把绑定写两遍', ((await shotsOf()).find((x) => Number(x.shot_number) === 1) || {}).character_ids.length, 1);
+
+  // ⑤ 三个结论桶**互不重叠、都不是失败**：路人 / 需建档 / 名册外 / 引文对不上
+  const pass = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['路人甲'] });
+  eq('"是路人" → passerby（诚实的结论）', (pass.data.passerby || []).map((x) => x.name).join(','), '路人甲');
+  eq('"是路人" → 一个都不绑', pass.data.assigned, 0);
+  const need = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['掌柜'] });
+  eq('"原著里有、项目里没档案" → need_card（出口是补人物卡）', (need.data.need_card || []).map((x) => x.name).join(','), '掌柜');
+  eq('need_card 也不绑（不许硬套一个最像的角色）', need.data.assigned, 0);
+  const out = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['丫鬟'] });
+  eq('模型给的本名不在名册里 → unknown_target（不静默忽略）', (out.data.unknown_target || []).map((x) => x.target).join(','), '赵无此人');
+  eq('名册外的名字一个都不绑（红线：绑错了会注入别人的脸）', out.data.assigned, 0);
+  const fake = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['小厮'] });
+  eq('引文对不上镜头文字 → ungrounded（那是它编的）', (fake.data.ungrounded || []).length, 1);
+  eq('引文对不上 → 一个都不绑', fake.data.assigned, 0);
+  const auAfter = await auditNames();
+  eq('认过的名字真的从体检里消失了（否则用户会永远看到一条修不好的问题）',
+    auAfter.includes('少女'), false);
+  eq('"是路人"也仍然报在体检里（名字确实不在角色库 —— 体检没报错，只是结论不同）',
+    auAfter.includes('路人甲'), true);
+
+  // ⑥ "需要建档/是路人"这两类**会一直留在体检里**（名字确实不在角色库，体检没报错）——
+  //    所以再认一次是 200 + 同一个结论，而不是 400。这里钉住"不谎报成功"：
+  //    它不会因为"点了两次"就把 need_card 变成一次绑定（那才是把结论当成了修复）
+  const againNeed = await api('POST', '/api/story/shot-char-fill', { project_id: PID, names: ['掌柜'] });
+  eq('"需要建档"再认一次仍是 200 + 同一个结论（它确实还没被解决）', againNeed.status, 200);
+  eq('"需要建档"再认一次仍然一个都不绑', againNeed.data.assigned, 0);
+  eq('"需要建档"再认一次仍然报在 need_card 里', (againNeed.data.need_card || []).length, 1);
+  const empty = await api('POST', '/api/story/shot-char-fill', { project_id: '' });
+  eq('没有项目 → 400', empty.status, 400);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
 group('内置提示词同步（批 8 补 28：改了提示词，老库也能收到；改过的绝不覆盖）');

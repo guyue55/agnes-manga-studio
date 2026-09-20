@@ -440,6 +440,93 @@ group('B4 画风分层');
       castSeedSrc.includes('{{候选人物与原文片段}}') && /'候选人物与原文片段': story\.castFillLines/.test(castRouteSrc));
   }
 
+  // 批 8 补 45：AI 认名字（体检里"角色库找不到的名字"接上 AI 出口；落点是**分镜绑定**，
+  // 不是改字段也不是建卡，而且**不动用户写的字** —— 所以它既不进 FILL_TARGETS，也不进一键补齐）
+  {
+    const scApiSrc = read(path.join(PUB, 'js', 'api.js'));
+    const scSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    const scStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
+    const scRouteSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+    // 签名里**必须有 btn**：`setBusy` 只接受控件（补 35 的规矩，本轮真机抓到过一次）
+    const scBody = bodyOf(novelMaxSrc, 'async function fillShotChar(names, btn) {');
+    // ① 出口**挂在问题上**：这一条原来既没有 fixable、也没有 go，报告出来了却一个按钮都没有
+    ok('4.5 体检行按服务端给的 ai_fix 渲染按钮（前端不另写一份"哪条问题对应哪个动作"的映射表）',
+      /it\.ai_fix \?/.test(novelMaxSrc) && /data-audit-ai="\$\{i\}"/.test(novelMaxSrc)
+      && /ai_fix: \{ code: 'shot_char_bind'/.test(scStorySrc));
+    ok('4.5 AI 出口的名字由服务端给（前端只显示 label，不自己编）',
+      /esc\(it\.ai_fix\.label/.test(novelMaxSrc));
+    // ② 点击处理器：读**连字符原名**的 data 属性（驼峰会静默拿到 null → "按钮点了没反应"，注意事项 7），
+    //    并且按**动作码**分发（不是按显示文案）
+    ok('4.5 处理器读连字符原名 data-audit-ai，且按动作码分发（不按界面文案分发）',
+      /dataOf\(e\.currentTarget, 'audit-ai'\)/.test(novelMaxSrc)
+      && /issue\.ai_fix && issue\.ai_fix\.code/.test(novelMaxSrc) && /code !== 'shot_char_bind'/.test(novelMaxSrc));
+    // ③ 一次点击只做一个明确的动作：只认**这一条**名字（不顺手把别的名字也认了）
+    ok('4.5 点一条问题只认**那一个**名字（不顺手把别的名字也认了）',
+      /await fillShotChar\(\[String\(issue\.target_name \|\| ''\)\]\.filter\(Boolean\),/.test(novelMaxSrc));
+    // ④ 干跑闸门：**先免费问一遍**，确认框里的次数取干跑报的那个数（不写死 1）
+    ok('4.5 先干跑再弹计费确认，且次数取干跑报的数（不写死）',
+      /dryRun: true, names/.test(scBody) && /costConfirm\(\{[\s\S]{0,120}count: dry\.data\.calls/.test(scBody));
+    ok('4.5 计费确认说明"认出来会直接绑定、不动你在镜头里写的字"（花钱前把后果说清）',
+      /不动你在镜头里写的字/.test(scBody) && /绑定/.test(scBody));
+    // ⑤ 400 是**结论**、不是失败（"没有要认的名字了"和"调用炸了"是两件事）
+    ok('4.5 400 当结论、其余当失败 —— 看状态码，不猜文案',
+      /dry\.status === 400/.test(scBody) && /dry\.status === 400 \? 'info' : 'err'/.test(scBody));
+    // ⑥ 报告**共用同一份正文**（补 43/44 的教训：另写一份就是同一个事实的第二份形状）
+    ok('4.5 报告复用同一个 fillReportBody（没有第二份报告正文）',
+      (novelMaxSrc.match(/function fillReportBody\(/g) || []).length === 1
+      && /renderFillReport\(d, cfg\)/.test(scBody));
+    // ⑦ 两个"结论桶"必须**看得见**（只报"认出来几个"的话，用户不知道剩下的该怎么办）
+    ok('4.5 报告渲染 need_card 与 unknown_target 两个桶（结论要看得见，不能只报成功数）',
+      /d\.need_card/.test(novelMaxSrc) && /d\.unknown_target/.test(novelMaxSrc)
+      && /cfg\.needCardTitle/.test(novelMaxSrc) && /cfg\.unknownTargetTitle/.test(novelMaxSrc));
+    ok('4.5 桶标题由配置给（桶名不是判据，是标题 —— 所以不写死在渲染器里）',
+      /needCardTitle: '/.test(novelMaxSrc) && /unknownTargetTitle: '/.test(novelMaxSrc));
+    // ⑧ 落点是**分镜**，候选来自**体检**：所以收的是 project_id，不是 source_id
+    //    （没有解析过原著、只生成了分镜的项目也必须能用）
+    ok('4.5 端点封装收 project_id（候选来自体检，不依赖"解析过原著"）',
+      /storyShotCharFill: \(projectId/.test(scApiSrc) && /project_id: projectId, names/.test(scApiSrc));
+    ok('4.5 服务端候选只来自体检（`auditShotBindings` 一份实现），不另立一份判据',
+      /const aud = story\.auditShotBindings\(shots/.test(scRouteSrc)
+      && /i\.code === 'shot_char_unknown'/.test(scRouteSrc));
+    // ⑨ 红线：名册外的名字不许绑；绑定是**并集**（绝不覆盖人工绑定）
+    ok('4.5 服务端红线：target 必须真的在名册里才绑（名册外如实报 unknown_target）',
+      /byName\.get\(target\.toLowerCase\(\)\)/.test(scStorySrc) && /unknown_target\.push/.test(scStorySrc));
+    ok('4.5 落库是并集语义（与补 5 的自动匹配同一个落点，绝不覆盖人工绑定）',
+      /const cur = Array\.isArray\(sb\.character_ids\)/.test(scRouteSrc) && /cur\.concat\(str\(b\.character_id\)\)/.test(scRouteSrc));
+    // ⑩ 提示词模板必须在内置表里，且**两个变量都在**（变量名对不上 = 名册发不出去 = 模型凭名字编）
+    ok('4.5 认名字用的提示词模板在内置模板表里', scSeedSrc.includes("key: 'shot_char'"));
+    ok('4.5 模板变量与路由传入的键逐字一致（写错就是静默发空）',
+      scSeedSrc.includes('{{角色名册}}') && scSeedSrc.includes('{{未知名字与镜头文字}}')
+      && /'角色名册': roster\.text/.test(scRouteSrc) && /'未知名字与镜头文字': story\.shotCharLines/.test(scRouteSrc));
+    // ⑪ 名册走**唯一一份** `characterRoster`（与生成剧本/分镜发给模型的是同一段文字）
+    ok('4.5 名册复用 characterRoster（唯一一份），不另写一段"认名字专用名册"',
+      /story\.characterRoster\(chars/.test(scRouteSrc) && !/认名字专用名册/.test(scRouteSrc));
+    // ⑬ **`setBusy` 只接受控件**：补 35 立的规矩，本轮真机又抓到一次 ——
+    //    `fillShotChar(names)` 的签名里没有 `btn`，却写了 `setBusy(btn, …)`，
+    //    于是计费确认之后**什么都没发生**，链路上只有 `btn is not defined`（"成功但页面变哑"）
+    ok('4.5 认名字的动作拿得到**被点的那颗按钮**（签名里有 btn，且 setBusy 传的是它）',
+      /async function fillShotChar\(names, btn\)/.test(novelMaxSrc)
+      && /setBusy\(btn, true, '正在认名字'\)/.test(novelMaxSrc)
+      && /fillShotChar\(\[String\(issue\.target_name \|\| ''\)\]\.filter\(Boolean\), e\.currentTarget\)/.test(novelMaxSrc));
+    // ⑫ **两个写入点必须一起写**：只绑不改 → 体检那条永远消不掉（假警报），
+    //    而且再点一次会白花一次模型调用并报"没认出来"（它明明认出来了）
+    ok('4.5 服务端同时写**两处**：绑定 + 把「出场人物」的代称换成本名（只写一处就是假警报）',
+      /patch\.character_ids = cur\.concat/.test(scRouteSrc)
+      && /story\.renameShotCharacter\(sb\.characters/.test(scRouteSrc)
+      && /patch\.characters = renamed/.test(scRouteSrc));
+    ok('4.5 改名只在**真的提到过**这个代称时做（没命中就一个字节都不动）',
+      /if \(renamed !== str\(sb\.characters\)\) patch\.characters = renamed/.test(scRouteSrc));
+    ok('4.5 报告把写进去的两处都列出来（写了两处却只报一处，用户核对不到）',
+      /fields: \['出场人物', '绑定角色'\]/.test(scRouteSrc));
+    ok('4.5 改名走**唯一一份**实现（整词替换 + 去重，子串替换会让"林晚"误伤"林晚秋"）',
+      /function renameShotCharacter\(/.test(scStorySrc) && /SHOT_CHAR_SEP/.test(scStorySrc));
+    // ⑫ 认名字**不进** FILL_TARGETS（那张表的候选都来自卡片库），也不进一键补齐的步骤表
+    ok('4.5 认名字不进 FILL_TARGETS（它的候选来自体检，不是卡片库）',
+      !/shot_char: \{/.test(novelMaxSrc) || !/FILL_TARGETS[\s\S]{0,600}shot_char:/.test(novelMaxSrc));
+    ok('4.5 认名字不进「AI 一键补齐」的步骤表（那条链是"回原文补齐卡片"，依赖 source_id）',
+      !/key: 'shot_char'/.test(novelMaxSrc));
+  }
+
   // 批 8 补 44：AI 一键回原文补齐（把「回原文找」这一族一次做完，只弹一次计费确认）
   {
     const allBody = bodyOf(novelMaxSrc, 'async function fillAll(btn) {');

@@ -731,6 +731,7 @@ export default async function novel(container, params = {}) {
             </div>
             ${it.fixable ? `<button class="btn btn-xs" data-audit-fix="${esc(it.fix_code || it.code)}" data-fix-idx="${i}" style="flex:0 0 auto">${FIX_LABEL[it.fix_code || it.code] || '一键修复'}</button>` : ''}
             ${!it.fixable && it.go ? `<button class="btn btn-xs" data-audit-go="${i}" style="flex:0 0 auto">去处理</button>` : ''}
+            ${it.ai_fix ? `<button class="btn btn-xs btn-primary" data-audit-ai="${i}" style="flex:0 0 auto">${esc(it.ai_fix.label || 'AI 处理')}</button>` : ''}
           </div>`).join('')}
       </div>`;
     // 修复项：只做机械且可解释的三件事，做完重新体检（用户能立刻看到结果变化）
@@ -742,6 +743,19 @@ export default async function novel(container, params = {}) {
       const issue = issues[Number(dataOf(e.currentTarget, 'audit-go'))] || {};
       if (!issue.go) return;
       navigate(issue.go.page, issue.go.params || {});
+    });
+    // AI 出口**挂在问题上**（批 8 补 45）：这条体检项原来既没有 `fixable`、也没有 `go`，
+    // 于是"报出来了、却一个按钮都没有"——用户只能读详情文字自己找去哪一页。
+    // 出口的**名字**由服务端给（`ai_fix.label`），前端不另写一份映射表。
+    on(box, '[data-audit-ai]', 'click', async (e) => {
+      const issue = issues[Number(dataOf(e.currentTarget, 'audit-ai'))] || {};
+      const code = issue.ai_fix && issue.ai_fix.code;
+      if (code !== 'shot_char_bind') return;
+      // 只认**这一条**名字（不顺手把别的名字也认了）—— 一次点击只做一个明确的动作
+      // 传**按钮**（`e.currentTarget`）—— `setBusy` 只接受控件：传容器/undefined 会让整页或整个动作
+      // 静默失败（补 35 的教训；本轮真机又抓到一次：签名里没有 `btn` 却写了 `setBusy(btn, …)`，
+      // 于是确认之后什么都没发生、链路上只有 `btn is not defined`）
+      await fillShotChar([String(issue.target_name || '')].filter(Boolean), e.currentTarget);
     });
     on(box, '[data-audit-fix]', 'click', async (e) => {
       const btn = e.currentTarget;
@@ -1220,10 +1234,14 @@ export default async function novel(container, params = {}) {
     }
     const items = d.assigned_items || [];
     return `
-      <div class="hint-xs" style="margin-top:4px">下面每一${cfg.cast ? '张新卡' : '张'}都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。</div>
+      <div class="hint-xs" style="margin-top:4px">${cfg.intro
+        ? esc(cfg.intro)
+        : `下面每一${cfg.cast ? '张新卡' : '张'}都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。`}</div>
       ${d.note ? `<div class="hint-xs" style="margin-top:6px">${esc(d.note)}</div>` : ''}
       ${items.length ? items.map(rowOf).join('') : ''}
-      ${bucket(`原文确实没写（${(d.not_found || []).length} ${cfg.unit}）—— 这是结论，不是失败`, d.not_found, 'gray')}
+      ${bucket(cfg.notFoundTitle || `原文确实没写（${(d.not_found || []).length} ${cfg.unit}）—— 这是结论，不是失败`, d.not_found, 'gray')}
+      ${bucket(cfg.needCardTitle || '', d.need_card, 'gold')}
+      ${bucket(cfg.unknownTargetTitle || '', d.unknown_target, 'red')}
       ${bucket(`引文对不上原文，已丢弃${cfg.cast ? '、一张卡都没建' : '不写'}（${(d.ungrounded || []).length} ${cfg.unit}）—— 那是它编的`, d.ungrounded, 'red')}
       ${bucket(`没接住，${cfg.cast ? '没有建卡' : '已保持原样'}（模型没给全或编号越界）`, (d.missing || []).concat(d.invalid || [], d.empty || []), 'gold')}
       ${d.no_source ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">没有原文出处，已跳过</span> ${d.no_source} ${esc(cfg.unit)}（人工新建或来自全局归并、没有段号，回原文找无从谈起）</div>` : ''}
@@ -1238,6 +1256,19 @@ export default async function novel(container, params = {}) {
    * 这里只有"界面上有哪几个按钮、各叫什么"，**一个判据都没有** —— "有几张缺"全部来自服务端干跑
    * （与逐个按钮走的是**同一个**端点），前端再抄一份迟早会漂（补 30 的教训）。
    */
+  /**
+   * AI 认名字（批 8 补 45）：落点是**分镜上的绑定**、候选来自**体检**（`shot_char_unknown`），
+   * 所以它不跟 `FILL_TARGETS` 一起（那张表的候选都来自卡片库）。报告正文**共用同一个渲染器**，
+   * 只是桶的名字不同 —— 桶名不是判据，是标题，所以由这一份配置给。
+   */
+  const SHOT_CHAR_FILL = {
+    what: 'AI 认名字', label: '出场人物的名字', unit: '个名字', verb: '已绑定',
+    intro: '下面每一条都能核对：认出来是谁 ← 它依据的镜头文字。对不上镜头文字的一条都没绑。',
+    notFoundTitle: '', // 这一类的"认不出来"分两种（路人 / 需建档），见下面两行
+    needCardTitle: '原著里有这个人、项目里还没有他的档案 —— 先去补一张人物卡（或在角色库里建一个），再回来认一次',
+    unknownTargetTitle: '模型给的本名不在角色名册里（没有绑）—— 它可能认错了人，请人工看一眼',
+  };
+
   // 幕次那一类的"叫什么/报什么单位"（与上面四类一样放在**配置**里，步骤表只留接线）
   const STAGE_FILL = { what: '补分幕次', label: '剧情拍点的幕次', unit: '拍', verb: '已补', stage: true };
 
@@ -1359,6 +1390,52 @@ export default async function novel(container, params = {}) {
    * 钱是**准的**（每一类固定 1 次调用），会随步骤漂的只有"各有多少候选"—— 确认框里明说这一点，
    * 不让人以为报告里的数与刚才看到的不一致是出了错。
    */
+  /**
+   * AI 认名字（批 8 补 45）：把体检报出来的"角色库里找不到的名字"交给 AI 认一遍，认出来就**绑定**。
+   *
+   * 为什么落点是绑定而不是"把镜头里的名字改成本名"（体检文案原来给的那条路）：绑定才是让外貌注入
+   * 生效的那件事，而且它不动用户写的字、是并集语义、随时点得掉（与补 5 的自动匹配同一个落点）。
+   *
+   * `names` 为空 = 认**全部**；体检面板上的按钮传**当前那一个名字** —— 一次点击只做一个明确的动作
+   * （与体检的 `bind_shot_target` 同一条纪律：多绑一个角色会让用户在看报告时莫名其妙）。
+   *
+   * `btn` 是**被点的那颗按钮**（`setBusy` 只接受控件）—— 与 `fillFields`/`fillAll` 同一个形状。
+   */
+  async function fillShotChar(names, btn) {
+    if (!projectId) { toast.err('先在右上角选择项目'); return; }
+    const cfg = SHOT_CHAR_FILL;
+    let dry;
+    try { dry = await api.storyShotCharFill(projectId, { dryRun: true, names }); }
+    catch (e) { toast.err(String((e && e.message) || e)); return; }
+    if (!dry.ok) {
+      // 400 = 结论（这件事现在无从谈起），不是失败 —— 如实说服务端那句话就够了
+      toast(dry.status === 400 ? dry.error : `认名字没做成：${dry.error}`, dry.status === 400 ? 'info' : 'err');
+      return;
+    }
+    const who = names && names.length ? `「${names.join('、')}」` : `体检报出的 ${dry.data.targets} 个名字`;
+    const yes = await costConfirm({
+      count: dry.data.calls, // 一次调用认完全部候选（钱是准的）
+      what: cfg.what,
+      note: `要认的是${who}，涉及 ${dry.data.shots} 个镜头，共 ${dry.data.calls} 次调用。`
+        + '模型只能把名字指到**角色名册里已有的名字**上，认不出来就如实说"是路人"或"需要先建档"；'
+        + '每一条都必须交出**镜头文字里的原话**作为依据，与镜头文字对不上的一律不绑。'
+        + '认出来会直接**绑定**到那些镜头上（不动你在镜头里写的字，绑定随时可以点掉）。',
+    });
+    if (!yes) return;
+    setBusy(btn, true, '正在认名字');
+    try {
+      const r = await api.storyShotCharFill(projectId, { names });
+      if (!r.ok) { toast.err(`认名字没做成：${r.error}`); return; }
+      const d = r.data;
+      toast.ok(`${cfg.what}：${d.assigned}/${d.targets} 个名字认出来了，绑定到 ${d.shots} 个镜头`);
+      if ((d.need_card || []).length) toast(`${(d.need_card || []).length} 个名字原著里有、项目里还没有档案 —— 先去补一张人物卡`, 'info');
+      if ((d.ungrounded || []).length) toast.err(`有 ${(d.ungrounded || []).length} 条的引文对不上镜头文字，已丢弃（那是它编的）`);
+      renderFillReport(d, cfg);
+      await loadCards();
+    } catch (e) { toast.err(String((e && e.message) || e)); }
+    finally { setBusy(btn, false); }
+  }
+
   async function fillAll(btn) {
     if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
     /**

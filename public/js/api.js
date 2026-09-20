@@ -196,6 +196,18 @@ export const api = {
   storyCastFill: (sourceId, opts = {}) => req('POST', '/api/story/cast-fill',
     { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
 
+  /**
+   * AI 认名字（批 8 补 45）：镜头「出场人物」里角色库找不到的名字，让模型对着**镜头自己的文字**
+   * 与角色名册认一遍，认出来就**绑定**（不改用户的文本）。
+   *
+   * 与上面三个补字段/补卡端点同一套机制（干跑闸门 → 一次调用 → 引文核对 → 分桶上报），
+   * 但落点是**分镜上的绑定**、候选来自**体检**，所以它收的是 `project_id` 而不是 `source_id`
+   * —— 没有解析过原著、只生成了分镜的项目也能用。
+   */
+  storyShotCharFill: (projectId, opts = {}) => req('POST', '/api/story/shot-char-fill',
+    { project_id: projectId, names: opts.names || [], dry_run: !!opts.dryRun, model: opts.model },
+    { timeoutMs: TIMEOUT.gen }),
+
   /** 单集拍表 + 前情提要（批 8 补 8）：逐集生成的本集大纲与连续性上下文，纯本地计算 */
   storyEpisodeBrief: (q = {}) => {
     // 这里**没有** qs 助手（本文件一贯用 URLSearchParams 拼查询串）：写 qs(...) 只会在运行时抛

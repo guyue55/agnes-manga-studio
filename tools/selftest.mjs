@@ -2940,6 +2940,146 @@ group('AI 回原文补人物卡（批 8 补 43）');
 
 
 // ══════════════════════════════════════════════════════════════
+// 批 8 补 45：AI 认名字（把补 32 那份"只能人工"的清单真正数完）
+// ══════════════════════════════════════════════════════════════
+// 补 32 立下的方法论是"体检里所有 `fixable: false` 的项 = 必须用户自己动手的清单"，可那份清单
+// 是**顺着 `auditCards` 的码表数出来的** —— 于是漏掉了另一个函数（`auditRefImageGaps`）报出的
+// 一整族（参考图缺口）。本轮先补齐"数清单"这件事本身：`shot_char_unknown` 接上 AI 出口
+// （认出来就**绑定**，不改用户的文本），参考图那一族则**如实记录为什么接不上**（见 docs）。
+// 这里钉的是纯函数层：谁是未知名字只有一份判据、引文核对共用一份、红线（名册外的名字不许绑）。
+group('AI 认名字（批 8 补 45）');
+{
+  const shot = (id, ep, no, chars, scene, extra = {}) => ({
+    id, project_id: 'pj', episode_number: ep, shot_number: no, shot_type: '近景',
+    characters: chars, scene_description: scene, action: '', dialogue: '', narration: '',
+    image_prompt: '', video_prompt: '', ...extra,
+  });
+  const chars = [{ id: 'c1', name: '林晚', alias: '晚娘、阿晚', appearance: '素白衣裙' }];
+
+  // ① **同一份"谁是角色库找不到的名字"**：体检报几个，认名字的候选就必须是那几个。
+  //    抄成两份的后果与补 43 一模一样：体检报 3 个、认名字只认 2 个，第 3 个**永远修不掉**
+  {
+    const shots = [shot('s1', 1, 1, '少女、林晚', '少女推门进来，林晚在灯下缝衣'), shot('s2', 1, 2, '少女', '少女抬头')];
+    const audited = story.auditShotBindings(shots, { characters: chars, cards: [] })
+      .issues.filter((i) => i.code === 'shot_char_unknown').map((i) => i.target_name).sort();
+    const targets = story.shotCharTargets(story.auditShotBindings(shots, { characters: chars, cards: [] })
+      .issues.filter((i) => i.code === 'shot_char_unknown'), new Map(shots.map((x) => [x.id, x])))
+      .map((t) => t.name).sort();
+    eq('认名字的候选与体检报的未知名字**完全一致**（同一份 unknownShotNames）', targets.join(','), audited.join(','));
+    eq('已知的名字（本名或别名）都不进候选', targets.includes('林晚') || targets.includes('晚娘'), false);
+    // 前提：林晚**真的**出现在镜头的出场人物里，否则上面那条是空测（候选本来就不会有他）
+    ok('前提：林晚确实写在某个镜头的「出场人物」里', shots.some((x) => String(x.characters).includes('林晚')));
+  }
+
+  // ② 候选带着**它自己那些镜头**的文字，且引文核对的就是这份文字
+  {
+    const shots = [shot('s1', 1, 1, '少女、林晚', '少女推门进来，林晚在灯下缝衣'), shot('s2', 1, 2, '少女', '少女抬头')];
+    const issues = story.auditShotBindings(shots, { characters: chars, cards: [] }).issues
+      .filter((i) => i.code === 'shot_char_unknown');
+    const t = story.shotCharTargets(issues, new Map(shots.map((x) => [x.id, x])))[0] || {};
+    eq('候选带着它出现的所有镜头', t.shot_ids.length, 2);
+    ok('候选文字里真的出现了这个待确认的名字', String(t.text).includes('少女'), String(t.text).slice(0, 50));
+    ok('候选文字里也带着上下文（画面描述，不是只有名字）', String(t.text).includes('少女抬头'), String(t.text).slice(0, 80));
+    ok('提示词里的候选段落带编号与镜头定位', /1\. 待确认的名字：少女/.test(story.shotCharLines([t]))
+      && /第 1 集第 1 镜/.test(story.shotCharLines([t])));
+    const blank = story.shotCharTargets([{ code: 'shot_char_unknown', target_name: '少女', shot_ids: ['s9'], shots: [] }], new Map())[0] || {};
+    eq('镜头文字全空 → has_text=false（认名字无从谈起，要如实说）', blank.has_text, false);
+  }
+
+  // ③ 引文核对：**认出来的必须带镜头文字里的原话**，对不上整条丢弃、**一个绑定都不写**
+  {
+    const shots = [shot('s1', 1, 1, '少女、林晚', '少女推门进来，林晚在灯下缝衣')];
+    const ts = story.shotCharTargets(story.auditShotBindings(shots, { characters: chars, cards: [] }).issues
+      .filter((i) => i.code === 'shot_char_unknown'), new Map(shots.map((x) => [x.id, x])));
+    const run = (names) => story.applyShotCharBindings(ts, { names }, { characters: chars });
+    const good = run([{ index: 1, target: '林晚', quote: '少女推门进来，林晚在灯下缝衣' }]);
+    eq('引文对得上 → 绑上', good.bindings.length, 1);
+    eq('绑的是**名册里的那个 id**（不是模型给的名字）', (good.bindings[0] || {}).character_id, 'c1');
+    eq('绑定落在**候选自己那些镜头**上', (good.bindings[0] || {}).shot_ids.join(','), 's1');
+    eq('别名也能认（名册里的别名就是名册里的名字）',
+      run([{ index: 1, target: '晚娘', quote: '林晚在灯下缝衣' }]).bindings.length, 1);
+    eq('引文与镜头文字对不上 → 丢弃并计 ungrounded',
+      run([{ index: 1, target: '林晚', quote: '她是个穿红裙子的姑娘' }]).ungrounded.length, 1);
+    eq('对不上时一个绑定都不写', run([{ index: 1, target: '林晚', quote: '她是个穿红裙子的姑娘' }]).bindings.length, 0);
+  }
+
+  // ④ **红线**：`target` 必须在角色名册里才绑 —— 名册外的名字如实报 `unknown_target`，
+  //    既不静默忽略（用户以为认过了），也不硬绑到"最像的那个"（那会注入**别人的脸**）
+  {
+    const shots = [shot('s1', 1, 1, '少女', '少女推门进来')];
+    const ts = story.shotCharTargets(story.auditShotBindings(shots, { characters: chars, cards: [] }).issues
+      .filter((i) => i.code === 'shot_char_unknown'), new Map(shots.map((x) => [x.id, x])));
+    const r = story.applyShotCharBindings(ts, { names: [{ index: 1, target: '林小晚', quote: '少女推门进来' }] }, { characters: chars });
+    eq('名册里没有这个名字 → 一个都不绑', r.bindings.length, 0);
+    eq('名册里没有这个名字 → 如实报 unknown_target（不静默忽略）', r.unknown_target.length, 1);
+    eq('unknown_target 里带着模型给的那个名字（报告要点名）', (r.unknown_target[0] || {}).target, '林小晚');
+  }
+
+  // ⑤ 三个结论桶**互不重叠**，而且都不是失败：路人 / 需建档 / 认出来
+  {
+    const shots = [shot('s1', 1, 1, '少女、丫鬟、掌柜', '少女推门进来，丫鬟端茶，掌柜点头')];
+    const ts = story.shotCharTargets(story.auditShotBindings(shots, { characters: chars, cards: [] }).issues
+      .filter((i) => i.code === 'shot_char_unknown'), new Map(shots.map((x) => [x.id, x])));
+    eq('前提：三个名字都成了候选（否则下面的分桶断言是空测）', ts.length, 3);
+    const byName = (arr) => arr.map((x) => x.name).sort().join(',');
+    const r = story.applyShotCharBindings(ts, {
+      names: [
+        { index: 1, target: '林晚', quote: '少女推门进来' },
+        { index: 2, why: 'passerby', quote: '丫鬟端茶' },
+        { index: 3, why: 'need_card', quote: '掌柜点头' },
+      ],
+    }, { characters: chars });
+    eq('认出来 → bindings', byName(r.bindings), '少女');
+    eq('路人 → passerby（诚实的结论，不绑）', byName(r.passerby), '丫鬟');
+    eq('原著里有、项目里没档案 → need_card（出口是补人物卡）', byName(r.need_card), '掌柜');
+    eq('三个桶加起来正好是全部候选（互不重叠、也不漏）',
+      r.bindings.length + r.passerby.length + r.need_card.length, ts.length);
+    eq('分桶之后没有多余的"没接住"', r.invalid.length + r.empty.length + r.missing.length, 0);
+    // 没回话的算 missing，不能算"没有这个问题"
+    const half = story.applyShotCharBindings(ts, { names: [{ index: 1, target: '林晚', quote: '少女推门进来' }] }, { characters: chars });
+    eq('模型只答了一部分 → 剩下的如实报 missing', half.missing.map((x) => x.name).sort().join(','), '丫鬟,掌柜');
+  }
+
+  // ⑥ 体检那一条**必须有出口**：它原来既没有 `fixable`、也没有 `go`，报告出来了却一个按钮都没有。
+  //    `fixable` 仍为 false（认名字要花钱，混进"免费的一键修复"会让用户在不知情时花钱）
+  {
+    const shots = [shot('s1', 1, 1, '少女', '少女推门进来')];
+    const one = story.auditShotBindings(shots, { characters: chars, cards: [] }).issues
+      .find((i) => i.code === 'shot_char_unknown') || {};
+    eq('`shot_char_unknown` 仍然不是"免费一键修复"', one.fixable, false);
+    eq('但它有 AI 出口（界面据此渲染按钮，名字由服务端给）', (one.ai_fix || {}).label, 'AI 认名字');
+    eq('AI 出口的动作码与问题码分开（问题码 ≠ 动作码）', (one.ai_fix || {}).code === one.code, false);
+    ok('详情里三种情形都写了出口（代称/需建档/路人）',
+      /AI 认名字/.test(one.detail) && /AI 补人物卡/.test(one.detail) && /路人/.test(one.detail));
+  }
+
+  // ⑦ **两个写入点必须一起写**：只绑不改的话 `shot_char_unknown` 永远消不掉
+  //    （体检判的是「出场人物」那段**文本**），而它宣称的后果其实已经修好了 —— 假警报比不检查更糟；
+  //    更糟的是再点一次会真的花钱：候选照旧在 → 再调一次模型 → 绑定已存在 → 报"没认出来"（而它认出来了）
+  {
+    const f = story.renameShotCharacter;
+    eq('代称换成本名（整词替换）', f('少女、林晚', '少女', '林晚'), '林晚');
+    eq('**不误伤子串**（"林晚"不许把"林晚秋"改掉）', f('林晚秋', '林晚', '苏婉儿'), '林晚秋');
+    eq('保序（只动命中的那一个）', f('掌柜、少女、丫鬟', '少女', '林晚'), '掌柜、林晚、丫鬟');
+    eq('换完**去重**（同一句里既有代称又有本名时不能出现两个）', f('少女、林晚', '少女', '林晚'), '林晚');
+    eq('分隔符混用也认（统一回顿号）', f('少女, 林晚 / 丫鬟', '少女', '苏婉儿'), '苏婉儿、林晚、丫鬟');
+    eq('没命中就一个字节都不动（能不动就不动）', f('林晚', '少女', '林晚'), '林晚');
+    eq('名字相同 → 不动（不许无谓地改写用户的字段）', f('林晚、沈砚', '林晚', '林晚'), '林晚、沈砚');
+    eq('空文本不炸', f('', '少女', '林晚'), '');
+  }
+
+  // ⑧ 模板：`shot_char` 必须在内置模板里，且**两个变量都在**（变量名对不上 = 名册发不出去 = 模型凭名字编）
+  {
+    const t = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'shot_char');
+    ok('内置模板里有 shot_char', !!t);
+    eq('模板带 builtin_version（补 28 的同步机制要靠它）', Number.isInteger(t.builtin_version), true);
+    ok('模板里有 {{角色名册}} 变量', String(t.content).includes('{{角色名册}}'));
+    ok('模板里有 {{未知名字与镜头文字}} 变量', String(t.content).includes('{{未知名字与镜头文字}}'));
+    ok('模板要求"只填名册里的名字"（红线写进提示词，不只是服务端兜底）', /名册里出现过的名字/.test(t.content));
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // 批 8 补 29：字段闭环（系统认识的字段，必须有提示词在向模型要）
 // ══════════════════════════════════════════════════════════════
 // 两个真相来源：`CARD_FIELDS` 是**归一化**的真相（哪些字段存在、怎么排序、怎么显示），

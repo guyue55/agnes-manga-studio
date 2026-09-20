@@ -2435,6 +2435,115 @@ try {
       }
     }
 
+    group('AI 认名字（批 8 补 45：真机点一遍 —— 出口挂在问题上、认出来就绑定并改名、体检那条真的消失）');
+    {
+      // 为什么必须有真机契约：这一轮修的是"体检报出来了、却一个按钮都没有"（补 19 立的规矩：
+      // 体检不能只有结论、没有出口），而按钮**渲染在报告行里**、点击要过计费确认、结果要写回分镜
+      // 再回到报告里 —— 每一段单独绿都不代表"点一次真的走完了"。
+      // 这一组**刻意不建原著**：认名字的候选来自**体检**（分镜侧），所以没有解析过原著的项目也必须能用。
+      const mock = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          let b = {}; try { b = JSON.parse(body); } catch {}
+          const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+          if (req.url === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"names"\s*:/.test(um)) {
+              // 引文必须来自**这个候选自己那些镜头**的文字：取真的提到这个名字的那一行
+              const parts = um.split(/^\d+\. 待确认的名字：/m).slice(1);
+              const rows = parts.map((part, i) => {
+                const name = (/^([^\n（]+)/.exec(part) || [])[1] || '';
+                const lines = String(part.split('镜头文字：')[1] || '').split('\n').map((x) => x.trim());
+                const line = lines.find((x) => name && x.includes(name)) || lines.find((x) => x.length >= 4) || '';
+                return { index: i + 1, target: '林晚', quote: line.slice(0, 14) };
+              });
+              return send({ choices: [{ message: { content: JSON.stringify({ names: rows }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b2) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2) });
+      const SKIP = 'agnes.cost.skipUntil';
+      const clearTicket = () => cdp.eval(`localStorage.removeItem('${SKIP}'); return true;`);
+      const restoreTicket = () => cdp.eval(`localStorage.setItem('${SKIP}', String(Date.now() + 86400000)); return true;`);
+      const modalText = () => cdp.eval(`return (document.querySelector('.modal-mask')||{}).innerText||'';`);
+      const reportText = () => cdp.eval(`return (document.querySelector('#nov-fill-box')||{}).innerText||'';`);
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'shotchar-key' }) });
+        pid = (await POST('/api/projects', { name: '认名字真机验收剧' })).id;
+        const ch = await POST('/api/characters', { project_id: pid, name: '林晚', alias: '晚娘', appearance: '素白衣裙', is_locked: true });
+        // 一个"角色库里找不到的名字"—— 就是体检要报的那一条
+        const mk = await POST('/api/storyboards', { rows: [
+          { project_id: pid, episode_number: 1, shot_number: 1, characters: '少女、林晚', scene_description: '少女推门进来，林晚在灯下缝衣' },
+        ] });
+        ok('前置：镜头建好了（否则下面点按钮时压根没有候选）', mk.inserted === 1, JSON.stringify(mk));
+        const codes0 = ((await J(`/api/story/audit?project_id=${pid}`)).shot_issues || []).map((x) => x.code);
+        ok('前置：体检报出「出场人物里角色库找不到的名字」（否则这一组测的是空气）',
+          codes0.includes('shot_char_unknown'), JSON.stringify(codes0));
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-audit');`), '体检按钮', 15000);
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-audit-ai]');`), 'AI 出口按钮', 15000);
+
+        // ① 出口**挂在问题上**：那一行里既有问题标题、也有按钮（不是另找一排工具栏）
+        const rowText = await cdp.eval(`const b=document.querySelector('[data-audit-ai]'); return b ? ((b.closest('.row')||{}).innerText||'') : '';`);
+        ok('AI 出口就渲染在**报出这条问题的那一行**里（不是让用户自己去别处找）',
+          /少女/.test(rowText) && /AI 认名字/.test(rowText), JSON.stringify(String(rowText).slice(0, 200)));
+        const btnLabel = await cdp.eval(`return (document.querySelector('[data-audit-ai]')||{}).innerText||'';`);
+        ok('按钮上的名字来自服务端（前端不另写一份映射表）', /AI 认名字/.test(btnLabel), JSON.stringify(btnLabel));
+
+        // ② 点它：先免费干跑，再**一个**计费确认，并把后果说清
+        await clearTicket();
+        await cdp.eval(`document.querySelector('[data-audit-ai]').click(); return true;`);
+        let confirmText = '';
+        for (let i = 0; i < 40; i++) { const t = await modalText(); if (/AI 认名字/.test(t)) { confirmText = t; break; } await sleep(200); }
+        ok('点一次弹**一个**计费确认，次数是干跑报的那个数（1 个名字 = 1 次）',
+          /共 1 次/.test(confirmText), JSON.stringify(confirmText.slice(0, 300)));
+        ok('确认框把后果说清：认出来会直接绑定、且**不动你在镜头里写的字**…（这一轮改了写法，见下条）',
+          /绑定/.test(confirmText) && /1 个名字|「少女」/.test(confirmText), JSON.stringify(confirmText.slice(0, 400)));
+        let report = '';
+        for (let i = 0; i < 80; i++) {
+          await cdp.eval(`const y=document.querySelector('.modal-mask [data-yes]'); if (y) y.click(); return true;`);
+          report = (await reportText()) || report;
+          if (/林晚/.test(report) && /依据原文原话/.test(report)) break;
+          await sleep(300);
+        }
+        ok('报告把"认出来是谁"与**依据的镜头文字原话**摆在页面上（唯一能让人核对的依据）',
+          /林晚/.test(report) && /依据原文原话/.test(report) && /少女/.test(report), JSON.stringify(report.slice(0, 400)));
+
+        // ③ 落库：**两处一起写**（绑定 + 把代称换成本名），否则体检那条永远消不掉
+        const s1 = ((await J(`/api/storyboards?project_id=${pid}&episode=1`)) || [])[0] || {};
+        ok('分镜上真的绑定了林晚（落库，不是只报了个数）',
+          (s1.character_ids || []).includes(ch.id), JSON.stringify(s1.character_ids));
+        ok('「出场人物」里的代称**换成了本名**（体检判的就是这段文本；只绑不改会留下永久假警报）',
+          s1.characters === '林晚', JSON.stringify(s1.characters));
+
+        // ④ 最强的一条端到端证据：重新体检，这一条**真的消失了**（而且按钮也跟着没了）
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await sleep(1200);
+        const stillThere = await cdp.eval(`return !!document.querySelector('[data-audit-ai]');`);
+        ok('重新体检：认过的名字不再报（否则用户会永远看到一条修不好的问题）', stillThere === false, String(stillThere));
+        const codes1 = ((await J(`/api/story/audit?project_id=${pid}`)).shot_issues || []).map((x) => x.code);
+        ok('服务端体检也确认这条没了', !codes1.includes('shot_char_unknown'), JSON.stringify(codes1));
+        const rej = await cdp.eval(`return JSON.stringify((window.__uiRejects||[]).slice(0,3));`);
+        ok('认名字没有留下未处理的拒绝（"成功但页面已经变哑"最难发现）', rej === '[]', rej);
+      } finally {
+        await restoreTicket().catch(() => null);
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('AI 一键回原文补齐（批 8 补 44：真机点一遍 —— 只弹一次确认、失败只丢一步、报告按步分开）');
     {
       // 为什么必须有真机契约：这一轮新增的是**用户会点**的按钮，而且它把 5 个端点**串起来**跑 ——
