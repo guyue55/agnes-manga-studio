@@ -4313,6 +4313,89 @@ group('内置提示词同步（批 8 补 28：改了提示词，老库也能收�
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+group('分镜输入指纹覆盖名册（批 8 补 38：写入点与复算点必须同源）');
+{
+  const pj = await api('POST', '/api/projects', { name: '分镜名册指纹测试剧' });
+  const PID = pj.data.id;
+  // 分镜的过期判定挂在"分集骨架"上（按集比对），所以这份原著要能排出集来
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '分镜名册·原著', text: `__LONGARC__${'长弧线的故事。'.repeat(40)}`,
+  });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const SRC = an.data.source.id;
+  const staleUrl = `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`;
+  const CONTENT = '第 1 集正文：林晚推开门，看见雨。';
+
+  // ① 没有角色：指纹必须**逐字节等同于"只哈希正文"**（老数据不许凭空报过期）
+  const sc = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'story_concept', episode_number: 1, title: '第 1 集', content: CONTENT,
+  });
+  const SID = sc.data.id;
+  const sb = await api('POST', '/api/storyboards', {
+    rows: [{ project_id: PID, episode_number: 1, shot_number: 1, scene_description: '推门', source_script_id: SID }],
+  });
+  const DIG0 = sb.data.rows[0].script_digest;
+  eq('没有角色时，入库指纹 == 只哈希正文（补 38 之前的老数据照样是 ok，不产生假警报）',
+    DIG0, storyLib.digestText(CONTENT));
+  const st0 = (await api('GET', staleUrl)).data;
+  eq('（前提）这一集有分镜', (st0.episodes.find((x) => x.episode_number === 1) || {}).shots, 1);
+  eq('没有角色 → 分镜 ok', (st0.episodes.find((x) => x.episode_number === 1) || {}).shot_state, 'ok');
+
+  // ② 建一个角色 → 名册进提示词，指纹必须跟着变
+  const ch = await api('POST', '/api/characters', {
+    project_id: PID, name: '林晚', alias: '晚晚', appearance: '黑色长直发', personality: '冷静',
+  });
+  const CID = ch.data.id;
+  const st1 = (await api('GET', staleUrl)).data;
+  eq('**加了角色 → 这一集的分镜报 stale**（补 38 的验收：模型下次会看到不同的名册）',
+    (st1.episodes.find((x) => x.episode_number === 1) || {}).shot_state, 'stale');
+  eq('分镜过期单独计数（不与剧本过期混在一起）', st1.counts.shot_stale, 1);
+  eq('（前提）剧本侧不受影响（它没有 plan_digest）', st1.counts.script_stale, 0);
+
+  // ③ 按**新名册**重新入库 → 立刻回到 ok（证明写入点与复算点算的是同一个东西）
+  const sb2 = await api('POST', '/api/storyboards', {
+    rows: [{ project_id: PID, episode_number: 1, shot_number: 1, scene_description: '推门', source_script_id: SID }],
+  });
+  const DIG1 = sb2.data.rows[0].script_digest;
+  ok('新入库的指纹与旧的不同（名册真的进去了，不是"永远等于哈希正文"）', DIG1 !== DIG0, `${DIG0} → ${DIG1}`);
+  const st2 = (await api('GET', staleUrl)).data;
+  eq('写入点与复算点同源 → 重新入库后回到 ok（两处若各算一份，这里会永久报过期）',
+    (st2.episodes.find((x) => x.episode_number === 1) || {}).shot_state, 'ok');
+
+  // ④ 反向：改**不进名册**的字段不许乱喊过期（假警报比不检查更糟）
+  const putP = await api('PUT', `/api/characters/${CID}`, { personality: '暴躁', role: '配角' });
+  eq('（前提）personality/role 确实写进去了 —— 否则下面那条是空的（注意事项 11）',
+    [putP.data.personality, putP.data.role].join('/'), '暴躁/配角');
+  const st3 = (await api('GET', staleUrl)).data;
+  eq('只改 personality/role（不进名册）→ 分镜仍是 ok',
+    (st3.episodes.find((x) => x.episode_number === 1) || {}).shot_state, 'ok');
+  // 正向：改外貌（进名册那一行）必须报过期
+  await api('PUT', `/api/characters/${CID}`, { appearance: '短发' });
+  const st4 = (await api('GET', staleUrl)).data;
+  eq('改了外貌（名册那一行长相）→ 分镜报 stale',
+    (st4.episodes.find((x) => x.episode_number === 1) || {}).shot_state, 'stale');
+
+  // ⑤ 删光角色 → 指纹回到最初那一版（可逆，不留痕）
+  await api('DELETE', `/api/characters/${CID}`);
+  const sb3 = await api('POST', '/api/storyboards', {
+    rows: [{ project_id: PID, episode_number: 1, shot_number: 1, scene_description: '推门', source_script_id: SID }],
+  });
+  eq('删光角色后指纹逐字节回到最初那一版', sb3.data.rows[0].script_digest, DIG0);
+
+  // ⑥ 项目范围：别的项目的同名角色不该进这份指纹（否则跨项目互相干扰）
+  const pj2 = await api('POST', '/api/projects', { name: '分镜名册指纹·别的项目' });
+  await api('POST', '/api/characters', { project_id: pj2.data.id, name: '林晚', appearance: '完全不同的长相' });
+  const sb4 = await api('POST', '/api/storyboards', {
+    rows: [{ project_id: PID, episode_number: 1, shot_number: 1, scene_description: '推门', source_script_id: SID }],
+  });
+  eq('别的项目的角色不进这份指纹（按剧本所属项目取角色）', sb4.data.rows[0].script_digest, DIG0);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+  await api('DELETE', `/api/projects/${pj2.data.id}?cascade=1`);
+}
+
+
 // ── 收尾 ─────────────────────────────────────────────────────
 srv.kill();
 mock.close();

@@ -1829,6 +1829,21 @@ try {
         const sb2 = await J(`/api/storyboards?project_id=${pid}&episode=2`);
         ok('分镜写进了对应的那一集（不串集）', sb2.length === 3 && sb2.every((x) => Number(x.episode_number) === 2), JSON.stringify(sb2.map((x) => x.episode_number)));
         ok('没有剧本的集如实跳过、不调用模型', /成功 1/.test(bar8) && /跳过 1/.test(bar8) && /第 1 集/.test(bar8) && sbCalls === 1, JSON.stringify({ bar: bar8.replace(/\s+/g, ' ').slice(0, 110), calls: sbCalls }));
+        // 批 8 补 38：页面这条路必须把"来源剧本 id"传下去 —— 少传一个参数不会报任何错，
+        // 但过期体检对整批分镜就永远只能说"不知道"（unknown 既不算 ok 也不算该重生成），
+        // 于是"剧本改了、分镜还是旧的"再也报不出来。只有真机看得见页面到底传了什么。
+        ok('逐集生成的分镜记下了来源剧本 id 与指纹（少传一个参数会静默退化成"不知道"）',
+          sb2.every((x) => String(x.source_script_id || '') === String(eps[0].id))
+          && sb2.every((x) => /^[0-9a-f]{8}$/.test(String(x.script_digest || ''))),
+          JSON.stringify(sb2.map((x) => [x.source_script_id, x.script_digest])));
+        // 这个 J 返回的是**裸响应体**（本项目不做统一信封）：analyze 的 source 在顶层，
+        // 不是 apitest 里那个 `{status, data}` 包装 —— 取错会抛 TypeError **中止整轮**（注意事项 14/5）
+        const srcId8 = String((((an || {}).source) || {}).id || '');
+        ok('（前提）拿得到这份原著的 id —— 否则下面的过期判定是空的', !!srcId8, JSON.stringify(Object.keys(an || {})));
+        const stSb = await J(`/api/story/staleness?project_id=${pid}&source_id=${srcId8}`);
+        const ep2 = (stSb.episodes || []).find((x) => x.episode_number === 2) || {};
+        ok('这一集的分镜在过期体检里是"与输入一致"（不是 unknown、也不是过期）',
+          ep2.shot_state === 'ok', JSON.stringify({ shots: ep2.shots, shot_state: ep2.shot_state, counts: stSb.counts }));
         ok('逐集结果与汇总都报数（进度条逐集、toast 汇总）',
           /成功 1 · 跳过 1 · 失败 0/.test(bar8.replace(/\s+/g, ' ')) && /完成 1 集/.test(toast8) && /3 个镜头/.test(toast8),
           JSON.stringify({ bar: bar8.replace(/\s+/g, ' ').slice(0, 90), toast: toast8.replace(/\s+/g, ' ').slice(0, 110) }));

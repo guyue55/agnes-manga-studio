@@ -1913,6 +1913,47 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('体检把"名字在角色库里找不到"单独报一类（名册的验收环）',
     /shot_char_unknown/.test(storySrc) && /UNKNOWN_NAME_STOP/.test(storySrc) && /splitShotCharacters/.test(storySrc));
 
+  // 批 8 补 38：分镜提示词真正发出去的是 `角色名册 + 正文`（补 6 加的），而它的过期判定
+  // 从前只哈希正文 —— 加了角色/改了长相，模型下次看到不同的名册，指纹却一个字都不变
+  // （与补 36/37 同一类病，只是发生在"剧本 → 分镜"这一层）。
+  // 两处必须**同一个构造函数**：入库那一刻（写入点）与体检复算（判定侧）。
+  ok('分镜指纹把名册算进去（唯一实现），且判定侧不再退回"只哈希正文"',
+    (storySrc.match(/function storyboardInputDigest\(/g) || []).length === 1
+    && /storyboardInputDigest\(curScript, opts\.characters/.test(storySrc)
+    && !/digestText\(curScript\.content\)/.test(storySrc));
+  ok('分镜指纹复用同一个名册渲染器（不是第二份拼装）',
+    (() => {
+      const i = storySrc.indexOf('function storyboardInputDigest(');
+      if (i < 0) return false;
+      const j = storySrc.indexOf('\n}', i);
+      const body = storySrc.slice(i, j);
+      return body.length > 100 && /characterRoster\(chars, \{ text/.test(body)
+        && /digestText\(/.test(body);
+    })());
+  // 自带一个取函数体的助手：下面那个 `bodyAt` 在本文件里是**后**定义的（const，TDZ），
+  // 提前借用它会以 ReferenceError 崩掉整轮 —— 崩掉也算"红"，但看不出哪几条钉在管（注意事项 14）
+  const fnBody = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') d++;
+      else if (src[j] === '}') { d--; if (!d) return src.slice(i, j + 1); }
+    }
+    return '';
+  };
+  {
+    const sd = fnBody(routesSrc, 'function sourceDigest(');
+    ok('写入点按**剧本所属项目**取角色算指纹（跨项目不该互相干扰）',
+      /story\.storyboardInputDigest\(sc,/.test(sd) && /c\.project_id === sc\.project_id/.test(sd)
+      && /store\.list\('characters'/.test(sd), sd.slice(0, 200));
+  }
+  {
+    const st = fnBody(routesSrc, "on('GET', '/api/story/staleness'");
+    ok('判定侧把角色一并交给体检（漏传 → 复算退回"只哈希正文" → 每一集永久报过期）',
+      /characters: store\.list\('characters'/.test(st), st.slice(0, 240));
+  }
+
   // ── 镜头绑定自动匹配与镜头侧体检（批 8 补 5）──
   ok('api.js 有自动匹配方法与正确路径',
     /storyboardsAutoBind: \(body\)/.test(apiSrc) && /'\/api\/storyboards\/auto-bind'/.test(apiSrc));

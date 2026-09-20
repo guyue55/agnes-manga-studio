@@ -1434,7 +1434,7 @@ group('画风写死体检（批 8 补 7：提示词里不该写死系统要注�
 {
   // 批 8 补 37：名册构造器搬到了服务端（唯一一份）—— 它现在要进输入指纹，
   // 而指纹是服务端算的；前端那份已删（同一套排序规则写两遍必然分叉）
-  const { characterRoster, splitShotCharacters, auditShotBindings } = require('./lib/story.js');
+  const { characterRoster, storyboardInputDigest, splitShotCharacters, auditShotBindings } = require('./lib/story.js');
   const chars = [
     { name: '林晚', alias: '晚晚、林老板', appearance: '黑色长直发垂至腰间，丹凤眼，左眉尾有一颗小痣，皮肤偏冷白', outfit: '白色衬衫', is_locked: true },
     { name: '顾寒', alias: ['阿寒'], appearance: '黑甲', is_locked: false },
@@ -3042,6 +3042,59 @@ group('逐集生成也要看见全剧设定（批 8 补 36：一份渲染 / 指�
     ok('超长主线原样进设定块（不静默截断）', bigText.includes('长'.repeat(5000)));
     ok('设定块长度如实可数（界面据此说出"带了多大"）', bigText.length > 5000, String(bigText.length));
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+group('分镜输入指纹要覆盖名册（批 8 补 38：剧本 → 分镜这一层也有同一类病）');
+{
+  const { characterRoster, storyboardInputDigest, auditStaleness, digestText, planEpisodes } = require('./lib/story.js');
+  const TEXT = '第 1 集正文：林晚推开门，看见顾寒站在雨里。';
+  const script = { id: 'sc1', project_id: 'p1', episode_number: 1, content: TEXT, created_at: '2024-01-01T00:00:00Z' };
+  const lin = { name: '林晚', alias: '晚晚', appearance: '黑色长直发' };
+  const gu = { name: '顾寒', appearance: '黑甲' };
+
+  // ① 没有角色时**逐字节等同于从前**（不 push 空串）——否则一个角色都没有的项目凭空多出一批过期
+  eq('（前提）这份正文确实提到了角色，名册不该是空的',
+    characterRoster([lin, gu], { text: TEXT }).count, 2);
+  eq('一个角色都没有时，分镜指纹逐字节等同于"只哈希正文"（老数据不许凭空报过期）',
+    storyboardInputDigest(script, []), digestText(TEXT));
+  eq('传 undefined 也一样（调用方忘了给 characters 不该变成另一种指纹）',
+    storyboardInputDigest(script, undefined), digestText(TEXT));
+
+  // ② 名册进指纹：加角色/改外貌要变；顺序无关；不进名册的字段不许变
+  const base = storyboardInputDigest(script, [lin, gu]);
+  ok('有角色时指纹与"只哈希正文"不同（名册真的进去了）', base !== digestText(TEXT), base);
+  eq('角色顺序无关（名册内部会排序，调用方拿到什么顺序都算同一个指纹）',
+    storyboardInputDigest(script, [gu, lin]), base);
+  eq('只改 personality（不进名册）→ 指纹不变（反向钉：不许把无关改动算成过期）',
+    storyboardInputDigest(script, [Object.assign({}, lin, { personality: '冷静' }), gu]), base);
+  eq('只改 role（不进名册）→ 指纹不变',
+    storyboardInputDigest(script, [Object.assign({}, lin, { role: '主角' }), gu]), base);
+  ok('改外貌 → 指纹变（名册那一行长相确实进了提示词）',
+    storyboardInputDigest(script, [Object.assign({}, lin, { appearance: '短发' }), gu]) !== base);
+  ok('加一个角色 → 指纹变（模型下次会看到不同的名册）',
+    storyboardInputDigest(script, [lin, gu, { name: '苏婉儿', appearance: '红衣' }]) !== base);
+  eq('空正文 → 空串（"不知道来源"要与"内容一致"区分开）', storyboardInputDigest({ content: '' }, [lin]), '');
+  eq('没有剧本行 → 空串', storyboardInputDigest(null, [lin]), '');
+
+  // ③ 端到端：旧分镜（按旧名册生成）在名册变了之后必须报 stale
+  const beats = [{ kind: 'plot', name: '推门', stage: '起', order: 1, conflict: 'C' }];
+  const plan = planEpisodes(beats, { perEpisode: 2 });
+  const shots = [{ episode_number: 1, source_script_id: 'sc1', script_digest: base }];
+  eq('（前提）名册没变 → 分镜是 ok',
+    auditStaleness(plan, [script], shots, { withPrior: false, characters: [lin, gu] }).episodes[0].shot_state, 'ok');
+  eq('加了角色 → 这一集的分镜报 stale',
+    auditStaleness(plan, [script], shots, { withPrior: false, characters: [lin, gu, { name: '苏婉儿' }] }).episodes[0].shot_state, 'stale');
+  eq('改了外貌 → 这一集的分镜报 stale',
+    auditStaleness(plan, [script], shots, { withPrior: false, characters: [Object.assign({}, lin, { appearance: '短发' }), gu] }).episodes[0].shot_state, 'stale');
+  eq('只改 personality → 分镜仍是 ok（不报假警报）',
+    auditStaleness(plan, [script], shots, { withPrior: false, characters: [Object.assign({}, lin, { personality: '冷静' }), gu] }).episodes[0].shot_state, 'ok');
+  // 反事实：**判定侧漏挂 characters** 时，复算退回"只哈希正文"，而入库那份是"名册 + 正文" ——
+  // 两边算的不是同一个东西，于是**每一集都永久报过期**（假警报比不检查更糟，同补 37 的 LB 对照）
+  eq('（反事实）判定侧漏挂 characters → 名册没变也报 stale（两处必须同源，否则每集永久假警报）',
+    auditStaleness(plan, [script], shots, { withPrior: false }).episodes[0].shot_state, 'stale');
+  eq('删光角色 → 指纹回到"只哈希正文"那一版（可逆，不留痕）',
+    storyboardInputDigest(script, []), base === digestText(TEXT) ? base : digestText(TEXT));
 }
 
 console.log(`\n${'═'.repeat(52)}`);
