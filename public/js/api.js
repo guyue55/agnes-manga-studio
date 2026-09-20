@@ -180,6 +180,7 @@ export const api = {
    */
   storyStageFill: (sourceId, opts = {}) => req('POST', '/api/story/stage-fill',
     { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
+  storyLookFill: (sourceId, opts = {}) => req('POST', '/api/story/look-fill', { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
 
   /** 单集拍表 + 前情提要（批 8 补 8）：逐集生成的本集大纲与连续性上下文，纯本地计算 */
   storyEpisodeBrief: (q = {}) => {

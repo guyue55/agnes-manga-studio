@@ -147,6 +147,9 @@ const mock = http.createServer((req, res) => {
           // 批 8 补 28：剧情卡的 involved 里放一个"查无此人"的名字（林晚有卡、苏婉儿没有），
           // 只在带标记的原文上生效 —— 否则会污染其它分组的卡片集合与计数
           ...(userMsg.includes('__PLOTCAST__') ? [{ kind: 'plot', name: '夜访对峙', stage: '起', conflict: '被拦', turn: '亮身份', outcome: '放行', involved: '林晚、苏婉儿' }] : []),
+          // 批 8 补 33：多两张"没有外貌也没有服装"的人物卡 —— 补长相要有多张候选才验得了
+          // "只补缺的、已有的一个都不动"，以及"没接住的/对不上原文的分别计数"
+          ...(userMsg.includes('__LOOKFILL__') ? [{ kind: 'character', name: '苏婉儿' }, { kind: 'character', name: '裴无咎' }] : []),
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
@@ -193,6 +196,30 @@ const mock = http.createServer((req, res) => {
         // 默认：全部给"转"（不是"合"，也不是"起"）。这样"人定过的那张"只要不是"转"，
         // 它保持不变就说明服务端**没有覆盖**它（若默认值恰好等于它的原值，那条断言就没有牙了）
         return send(200, { choices: [{ message: { content: JSON.stringify({ stages: mk('转') }) } }] });
+      }
+      // 批 8 补 33：补人物长相。按提示词里的 "looks" 分流（只有这个模板会要 looks）。
+      // 默认分支**必须给真引文**：从提示词里那张卡自己的原文片段里截一段原话。
+      // 服务端会把 quote 与原文逐字比对 —— mock 要是随手编一句，连"顺利路径"都过不去，
+      // 而那条路径正是这项功能的全部意义（引文可验证 = "抽取"与"编造"之间唯一可机械判定的分界线）
+      if (/"looks"\s*:/.test(userMsg)) {
+        const parts = userMsg.split(/^\d+\. 人物：/m).slice(1);
+        const looks = parts.map((part, i) => {
+          const body = String(part.split('原文片段：')[1] || '');
+          const lines = body.split('\n').map((x) => x.trim());
+          // 挑一段真正的原文当引文；避开标记本身（标记是我们塞进去的，不是"原文里的原话"）
+          const line = lines.find((x) => x.length >= 12 && !x.includes('__')) || lines.find((x) => x.length >= 8) || '';
+          return { index: i + 1, found: true, appearance: `模型补的外貌${i + 1}`, outfit: `模型补的服装${i + 1}`, quote: line.slice(0, 12) };
+        });
+        const all = (rows) => send(200, { choices: [{ message: { content: JSON.stringify({ looks: rows }) } }] });
+        // __NOLOOK__：每一张都如实回"原文没写" → 服务端必须计 not_found、一张都不写
+        if (userMsg.includes('__NOLOOK__')) return all(parts.map((_, i) => ({ index: i + 1, found: false })));
+        // __FAKELOOK__：引文是**编的**（原文里根本没有这句）→ 服务端必须整条丢弃并计 ungrounded
+        if (userMsg.includes('__FAKELOOK__')) return all(looks.map((x) => ({ ...x, quote: '她生得绝美无双，举世罕有' })));
+        // __LONGLOOK__：引文是真的（能过核对），但外貌超长 → 必须过与手改**同一把尺子**
+        if (userMsg.includes('__LONGLOOK__')) return all(looks.map((x) => ({ ...x, appearance: '长'.repeat(500) })));
+        // __GARBAGE__：根本不是 JSON → 这次调用算失败，不许动任何卡片
+        if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没写外貌。' } }] });
+        return all(looks);
       }
       if (cb.model === 'mock-reject-json' && cb.response_format) return send(400, { error: { message: 'response_format not supported by this gateway' } });
       if (cb.model === 'mock-deny-key' && cb.response_format) return send(401, { error: { message: 'bad key' } });
@@ -3352,6 +3379,132 @@ group('AI 补分幕次（批 8 补 32：把"一格一格填"的活交给模型�
   ok('新建项目确实没有卡片（对照用）', Array.isArray((await api('GET', `/api/story/cards?project_id=${pj2.data.id}`)).data));
 }
 
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 33：AI 回原文补人物长相（找到的必须带原文原话）
+// ══════════════════════════════════════════════════════════════
+group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是编的）');
+{
+  const pj = await api('POST', '/api/projects', { name: '补长相测试剧' });
+  const PID = pj.data.id;
+  // 标记放**最后**：它只用来让 mock 的抽取分支多给两张人物卡，
+  // 别落在名字附近 —— 否则"原文片段"里会混进我们自己的标记
+  const NOVEL = '顾寒立在檐下，玄色劲装，腰间悬着一柄短刀。'.repeat(4)
+    + '苏婉儿撑着油纸伞，杏色襦裙，鬓边一支银簪。'.repeat(4)
+    + '裴无咎披着旧斗篷，面容枯瘦，左眼一道旧疤。'.repeat(4)
+    + '林晚推门进来，一身洗得发白的青衫。'.repeat(4)
+    + '__LOOKFILL__';
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '补长相·原著', text: NOVEL, reduce: false });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const src = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+  const listChars = async () => (await api('GET', `/api/story/cards?source_id=${src.id}&kind=character`)).data;
+  const byName = async (n) => (await listChars()).find((c) => c.name === n) || {};
+  // 只清"模型补的那些"，把林晚（appearance='白衣'）**一直留作对照组** ——
+  // 它每轮都在候选名单之外，所以"它没被动"这件事在每一个用例里都成立（不只是第一个用例）
+  const clearLooks = async () => {
+    for (const c of await listChars()) {
+      if (c.appearance === '白衣') continue;
+      await api('PUT', `/api/story/cards/${c.id}`, { appearance: '', outfit: '' });
+    }
+  };
+  // "有没有东西被写进去"一律**排除林晚那张对照组** —— 它的 '白衣' 是解析时抽到的、本来就在，
+  // 把它算进来会让"一个字都没落库"这类断言恒为 1（第一版就是这么红的）
+  const filled = async () => (await listChars()).filter((c) => (c.appearance || c.outfit) && c.appearance !== '白衣').length;
+  const chars0 = await listChars();
+  // mock 的抽取默认给"林晚（有外貌）+ 顾寒（没外貌）"，__LOOKFILL__ 再加苏婉儿/裴无咎（都没外貌）
+  eq('拿到了 4 张人物卡', chars0.length, 4);
+  eq('其中 3 张既没外貌也没服装（林晚有"白衣"，不该被碰）', chars0.filter((c) => !c.appearance && !c.outfit).length, 3);
+  eq('林晚是"已经有长相"的那张（下面用它验"已有的一个都不动"）', (await byName('林晚')).appearance, '白衣');
+
+  // ① 干跑：先如实告诉界面"要补几张、调几次"，此时一个字都不许写
+  const dry = await api('POST', '/api/story/look-fill', { source_id: src.id, dry_run: true });
+  eq('干跑 200', dry.status, 200);
+  eq('干跑如实报出要补的张数', dry.data.targets, 3);
+  eq('干跑报出调用次数（全部候选一次给完 = 1 次）', dry.data.calls, 1);
+  eq('干跑报出"有几张能定位到原文"', dry.data.with_source, 3);
+  eq('干跑不写库', (await listChars()).filter((c) => !c.appearance && !c.outfit).length, 3);
+
+  // ② 真跑：mock 给的是**从那张卡自己的原文片段里截的原话** → 必须过核对并落库
+  const run = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('真跑 200', run.status, 200);
+  eq('补上了所有缺长相的人物卡', run.data.assigned, 3);
+  const after = await listChars();
+  const gotNames = after.filter((c) => /^模型补的外貌/.test(c.appearance || '')).map((c) => c.name).sort();
+  eq('落库的正是缺长相的那 3 张', gotNames.join(','), '苏婉儿,裴无咎,顾寒');
+  eq('**已经有长相的一个字都没动**（林晚还是"白衣"，不是 mock 给的值）', (await byName('林晚')).appearance, '白衣');
+  ok('外貌与服装都写上了', after.filter((c) => /^模型补的外貌/.test(c.appearance || '') && /^模型补的服装/.test(c.outfit || '')).length === 3);
+  eq('没接住的三种原因都为空', [run.data.ungrounded, run.data.not_found, run.data.missing, run.data.invalid].map((x) => (x || []).length).join(','), '0,0,0,0');
+
+  // ③ **核心钉**：引文对不上原文 = 模型在编 → 整条丢弃，一个字都不许落库。
+  //    标记走卡片名（补幕次同一手法）：提示词里就是"人物 + 它的原文片段"，名字会原样进 prompt
+  await clearLooks();
+  const gu = await byName('顾寒');
+  await api('PUT', `/api/story/cards/${gu.id}`, { name: '__FAKELOOK__ 顾寒' });
+  const fake = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('引文对不上原文时 assigned = 0', fake.data.assigned, 0);
+  eq('并**单独**计进 ungrounded（与"原文没写"是两回事）', (fake.data.ungrounded || []).length, 3);
+  eq('那三张一个字都没落库', await filled(), 0);
+  ok('并说清是"引文对不上原文"而不是只报 0', /没有给出可用的长相/.test(fake.data.note || ''), fake.data.note);
+
+  // ④ 原文确实没写：模型回 found=false → 计 not_found（**诚实的结论**，不是失败），不拿编的顶上
+  await api('PUT', `/api/story/cards/${gu.id}`, { name: '__NOLOOK__ 顾寒' });
+  const none = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('原文没写时 assigned = 0', none.data.assigned, 0);
+  eq('计进 not_found', (none.data.not_found || []).length, 3);
+  eq('**不算** ungrounded（"原著没写"和"模型在编"必须分开报）', (none.data.ungrounded || []).length, 0);
+  eq('也没落库', await filled(), 0);
+
+  // ⑤ 超长必须过与手改**同一把尺子**（补 30：同一个字段，模型写有上限、人写也得有）
+  await api('PUT', `/api/story/cards/${gu.id}`, { name: '__LONGLOOK__ 顾寒' });
+  const long = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('超长的那张照样补上（引文是真的，能过核对）', long.data.assigned, 3);
+  eq('appearance 被截到上限', String((await byName('__LONGLOOK__ 顾寒')).appearance || '').length, storyLib.FIELD_MAX.appearance);
+  await api('PUT', `/api/story/cards/${gu.id}`, { name: '顾寒' });
+
+  // ⑥ 模型返回的根本不是 JSON：这次调用算失败（500 + 原因），卡片一张都不许动
+  await clearLooks();
+  await api('PUT', `/api/story/cards/${gu.id}`, { name: '__GARBAGE__ 顾寒' });
+  const gar = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('不可解析时是失败（500）而不是"成功补了 0 个"', gar.status, 500);
+  ok('并说清是"没有返回可解析的 JSON"', /可解析的 JSON/.test(gar.data.error || ''), gar.data.error);
+  eq('失败时卡片未被改动', await filled(), 0);
+  await api('PUT', `/api/story/cards/${gu.id}`, { name: '顾寒' });
+
+  // ⑦ 都有长相了：不该再调模型（calls = 0），也不该报错
+  const okRun = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('先补上（对照）', okRun.data.assigned, 3);
+  const done = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('没有候选时 calls = 0（不白花一次钱）', done.data.calls, 0);
+  ok('并说明原因', /都已经有外貌或服装/.test(done.data.note || ''), done.data.note);
+
+  // ⑧ "没有可定位的原文出处"这条防御分支：**今天不可达**，而这件事本身要如实钉住。
+  //    `evidence`/`chunk_index` 是**来源事实**（与 kind/source_id 同级，故意不许手改），
+  //    人物卡又只由**分块抽取**产生、必然带段号；唯一没有段号的是全局归并出来的卡，
+  //    而它只产出信息卡与剧情卡、不产人物卡。所以这里钉的是"可达性"本身 ——
+  //    与其编一张不可达的卡假装测过，不如把"它不可达"钉住：将来真加了人工新建卡片的路，
+  //    这条断言会红，提醒把 no_source 补上端到端。
+  await clearLooks();
+  const srcDry = await api('POST', '/api/story/look-fill', { source_id: src.id, dry_run: true });
+  eq('解析出来的人物卡**全都**能定位到原文出处（所以 no_source 分支今天不可达）', srcDry.data.no_source, 0);
+  eq('要补的张数 = 有出处的张数', srcDry.data.targets, srcDry.data.with_source);
+  const noSrc = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  eq('真跑也确实一张都没被跳过', noSrc.data.no_source, 0);
+
+  // ⑨ 体检的 char_no_look 必须有出口（与 plot_no_stage 同一条纪律：不能只有结论、没有出口）
+  await clearLooks(); // 上一步把 3 张都补上了，体检要看到"缺长相"才报得出来
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const lookIssues = (aud.data.issues || []).filter((x) => x.code === 'char_no_look');
+  ok('体检报出了"没有外貌与服装"的人物卡', lookIssues.length >= 1, String(lookIssues.length));
+  eq('出口指向原著页', ((lookIssues[0] || {}).go || {}).page, 'novel');
+  eq('出口把卡片筛选切到人物卡', (((lookIssues[0] || {}).go || {}).params || {}).kind, 'character');
+  eq('出口带上这份原著', (((lookIssues[0] || {}).go || {}).params || {}).source_id, src.id);
+  eq('仍然不是"机械可修"（补长相要调模型、要花钱）', (lookIssues[0] || {}).fixable, false);
+
+  // ⑩ 原著不存在 → 404（而不是空成功）
+  const empty = await api('POST', '/api/story/look-fill', { source_id: 'nope' });
+  eq('原著不存在时 404', empty.status, 404);
+}
 // ══════════════════════════════════════════════════════════════
 // 批 8 补 31：角色（资产库）字段的唯一漏斗
 // ══════════════════════════════════════════════════════════════

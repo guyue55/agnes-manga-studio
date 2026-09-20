@@ -364,6 +364,45 @@ group('B4 画风分层');
       stageSeedSrc.includes("key: 'plot_stage'") || stageSeedSrc.includes('key: \'plot_stage\''));
   }
 
+  // 批 8 补 33：AI 回原文补人物长相（界面必须"先干跑、再花钱、后把三种没写成的原因分开报"）
+  {
+    const lookApiSrc = read(path.join(PUB, 'js', 'api.js'));
+    const lookSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    const lookStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
+    // 同样把行为钉收进 fillLooks 的函数体：`costConfirm(`/`toast.ok(` 在本页别处也出现，
+    // 拿整份文件 test 就是"因错误的原因通过"（补 32 的 IW 对照正是这么抓出来的）
+    const lookBody = (novelMaxSrc.match(/async function fillLooks\(\)[\s\S]*?\n  \}/) || [''])[0];
+    ok('4.1 找得到 fillLooks 的函数体（下面几条都钉在它身上，钉不到就是空测）',
+      lookBody.length > 200, String(lookBody.length));
+    ok('4.1 前端有补长相的端点封装，且带 dry_run（干跑不花钱）',
+      /storyLookFill:/.test(lookApiSrc) && /\/api\/story\/look-fill/.test(lookApiSrc) && /dry_run/.test(lookApiSrc));
+    ok('4.1 工具栏有「AI 补长相」按钮，且点击接到了 fillLooks',
+      /id="nov-look"/.test(novelMaxSrc) && /'#nov-look'[\s\S]{0,40}fillLooks\(\)/.test(novelMaxSrc));
+    ok('4.1 补长相先干跑拿到"要补几张"再走计费确认（不许直接开跑）',
+      /storyLookFill\(sourceId, \{ dryRun: true \}\)/.test(lookBody) && /costConfirm\(/.test(lookBody));
+    ok('4.1 干跑里就拦住"一张都不缺"的情况（不弹确认也不花钱）',
+      /if \(!dry\.data\.targets\)/.test(lookBody));
+    // 界面**不自己算**"有几张缺长相"：那个判据在服务端（体检也用它），前端再抄一份迟早会漂。
+    // 所以"要补几张"必须来自干跑，而不是 cards.filter(...)
+    ok('4.1 "要补几张"来自服务端干跑，而不是前端自己再抄一份判据',
+      /dry\.data\.targets/.test(lookBody) && !/kind === 'character'[\s\S]{0,60}!c\.appearance/.test(novelMaxSrc));
+    ok('4.1 补完如实报出补了几张', /已补 \$\{d\.assigned\}\/\$\{d\.targets\}/.test(lookBody));
+    // 三种"没写成"必须**分开**报：原文没写（结论）/ 引文对不上原文（那是它编的）/ 没接住。
+    // 合成一个数，用户就分不清"原著没写"和"模型在编"—— 而后者才是真正要警惕的
+    ok('4.1 "原文确实没写"单独说，且明说是结论不是失败',
+      /d\.not_found/.test(lookBody) && /不是失败/.test(lookBody));
+    ok('4.1 "引文对不上原文"单独报警（那是模型编的）', /d\.ungrounded/.test(lookBody) && /编/.test(lookBody));
+    ok('4.1 其余没接住的也单独说', /d\.missing/.test(lookBody) && /d\.invalid/.test(lookBody));
+    ok('4.1 切块与解析时不一致要提醒人工核对（否则补上的内容可能对不上原文）',
+      /d\.aligned === false/.test(lookBody) && /人工核对/.test(lookBody));
+    ok('4.1 补完要重新载入卡片（否则界面还显示旧描述）', /await loadCards\(\)/.test(lookBody));
+    // 体检的"去处理"要落到人物卡上（按钮在卡片工作台工具栏那一排）
+    ok('4.1 体检的 char_no_look 有出口且落到人物卡上',
+      /kind: 'character'/.test(lookStorySrc) && /code: 'char_no_look'/.test(lookStorySrc));
+    // 补 33 的提示词模板必须真的在内置模板里（否则运行时报"缺少提示词模板"）
+    ok('4.1 补长相用的提示词模板在内置模板表里', lookSeedSrc.includes("key: 'char_look'"));
+  }
+
   // 批 8 补 31：角色字段上限表的前后端镜像（角色的 appearance 会原文进每一次出图提示词）
   ok('4.1 前后端角色字段上限表同构（角色编辑框 maxlength 的唯一来源）',
     feTable(constsSrc, 'CHARACTER_FIELD_MAX') !== ''

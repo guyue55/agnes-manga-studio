@@ -2271,6 +2271,120 @@ group('AI 补分幕次（批 8 补 32：把"一格一格填"的活交给模型�
     ok('详情里说清"也可以让模型一次补齐"（否则用户不知道有这条路）', /一次/.test(issue.detail || ''), issue.detail);
   }
 
+group('AI 回原文补人物长相（批 8 补 33：找到的必须带原文原话）');
+{
+  const mk = (id, kind, name, extra = {}) => ({ id, kind, name, aliases: [], evidence: [], ...extra });
+
+  // ① 判据与体检**同源**：`needsLook` 同时驱动体检的 char_no_look 与补长相的候选名单。
+  //    两处手抄判据的话，某天改了一处就会各说各话（对照补 30 的教训）——所以这条钉的是"同源"本身
+  const noLook = mk('a', 'character', '林晚');
+  const hasApp = mk('b', 'character', '顾寒', { appearance: '白衣' });
+  const hasOutfit = mk('c', 'character', '苏离', { outfit: '玄色长袍' });
+  const blank = mk('d', 'character', '空壳', { appearance: '   ' });
+  const notChar = mk('e', 'location', '客栈');
+  eq('只挑"既没外貌也没服装"的人物卡', story.lookFillTargets([noLook, hasApp, hasOutfit, blank, notChar]).targets.map((c) => c.id).join(','), 'a,d');
+  eq('有服装就不算缺（两项是"或"不是"且"）', story.lookFillTargets([hasOutfit]).targets.length, 0);
+  eq('空白外貌不算有（str().trim() 口径与体检一致）', story.lookFillTargets([blank]).targets.length, 1);
+  eq('非人物卡不进候选', story.lookFillTargets([notChar]).targets.length, 0);
+  eq('chars 是全部人物卡（不筛缺不缺）', story.lookFillTargets([noLook, hasApp, notChar]).chars.length, 2);
+  const codesOf = (c) => story.auditCards([c], {}).issues.map((i) => i.code);
+  ok('缺长相的卡，体检也报 char_no_look（同一条判据的两端）', codesOf(noLook).includes('char_no_look'), codesOf(noLook).join(','));
+  ok('有服装的卡，体检不报 char_no_look', !codesOf(hasOutfit).includes('char_no_look'), codesOf(hasOutfit).join(','));
+
+  // ② 出处：只取这张卡自己的证据段，且要包含名字
+  const chunks = [
+    { text: '第一章。林晚推门进来，一身洗得发白的青衫，长发用一根木簪松松束着。' },
+    { text: '第二章。顾寒立在檐下，玄色劲装，腰间悬着一柄短刀。' },
+    { text: '第三章。林晚笑了笑，没有说话。' },
+    { text: '第四章。' + '无关内容'.repeat(300) },
+  ];
+  const withEv = { ...noLook, evidence: [0, 2], aliases: ['晚儿'] };
+  const ex = story.lookFillExcerpts([withEv], chunks);
+  eq('每张候选卡一条出处记录', ex.length, 1);
+  eq('编号从 1 开始（与返回的 index 对位）', ex[0].index, 1);
+  eq('只取前 2 段（多了既贵又稀释重点）', ex[0].chunks.join(','), '0,2');
+  ok('片段里含这个名字', /林晚/.test(ex[0].text), ex[0].text.slice(0, 40));
+  ok('有出处 → has_text', ex[0].has_text === true);
+  eq('没有证据段号的卡 → 没有出处（回原文找无从谈起）', story.lookFillExcerpts([noLook], chunks)[0].has_text, false);
+  const long = story.lookFillExcerpts([{ ...noLook, evidence: [3] }], chunks, { maxChars: 300 });
+  ok('超长要截断并如实标记 truncated', long[0].truncated === true && long[0].text.length <= 300, String(long[0].text.length));
+  const byAlias = story.lookFillExcerpts([{ ...mk('f', 'character', '林晚儿'), evidence: [0], aliases: ['晚儿'] }], chunks);
+  ok('别名也算命中（原文里可能只写小名）', byAlias[0].has_text === true && /林晚/.test(byAlias[0].text));
+  const plain = story.lookFillExcerpts([{ ...noLook, evidence: [0] }], ['林晚穿青衣。']);
+  ok('块既可以是 {text} 也可以是裸字符串（调用方不必先转换）', plain[0].has_text === true && /青衣/.test(plain[0].text));
+
+  // ③ 提示词清单：没出处要**明说**，留白会让模型开始凭名字编
+  const lines = story.lookFillLines([
+    { index: 1, name: '林晚', aliases: ['晚儿'], has_text: true, text: '原文片段甲' },
+    { index: 2, name: '顾寒', aliases: [], has_text: false, text: '' },
+  ]);
+  ok('编号 + 人物名 + 别名', /1\. 人物：林晚（别名：晚儿）/.test(lines), lines.slice(0, 30));
+  ok('带上原文片段', /原文片段甲/.test(lines));
+  ok('没出处的**明说**（不留白，否则模型会凭名字编）', /没有可定位的原文出处/.test(lines), lines.slice(-60));
+
+  // ④ 核对：**引文可验证**是"抽取"与"编造"之间唯一可机械判定的分界线
+  const t1 = { id: 'a', index: 1, name: '林晚' };
+  const t2 = { id: 'b', index: 2, name: '顾寒' };
+  const exById = { a: '林晚推门进来，一身洗得发白的青衫，长发用一根木簪松松束着。', b: '顾寒立在檐下，玄色劲装。' };
+  const q = (looks) => story.applyLookAssignments([t1, t2], { looks }, exById);
+  const okOne = q([{ index: 1, found: true, appearance: '清瘦，长发以木簪束起', quote: '长发用一根木簪松松束着' }]);
+  eq('① 引文能在原文里找到 → 落库', okOne.patch.map((x) => x.id + ':' + x.appearance).join(','), 'a:清瘦，长发以木簪束起');
+  eq('① 没提到的那张计进 missing（不能只报成功数）', okOne.missing.map((x) => x.index).join(','), '2');
+  const fake = q([{ index: 1, found: true, appearance: '绝美无双', quote: '她生得绝美无双' }]);
+  eq('② 引文对不上原文 → 一条都不写（那是它编的）', fake.patch.length, 0);
+  eq('② 并单独计进 ungrounded（与"原文没写"是两回事）', fake.ungrounded.map((x) => x.index).join(','), '1');
+  eq('③ 引文里多几个空格/换行仍算找到（格式差异不是编造）',
+    q([{ index: 1, found: true, appearance: '清瘦', quote: '长发用一根木簪\n  松松束着' }]).patch.length, 1);
+  const nf = q([{ index: 1, found: false }]);
+  eq('④ found=false → 不写，计进 not_found（诚实的结论，不是失败）', nf.patch.length + '|' + nf.not_found.map((x) => x.index).join(','), '0|1');
+  eq('④ 而且不算 ungrounded（"原文没写"和"模型在编"必须分开报）', nf.ungrounded.length, 0);
+  const emptyOne = q([{ index: 1, found: true, quote: '长发用一根木簪松松束着' }]);
+  eq('⑤ 引文对但两项都空 → empty（没东西可写）', emptyOne.patch.length + '|' + emptyOne.empty.length, '0|1');
+  const badIdx = q([{ index: 9, found: true, appearance: 'x', quote: 'y' }]);
+  eq('⑥ 编号越界 → invalid，且**该卡计进 missing**（不能被当成"给过了"）',
+    badIdx.invalid[0].reason + '|' + badIdx.missing.map((x) => x.index).join(','), 'index_out_of_range|1,2');
+  const dup = q([{ index: 1, found: true, appearance: '甲', quote: '长发用一根木簪松松束着' },
+    { index: 1, found: true, appearance: '乙', quote: '长发用一根木簪松松束着' }]);
+  eq('⑦ 同一个编号给两次 → 第一次为准，第二次计 duplicate', dup.patch.map((x) => x.appearance).join(',') + '|' + dup.invalid[0].reason, '甲|duplicate_index');
+  // ⑧ 关键：引文必须来自**这张卡自己**的片段。模型把 A 的引文安到 B 头上是最容易发生、也最难发现的错
+  const crossed = story.applyLookAssignments([t1, t2],
+    { looks: [{ index: 2, found: true, appearance: '青衣', quote: '长发用一根木簪松松束着' }] }, exById);
+  eq('⑧ 拿**别人**的原文当引文 → 丢弃（对不上这张卡自己的片段）', crossed.patch.length + '|' + crossed.ungrounded.length, '0|1');
+  // missing 与 ungrounded 是**两个不重叠的桶**：前者是"模型没给这个编号"，后者是"给了但对不上原文"。
+  // 合成一个数的话，界面把 missing+invalid+empty 汇总成"另有 N 张没接住"时就会把同一张卡报两遍
+  eq('⑧ 没给编号的那张计进 missing（给过的不算）', crossed.missing.map((x) => x.index).join(','), '1');
+  eq('⑧ 两个桶不重叠（同一张卡只出现在一个桶里）', crossed.missing.length + crossed.ungrounded.length, 2);
+  eq('⑨ 卡片没有 id → no_id，不算 patch', story.applyLookAssignments([{ index: 1, name: '无 id' }],
+    { looks: [{ index: 1, found: true, appearance: 'x', quote: 'y' }] }, { 1: 'y' }).no_id, 1);
+  eq('⑩ 没有 looks 数组（模型返回了别的形状）→ 全计 missing，一条不写',
+    story.applyLookAssignments([t1], {}, exById).patch.length + '|' + story.applyLookAssignments([t1], {}, exById).missing.length, '0|1');
+  eq('只写模型真给了的那一项（appearance 给了、outfit 没给就只写 appearance）',
+    q([{ index: 1, found: true, appearance: '清瘦', outfit: '', quote: '长发用一根木簪松松束着' }]).patch[0].outfit, undefined);
+
+  // ⑤ 模板：这一趟的成败全在提示词有没有把"引文会被核对"写死
+  const tpl = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'char_look');
+  ok('内置模板里有 char_look', !!tpl);
+  ok('模板说明这是**回原文找**，不是创作', /回(到)?原文/.test(tpl.system + tpl.content) && /不创作/.test(tpl.system), tpl.system.slice(0, 40));
+  ok('模板要求交出原文原话（quote）', /quote/.test(tpl.content) && /原话/.test(tpl.content));
+  ok('模板写明引文会被逐字核对、对不上就丢弃', /逐字比对/.test(tpl.content) && /丢弃/.test(tpl.content));
+  ok('模板写明原文没写就 found=false（不许编）', /found=false/.test(tpl.content) && /(编|猜)/.test(tpl.content));
+  ok('模板不许写性格/画风这类片段外的东西', /性格/.test(tpl.content) && /画风/.test(tpl.content));
+  ok('模板的返回格式是 looks 数组且用 index 对位', /"looks":\[\{"index":1/.test(tpl.content));
+  ok('模板变量与路由传入的键一致', /\{\{人物与原文片段\}\}/.test(tpl.content));
+  eq('模板要求"至少填一项"（两项都空就该 found=false）', /至少填一项/.test(tpl.content), true);
+
+  // ⑥ 体检的 char_no_look 必须有出口（与 plot_no_stage 同一条纪律）
+  const lookIssue = (story.auditCards([{ id: 'p1', kind: 'character', name: '没长相', project_id: 'PRJ', source_id: 'SRC' }], {})
+    .issues.find((x) => x.code === 'char_no_look')) || {};
+  eq('体检仍报"没有外貌与服装"', lookIssue.code, 'char_no_look');
+  eq('出口指向原著页', (lookIssue.go || {}).page, 'novel');
+  eq('出口带上项目与原著（否则跳过去是空的）',
+    `${((lookIssue.go || {}).params || {}).project_id}/${((lookIssue.go || {}).params || {}).source_id}`, 'PRJ/SRC');
+  eq('出口把卡片筛选切到人物卡（按钮就在那一排）', ((lookIssue.go || {}).params || {}).kind, 'character');
+  eq('仍然不是"机械可修"（补长相要调模型、要花钱）', lookIssue.fixable, false);
+  ok('详情里说清"找到的必须带原文原话"', /原话/.test(lookIssue.detail || ''), lookIssue.detail);
+}
+
 // ══════════════════════════════════════════════════════════════
 // 批 8 补 28：剧情卡人物闭环体检（involved 里的人在人物卡/角色库里找不到）
 // ══════════════════════════════════════════════════════════════
