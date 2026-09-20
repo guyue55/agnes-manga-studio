@@ -128,6 +128,20 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   注入链有断言、字段也在表里，可模型从来不知道要抽它，**凡是两端各有一套字段表的地方都要对差集**；
   ② **钉不变量别钉快照**（版本号每轮都涨，钉 `≥2` 与"历史表里有上一版指纹"，别钉 `= 2`）；
   ③ **造"旧版本"fixture 必须用真的旧内容**（用现成默认值或占位文本造出的"老库"本来就对，等于测空气）
+- **写入路径的两把尺子（批 8 补 30）：同一个字段，模型写有上限、人写也得有**：`normalizeCard` 一直用 `clip`
+  把字段截到 `FIELD_MAX`，但"用户手改"那条路（`PUT /api/story/cards/:id`）把提交的原文**直接落库** ——
+  实测 PUT 一个 5000 字的 `appearance` **存回 5000 字**（上限 200）。要命的是它的下游：`appearance`/`outfit`
+  进 `characterPhrase`、地点/道具字段进 `storyCardPhrase`，**每一次出图提示词都会被撑爆**，而两条路各自看都"正常"。
+  现在 `clip` 导出成 `story.clipField`，手改路径过**同一把尺子**（一份实现）。**关键是只截断、不丢空** ——
+  走 `normalizeCard` 空值会被它丢掉，而 `store.update` 是合并语义（键不在 patch 里就保留旧值），
+  那样**用户再也清不掉任何字段**（apitest 专门钉了这条回归防线）。同时 `STORY_CARD_EDITABLE` 从**手抄的字段清单**
+  改成**从 `CARD_FIELDS` 推导**（手抄清单漏一个字段 = "界面上能填、保存后静默丢失"，只在那一个字段上悄悄发生）；
+  `FIELD_MAX` 镜像到前端（`consts.js` 的 `STORY_CARD_FIELD_MAX`，uitest 同构钉）做编辑框 `maxlength`
+  —— **预防**（输入时就挡住）与**验收**（后端不变式不依赖谁来写）成对，真被截了界面点名说是哪个字段。
+  **教训**：① "同一个东西有几条**写入路径**"要和"有几份真相"一样认真对待 —— 后果更重（不是显示不一致，
+  是数据不变式只在一条路上成立）；② **修"太宽松"之前先找出它为什么宽松** —— 原样写 `...patch` 不是疏忽，
+  是为了能清空，直接改成"写归一化结果"会把静默超长换成"清不掉字段"，**更糟**；
+  ③ 同一个事实的两份拷贝**能推导就别手抄**（手抄不会立刻出错，会在某次加字段时无声地错）
 - **"已改"必须真的有用（批 8 补 25）**：卡片上的"已改"chip 写着"重新解析不会覆盖它"，
   而 `edited` 这个标记**只被记录、只被显示，从来没被合并逻辑读过** —— 合并规则是"更详细的描述取胜"，
   用户改短的值照样被模型的长描述冲掉，那句提示是**假承诺**（`retry-chunks` 的注释里也写着"永远不会冲掉"）。
@@ -237,7 +251,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 797 / apitest 915 / uitest 1085 / browser-test 506），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 809 / apitest 929 / uitest 1091 / browser-test 506），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

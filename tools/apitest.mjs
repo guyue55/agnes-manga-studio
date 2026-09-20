@@ -3231,6 +3231,64 @@ group('原著解析（批 8：分块抽取 / 跨块合并 / 卡片 CRUD / 反向
 }
 
 // ══════════════════════════════════════════════════════════════
+// 批 8 补 30：手改卡片也要过同一把尺子（FIELD_MAX）
+// ══════════════════════════════════════════════════════════════
+group('手改卡片的两把尺子（批 8 补 30：模型写有上限、人写也得有）');
+{
+  const pj = await api('POST', '/api/projects', { name: '手改上限测试剧' });
+  const PID = pj.data.id;
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '上限·原著', reduce: false, max_chars: 800, max_chunks: 10,
+    text: `林晚在临江茶馆见到顾寒，白衣上沾着夜雨。\n${'两人对峙，林晚拔剑。'.repeat(40)}`,
+  });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const cards = (await api('GET', `/api/story/cards?project_id=${PID}`)).data;
+  const chr = cards.find((c) => c.kind === 'character' && c.name === '林晚');
+  ok('拿到了人物卡', !!chr, JSON.stringify(cards.map((c) => `${c.kind}:${c.name}`)));
+  const cid = (chr || {}).id || 'missing';
+  const MAX = storyLib.FIELD_MAX;
+
+  // ① 超长值必须被截到 FIELD_MAX（以前会原样落库 —— 实测 5000 字存回 5000 字）
+  const LONG = '长'.repeat(MAX.appearance + 300);
+  const put1 = await api('PUT', `/api/story/cards/${cid}`, { appearance: LONG });
+  eq('手改超长字段返回 200', put1.status, 200);
+  eq('存回长度 = FIELD_MAX（与模型抽取同一把尺子）', String(put1.data.appearance || '').length, MAX.appearance);
+  ok('截断了哪些字段如实上报（静默少一截文字，用户只会以为"我明明写了的"）',
+    Array.isArray(put1.data.truncated) && put1.data.truncated.includes('appearance'), JSON.stringify(put1.data.truncated));
+  const reread = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((x) => x.id === cid) || {};
+  eq('落库的也是截断后的值（不是只在响应里截）', String(reread.appearance || '').length, MAX.appearance);
+
+  // ② 没超限就**不能**报 truncated（否则这个提示会变成狼来了）
+  const put2 = await api('PUT', `/api/story/cards/${cid}`, { appearance: '白衣' });
+  eq('没超限不报 truncated', put2.data.truncated, undefined);
+  eq('没超限的值原样保留', put2.data.appearance, '白衣');
+
+  // ③ 清空仍然可用 —— 这是修这个洞最容易弄坏的地方：
+  //    走 normalizeCard 的话空值会被它丢掉，而 store.update 是合并语义（键不在就保留旧值），
+  //    那样用户就**再也清不掉一个字段**了
+  await api('PUT', `/api/story/cards/${cid}`, { appearance: '' });
+  const cleared = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((x) => x.id === cid) || {};
+  eq('空串能清空字段（回归防线）', cleared.appearance, '');
+
+  // ④ 顺手 trim（与模型路径一致），并且首尾空白不算"截断"
+  const put4 = await api('PUT', `/api/story/cards/${cid}`, { outfit: '  黑甲  ' });
+  eq('手改也 trim', put4.data.outfit, '黑甲');
+  eq('只是 trim 不算截断（否则提示会变成狼来了）', put4.data.truncated, undefined);
+
+  // ⑤ 非白名单字段照旧改不动（来源事实：改了 kind/source_id 会让卡片在两个视图里重复出现/断掉溯源）
+  const before = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((x) => x.id === cid) || {};
+  await api('PUT', `/api/story/cards/${cid}`, { kind: 'prop', source_id: 'hacked', id: 'hacked' });
+  const after = (await api('GET', `/api/story/cards?project_id=${PID}`)).data.find((x) => x.id === cid) || {};
+  eq('kind/source_id 仍改不动（白名单只放行可编辑字段）', `${after.kind}|${after.source_id}`, `${before.kind}|${before.source_id}`);
+  eq('id 也不会被改掉', after.id, cid);
+
+  // ⑥ 每个可编辑字段都真的能改（白名单是推导出来的，漏一个字段 = 界面上能填、保存后静默丢失）
+  const probe = await api('PUT', `/api/story/cards/${cid}`, { gender: '女', age: '青年', region: '临江' });
+  eq('推导出来的白名单包含本轮新加的字段（gender/age）', `${probe.data.gender}|${probe.data.age}`, '女|青年');
+}
+
+// ══════════════════════════════════════════════════════════════
 // 批 8 补 28：剧情卡人物闭环体检 + 内置提示词"能更新"
 // ══════════════════════════════════════════════════════════════
 group('剧情卡人物闭环体检（批 8 补 28：involved 里的人真的存在吗）');

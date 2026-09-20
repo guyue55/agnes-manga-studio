@@ -302,6 +302,32 @@ group('B4 画风分层');
     return m ? [...m[1].matchAll(/(\w+):\s*\[/g)].map((x) => x[1]).sort().join(',') : '';
   };
   ok('4.1 前后端可注入类别表同构', injectKeys(routesSrc) !== '' && injectKeys(routesSrc) === injectKeys(constsSrc));
+  // 批 8 补 30：字段长度上限的前后端镜像。它是编辑框 maxlength 的来源 ——
+  // 漂了就会出现"界面允许输入 300 字、服务端砍到 200"，而用户只在保存后才发现少了一截
+  const maxKeys = (src) => {
+    // 后端叫 FIELD_MAX、前端叫 STORY_CARD_FIELD_MAX（名字不同，内容必须同构）
+    const m = src.match(/(?:STORY_CARD_FIELD_MAX|FIELD_MAX) = \{([\s\S]*?)\n\};/);
+    if (!m) return '';
+    return [...m[1].matchAll(/(\w+):\s*(\d+)/g)].map((x) => `${x[1]}=${x[2]}`).sort().join(',');
+  };
+  // 注意：这个块在 storySrc 定义之前，所以自己读一份（别引用后面才声明的 const）
+  const storyMaxSrc = read(path.join(ROOT, 'lib', 'story.js'));
+  ok('4.1 前后端字段长度上限表同构（编辑框 maxlength 的唯一来源）',
+    maxKeys(storyMaxSrc) !== '' && maxKeys(storyMaxSrc) === maxKeys(constsSrc),
+    `后端 ${maxKeys(storyMaxSrc).slice(0, 60)} / 前端 ${maxKeys(constsSrc).slice(0, 60)}`);
+  const novelMaxSrc = read(path.join(PUB, 'js', 'pages', 'novel.js')); // 同上：novelSrc 在更后面才声明
+  ok('4.1 编辑框按上限表设 maxlength（输入时就挡住，而不是保存后被悄悄砍掉）',
+    /maxlength="\$\{STORY_CARD_FIELD_MAX\[f\] \|\| 200\}"/.test(novelMaxSrc)
+    && /maxlength="\$\{STORY_CARD_FIELD_MAX\.name\}"/.test(novelMaxSrc)
+    && /maxlength="\$\{STORY_CARD_FIELD_MAX\.summary\}"/.test(novelMaxSrc));
+  ok('4.1 服务端截断时界面会说话（不静默少一截文字）',
+    /r\.data\.truncated/.test(novelMaxSrc) && /已截断/.test(novelMaxSrc));
+  // 可编辑白名单必须是**推导**的：手抄的清单漏一个字段 = "界面上能填、保存后静默丢失"
+  ok('4.1 可编辑白名单从 story.CARD_EDITABLE_FIELDS 推导（不再手抄一份字段清单）',
+    /story\.CARD_EDITABLE_FIELDS/.test(routesSrc)
+    && !/'personality', 'role', 'gender', 'age', 'atmosphere'/.test(routesSrc));
+  ok('4.1 手改走同一把尺子（story.clipField）并如实上报被截断的字段',
+    /story\.clipField\(patch\[k\], k\)/.test(routesSrc) && /truncated\.push\(k\)/.test(routesSrc));
   ok('4.1 写入时按可注入类别白名单过滤（绑了人物卡不该"显示已绑定却永不生效"）',
     /function injectableCardIds/.test(routesSrc) && /story_card_ids: injectableCardIds\(/.test(routesSrc)
     && /patch\.story_card_ids = injectableCardIds\(/.test(routesSrc));

@@ -2261,6 +2261,38 @@ group('字段闭环（批 8 补 29）');
     ['theme', 'logline', 'mainline'].every((f) => reduceWorld.includes(f)), reduceWorld.join(','));
 }
 
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 30：写入路径的两把尺子（模型抽的 / 用户手改的，必须是同一把）
+// ══════════════════════════════════════════════════════════════
+// 病根：`normalizeCard` 一直用 `clip` 把字段截到 `FIELD_MAX`，但"用户手改"那条路
+// （PUT /api/story/cards/:id）把提交的原文**直接落库** —— 同一个字段"模型写有上限、人写没上限"。
+// 实测：PUT 一个 5000 字的 appearance 存回 5000 字（FIELD_MAX 是 200），而它会进每一次出图提示词。
+group('写入路径的两把尺子（批 8 补 30）');
+{
+  eq('clipField 截到 FIELD_MAX', story.clipField('长'.repeat(500), 'appearance').length, story.FIELD_MAX.appearance);
+  eq('clipField 顺手 trim', story.clipField('  林晚  ', 'name'), '林晚');
+  eq('clipField 空值仍是空（清空字段是正常操作，不能被吞成 undefined）', story.clipField('', 'appearance'), '');
+  eq('clipField 数字等非字符串也归一成字符串', story.clipField(123, 'age'), '123');
+  eq('刚好等于上限不截', story.clipField('长'.repeat(200), 'appearance').length, 200);
+  eq('超一个字符才截', story.clipField('长'.repeat(201), 'appearance').length, 200);
+
+  // 可编辑白名单必须是**推导**出来的：手抄的清单漏一个字段 = "界面上能填、保存后静默丢失"
+  const everyField = [...new Set(Object.values(story.CARD_FIELDS).flat())];
+  const missing = everyField.filter((f) => !story.CARD_EDITABLE_FIELDS.includes(f));
+  eq('每个 CARD_FIELDS 字段都在可编辑白名单里（漏一个就是静默丢数据）', missing.length, 0, missing.join(','));
+  eq('通用字段也在白名单里', ['name', 'summary', 'aliases'].every((f) => story.CARD_EDITABLE_FIELDS.includes(f)), true);
+  eq('白名单没有重复项', story.CARD_EDITABLE_FIELDS.length, new Set(story.CARD_EDITABLE_FIELDS).size);
+  // 参考图是用户挂的、不是模型抽的字段，**故意**不在 CARD_FIELDS 里，由路由层单独加
+  eq('参考图不在白名单里（它不属于 CARD_FIELDS，路由层单独加）', story.CARD_EDITABLE_FIELDS.includes('reference_image_ids'), false);
+  // 反向：白名单里不该出现 CARD_FIELDS 之外的东西（除了三个通用字段）
+  const stray = story.CARD_EDITABLE_FIELDS.filter((f) => !everyField.includes(f) && !['name', 'summary', 'aliases'].includes(f));
+  eq('白名单里没有来路不明的字段', stray.length, 0, stray.join(','));
+
+  // 每个字段都得有上限，否则 clip 会退到兜底值 200 —— 那是个"看起来能用"的错上限
+  const noMax = everyField.filter((f) => !Number.isInteger(story.FIELD_MAX[f]));
+  eq('每个字段都有明确的上限（缺了会退到兜底 200，是错的上限）', noMax.length, 0, noMax.join(','));
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

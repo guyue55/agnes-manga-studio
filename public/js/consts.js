@@ -101,6 +101,25 @@ export const STORY_CARD_FIELD_LABELS = {
   conflict: '冲突', turn: '转折', outcome: '结果', involved: '涉及人物',
   when: '时间', order_note: '顺序说明',
 };
+/**
+ * 字段长度上限（批 8 补 30）—— 与 `lib/story.js` 的 `FIELD_MAX` **逐字同构**（uitest 有比对钉）。
+ * 两个用途，缺一不可：
+ * ① 编辑框的 `maxlength`：**在输入时就挡住**，用户不会写完再被悄悄砍掉；
+ * ② 它同时是"服务端会怎么处理"的说明 —— 后端两条写入路径（模型抽取 / 用户手改）现在共用同一把尺子。
+ * 为什么要镜像而不是问服务端要：编辑框渲染是同步的，而这个表每轮几乎不变；镜像 + 同构钉成本最低
+ * （与 `CARD_IMAGE_KINDS` / `storyCardPhrase` 同一套做法）。漂了会被 uitest 当场抓住。
+ */
+export const STORY_CARD_FIELD_MAX = {
+  name: 40, summary: 300, identity: 120, appearance: 200,
+  outfit: 120, personality: 160, role: 20, gender: 10,
+  age: 20, genre: 40, tone: 60, worldview: 200,
+  theme: 120, logline: 160, mainline: 300, atmosphere: 120,
+  region: 40, time_of_day: 30, features: 200, owner: 40,
+  usage: 120, stage: 20, conflict: 160, turn: 160,
+  outcome: 160, involved: 120, when: 60, order_note: 120,
+  alias: 20,
+};
+
 export function storyKindLabel(k) { return STORY_CARD_LABELS[k] || k; }
 
 /**

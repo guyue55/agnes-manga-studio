@@ -14,7 +14,8 @@
 import { api } from '../api.js';
 import {
   esc, icon, fmtTime,
-  STORY_CARD_KINDS, STORY_CARD_FIELDS, STORY_CARD_FIELD_LABELS, STORY_ROLE_OPTIONS, STORY_STAGE_OPTIONS,
+  STORY_CARD_KINDS, STORY_CARD_FIELDS, STORY_CARD_FIELD_LABELS, STORY_CARD_FIELD_MAX,
+  STORY_ROLE_OPTIONS, STORY_STAGE_OPTIONS,
   CARD_IMAGE_KINDS, storyKindLabel,
 } from '../consts.js';
 import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, dataOf, options, imgWithFallback } from '../ui.js';
@@ -518,7 +519,13 @@ export default async function novel(container, params = {}) {
       const r = await api.updateStoryCard(id, patch);
       if (!r.ok) { toast.err(r.error); return; }
       editingId = null;
-      toast.ok('已保存——下次回注会带上你的修改');
+      // 服务端截断了要说话：静默少一截文字，用户只会以为"我明明写了的"
+      const cut = (r.data && r.data.truncated) || [];
+      if (cut.length) {
+        toast.err(`有字段超出长度上限、已截断：${cut.map((f) => STORY_CARD_FIELD_LABELS[f] || f).join('、')}`);
+      } else {
+        toast.ok('已保存——下次回注会带上你的修改');
+      }
       loadCards();
     });
     // 就地两击确认（与 ui.js 的 twoClick 同语义，但这里是事件委托，所以自己管一个 armedDel）：
@@ -998,15 +1005,15 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs btn-primary" data-save="${esc(c.id)}">保存</button>
           </div>
           <div class="field"><label for="e-name-${esc(c.id)}">名字</label>
-            <input class="input" id="e-name-${esc(c.id)}" data-f="name" value="${esc(c.name)}" /></div>
+            <input class="input" id="e-name-${esc(c.id)}" data-f="name" maxlength="${STORY_CARD_FIELD_MAX.name}" value="${esc(c.name)}" /></div>
           <div class="field"><label for="e-sum-${esc(c.id)}">摘要</label>
-            <textarea class="textarea" id="e-sum-${esc(c.id)}" data-f="summary" rows="3">${esc(c.summary || '')}</textarea></div>
+            <textarea class="textarea" id="e-sum-${esc(c.id)}" data-f="summary" maxlength="${STORY_CARD_FIELD_MAX.summary}" rows="3">${esc(c.summary || '')}</textarea></div>
           ${fields.map((f) => `<div class="field"><label for="e-${esc(f)}-${esc(c.id)}">${esc(STORY_CARD_FIELD_LABELS[f] || f)}</label>
             ${f === 'role'
               ? `<select class="select" id="e-${esc(f)}-${esc(c.id)}" data-f="${esc(f)}">${options(STORY_ROLE_OPTIONS.map((v) => ({ value: v, label: v })), 'value', 'label', c[f])}</select>`
               : f === 'stage'
                 ? `<select class="select" id="e-${esc(f)}-${esc(c.id)}" data-f="${esc(f)}">${options(STORY_STAGE_OPTIONS.map((v) => ({ value: v, label: v })), 'value', 'label', c[f])}</select>`
-                : `<input class="input" id="e-${esc(f)}-${esc(c.id)}" data-f="${esc(f)}" value="${esc(c[f] || '')}" />`}</div>`).join('')}
+                : `<input class="input" id="e-${esc(f)}-${esc(c.id)}" data-f="${esc(f)}" maxlength="${STORY_CARD_FIELD_MAX[f] || 200}" value="${esc(c[f] || '')}" />`}</div>`).join('')}
           <div class="field"><label for="e-alias-${esc(c.id)}">别名（顿号或逗号分隔）</label>
             <input class="input" id="e-alias-${esc(c.id)}" data-f="aliases" value="${esc((c.aliases || []).join('、'))}" /></div>
           ${CARD_IMAGE_KINDS.includes(c.kind) ? `<div class="field"><label>参考图<span style="color:var(--text-4);font-weight:400">（从本项目的图片里挑，出图时会自动带上——同一个场景/道具前后一致就靠它）</span></label>
