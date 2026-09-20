@@ -153,6 +153,9 @@ const mock = http.createServer((req, res) => {
           // 批 8 补 34：多一张"没有任何可注入描述"的地点卡与道具卡 —— 补场景字段要有候选才验得了。
           // 注意默认那张「临江茶馆」**带着 atmosphere**，所以它天然是"已有的一个都不动"的对照组
           ...(userMsg.includes('__INJECTFILL__') ? [{ kind: 'location', name: '落霞渡口' }, { kind: 'prop', name: '半枚玉佩' }] : []),
+          // 批 8 补 35：多三张时间线卡 —— 两张"没有时间点"（候选），一张**带着时间点**（对照组）。
+          // 对照组是"已有的一个都不动"这条钉的前提（补 33 踩过：连对照组一起清，钉就失效了）
+          ...(userMsg.includes('__WHENFILL__') ? [{ kind: 'timeline', name: '离开临江' }, { kind: 'timeline', name: '夜访' }, { kind: 'timeline', name: '重逢', when: '第二年春天' }] : []),
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
@@ -249,6 +252,27 @@ const mock = http.createServer((req, res) => {
         if (userMsg.includes('__INJLONG__')) return all(fills.map((x) => ({ ...x, [Object.keys(x).find((k) => k !== 'index' && k !== 'found' && k !== 'quote') || 'features']: '长'.repeat(500) })));
         if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没写这些。' } }] });
         return all(fills);
+      }
+      // 批 8 补 35：补时间点。**同一套机制**的第三份规格，只有返回键不同（whens）。
+      // 引文同样必须来自**那张卡自己**的片段 —— 这一组的核心就是"推算出来的时间进不了库"，
+      // 所以 mock 必须能给出"值看着合理、引文却是编的"这一种回答（__WHENFAKE__）。
+      if (/"whens"\s*:/.test(userMsg)) {
+        const parts = userMsg.split(/^\d+\. 时间线卡：/m).slice(1);
+        const whens = parts.map((part, i) => {
+          const body = String(part.split('原文片段：')[1] || '');
+          const lines = body.split('\n').map((x) => x.trim());
+          const line = lines.find((x) => x.length >= 8 && !x.includes('__')) || lines.find((x) => x.length >= 4) || '';
+          return { index: i + 1, found: true, when: `模型补的时间${i + 1}`, quote: line.slice(0, 10) };
+        });
+        const all = (rows) => send(200, { choices: [{ message: { content: JSON.stringify({ whens: rows }) } }] });
+        if (userMsg.includes('__WHENNONE__')) return all(parts.map((_, i) => ({ index: i + 1, found: false })));
+        // __WHENFAKE__：when 看着很合理（"三年后"），但引文原文里根本没有 —— 必须整条丢弃。
+        // 这正是补 32 拒绝做这一项的理由（"模型只能猜"），这条用例证明"猜的写不进去"
+        if (userMsg.includes('__WHENFAKE__')) return all(whens.map((x) => ({ ...x, when: '三年后', quote: '三年后他回到了临江' })));
+        // __WHENSTRAY__：引文是真的，但只给**别的**字段（order_note/summary）→ 服务端一条都不许写
+        if (userMsg.includes('__WHENSTRAY__')) return all(whens.map((x) => ({ index: x.index, found: true, quote: x.quote, order_note: '紧接着上一节', summary: '改写过的摘要' })));
+        if (userMsg.includes('__WHENLONG__')) return all(whens.map((x) => ({ ...x, when: '长'.repeat(200) })));
+        return all(whens);
       }
       if (cb.model === 'mock-reject-json' && cb.response_format) return send(400, { error: { message: 'response_format not supported by this gateway' } });
       if (cb.model === 'mock-deny-key' && cb.response_format) return send(401, { error: { message: 'bad key' } });
@@ -3683,6 +3707,167 @@ group('AI 回原文补场景道具字段（批 8 补 34：同一套机制、规�
     injIssues.every((x) => ((x.card_ids || [])[0] || '') === (((x.go || {}).params || {}).card_id)),
     JSON.stringify(injIssues.map((x) => [x.card_ids, (x.go || {}).params])));
   eq('仍然不是"机械可修"（要调模型、要花钱）', (injIssues[0] || {}).fixable, false);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 35：AI 回原文补时间点（第三份规格）＋ 引文可见
+// ══════════════════════════════════════════════════════════════
+// 补 32 **有意**把 timeline_no_when 排除在 AI 补值之外："时间点是关于世界的事实，原文没写就只能猜"。
+// 补 33/34 把那条理由的**前提**消掉了：模型必须交出原文原话并与这张卡自己的片段逐字核对，
+// 猜的没有引文可交、整条丢弃。这一组的核心就是证明**这条防线在时间点上同样成立** ——
+// 尤其是"值看着很合理、引文却是编的"那一种（__WHENFAKE__），它正是"猜"的真实形态。
+group('AI 回原文补时间点（批 8 补 35：撤销"只能猜"，但推算的仍然进不了库）');
+{
+  const pj = await api('POST', '/api/projects', { name: '补时间点测试剧' });
+  const PID = pj.data.id;
+  const NOVEL = '三年前他离开临江，此后音讯全无。'.repeat(4)
+    + '第三天的黄昏，林晚才等到那封信。'.repeat(4)
+    + '顾寒立在檐下，玄色劲装。'.repeat(4)
+    + '__WHENFILL__';
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '补时间点·原著', text: NOVEL, reduce: false });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const src = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+  const listCards = async () => (await api('GET', `/api/story/cards?source_id=${src.id}`)).data;
+  const byName = async (n) => (await listCards()).find((c) => c.name === n) || {};
+  const whens = async () => (await listCards()).filter((c) => c.kind === 'timeline');
+  // 「重逢」在解析时就带着 when，是**对照组**：全程留着，用来钉"已有的一个都不动"。
+  // 计数一律只数候选（对照组的 1 不计入），断言才不会被对照组污染
+  const CONTROL = '重逢';
+  const cands = async () => (await whens()).filter((c) => c.name !== CONTROL);
+  const clearWhen = async () => {
+    for (const c of await cands()) await api('PUT', `/api/story/cards/${c.id}`, { when: '' });
+  };
+  const filledWhen = async () => (await cands()).filter((c) => String(c.when || '').trim()).length;
+  const dry = () => api('POST', '/api/story/field-fill', { source_id: src.id, target: 'timeline_when', dry_run: true });
+  const run = () => api('POST', '/api/story/field-fill', { source_id: src.id, target: 'timeline_when' });
+
+  const tl = await whens();
+  eq('解析出了时间线卡', tl.length, 3);
+  eq('其中两张没有时间点（重逢带着 when，是对照组）', (await cands()).filter((c) => !String(c.when || '').trim()).length, 2);
+  eq('对照组真的带着时间点', (await byName(CONTROL)).when, '第二年春天');
+
+  // ① 干跑：如实报数、不写库
+  const d1 = await dry();
+  eq('干跑 200', d1.status, 200);
+  eq('干跑如实报出要补的张数', d1.data.targets, 2);
+  eq('干跑报出这类卡一共有几张', d1.data.pool, 3);
+  eq('干跑不写库', await filledWhen(), 0);
+  eq('干跑带回空的 assigned_items（形状稳定，界面不用先判断有没有这个键）',
+    Array.isArray(d1.data.assigned_items) && d1.data.assigned_items.length, 0);
+
+  // ② 真跑：mock 给的是**从那张卡自己片段里截的原话** → 过核对并落库
+  const r1 = await run();
+  eq('真跑 200', r1.status, 200);
+  eq('补上了所有缺时间点的时间线卡', r1.data.assigned, 2);
+  eq('没接住的几种原因为空', [r1.data.ungrounded, r1.data.not_found, r1.data.missing, r1.data.invalid, r1.data.empty].map((x) => (x || []).length).join(','), '0,0,0,0,0');
+
+  // ③ **引文可见**：报告必须逐张给出"写进去的值 + 它的引文"。
+  //    引文是这个机制唯一可核对的东西；只报个张数（或一闪而过的 toast）用户只能盲信。
+  //    时间点这类**事实型**字段尤其如此 —— 引文可能是真的、但认错了是哪一句。
+  const items = r1.data.assigned_items || [];
+  eq('报告逐张列出写进去的卡片', items.length, 2);
+  ok('每条都带着**实际落库**的值（不是模型的提议）',
+    items.every((x) => !!String((x.values || {}).when || '').trim()), JSON.stringify(items));
+  ok('每条都带着它的引文（界面要按"值 ← 原话"渲染，没有引文就没得核对）',
+    items.every((x) => !!String(x.quote || '').trim()), JSON.stringify(items));
+  ok('报告里的值与卡片上真的存着的一致（报告与卡片必须是同一份数据）',
+    items.every((x) => { const c = tl.find((y) => y.id === x.id) || {}; return true; }) && items.every((x) => !!x.id && !!x.name),
+    JSON.stringify(items.map((x) => [x.id, x.name])));
+  for (const x of items) {
+    const stored = await byName(x.name);
+    eq(`「${x.name}」卡片上的 when 就是报告里那个值`, stored.when, (x.values || {}).when);
+  }
+  eq('报告里的字段清单就是 when', items.every((x) => (x.fields || []).join(',') === 'when'), true);
+  eq('assigned_names 与 assigned_items 同源（不会一个说 2 一个说 1）',
+    (r1.data.assigned_names || []).length, items.length);
+  // **对照组一个字都没动** —— 这条钉必须在每个用例里都成立，所以对照组全程留在候选名单之外
+  eq('解析时就带着 when 的那张（重逢）一个字都没动', (await byName(CONTROL)).when, '第二年春天');
+
+  // ④ **本组的核心钉**：模型"推算"出来的时间必须进不了库。
+  //    when = "三年后" 看着非常合理，但原文里没有这句话 → 没有引文可交 → 整条丢弃。
+  //    补 32 拒绝做这一项的理由就是"模型只能猜"，这条证明"猜的写不进去"。
+  await clearWhen();
+  const c0 = (await whens())[0];
+  await api('PUT', `/api/story/cards/${c0.id}`, { name: '__WHENFAKE__ 离开临江' });
+  const fake = await run();
+  eq('推算出来的时间（引文对不上原文）→ assigned = 0', fake.data.assigned, 0);
+  eq('并**单独**计进 ungrounded', (fake.data.ungrounded || []).length, 2);
+  eq('一张都没落库', await filledWhen(), 0);
+  eq('报告里也没有"已写入"的条目（不能报了却没写，也不能写了没报）', (fake.data.assigned_items || []).length, 0);
+  ok('并说清是"引文对不上原文"而不是只报 0', /没有给出可用的时间点/.test(fake.data.note || ''), fake.data.note);
+
+  // ⑤ 原文确实没写时间：模型回 found=false → not_found（诚实的结论，不是失败）
+  await api('PUT', `/api/story/cards/${c0.id}`, { name: '__WHENNONE__ 离开临江' });
+  const none = await run();
+  eq('原文没写时 assigned = 0', none.data.assigned, 0);
+  eq('计进 not_found', (none.data.not_found || []).length, 2);
+  eq('**不算** ungrounded（"原著没写"和"模型在编"必须分开报）', (none.data.ungrounded || []).length, 0);
+
+  // ⑥ 引文是真的、但只给了**别的**字段（order_note/summary）→ 一条都不写，且计 empty
+  //    这一轮**只补 when**：体检只判 when，顺带多写一个字段就是"没被要求却动用户数据"
+  await api('PUT', `/api/story/cards/${c0.id}`, { name: '__WHENSTRAY__ 离开临江' });
+  const stray = await run();
+  eq('多给的键一律不写', stray.data.assigned, 0);
+  eq('并计进 empty（引文对得上、只是没有一个该填的字段）', (stray.data.empty || []).length, 2);
+  eq('**不算** ungrounded（引文本身是对的）', (stray.data.ungrounded || []).length, 0);
+  const strayCard = await byName('__WHENSTRAY__ 离开临江');
+  ok('order_note 没有被顺手写进去', strayCard.order_note !== '紧接着上一节', String(strayCard.order_note));
+  ok('summary 也没有被顺手改写', strayCard.summary !== '改写过的摘要', String(strayCard.summary));
+
+  // ⑦ 超长必须过与手改**同一把尺子**（补 30）
+  await api('PUT', `/api/story/cards/${c0.id}`, { name: '__WHENLONG__ 离开临江' });
+  const long = await run();
+  eq('超长的那两张照样补上（引文是真的，能过核对）', long.data.assigned, 2);
+  eq('when 被截到它自己的上限', String((await byName('__WHENLONG__ 离开临江')).when || '').length, storyLib.FIELD_MAX.when);
+  ok('报告里报的也是**截断后**的值（报告必须与卡片一致，不能报模型的原文）',
+    (long.data.assigned_items || []).every((x) => String((x.values || {}).when || '').length === storyLib.FIELD_MAX.when),
+    JSON.stringify((long.data.assigned_items || []).map((x) => String((x.values || {}).when || '').length)));
+  await api('PUT', `/api/story/cards/${c0.id}`, { name: '离开临江' });
+
+  // ⑧ 都填好了：不该再调模型（calls = 0），也不该报错
+  await clearWhen();
+  const okRun = await run();
+  eq('先补上（对照）', okRun.data.assigned, 2);
+  const done = await run();
+  eq('没有候选时 calls = 0（不白花一次钱）', done.data.calls, 0);
+  ok('并说明原因（说得具体：时间线卡的时间点）', /时间点/.test(done.data.note || ''), done.data.note);
+  eq('这时 pool 仍然非空（"一张都不缺"与"没有这类卡"是两回事）', done.data.pool, 3);
+  eq('而且对照组还是没被动过', (await byName(CONTROL)).when, '第二年春天');
+
+  // ⑨ **静默失败的守门**：模板里丢了变量名 → 必须明确报错（与补 34 同一条纪律）
+  await clearWhen();
+  const tpls = (await api('GET', '/api/templates')).data;
+  const twTpl = tpls.find((t) => t.key === 'timeline_when');
+  ok('模板表里有 timeline_when', !!twTpl);
+  const origContent = twTpl.content;
+  await api('PUT', `/api/templates/${twTpl.id}`, { content: String(origContent).replace('{{时间线卡与原文片段}}', '') });
+  const broken = await run();
+  eq('模板丢了变量 → 明确报错（而不是发个空清单让模型凭名字编）', broken.status, 500);
+  ok('并说清是模板缺哪个变量', /没有 \{\{时间线卡与原文片段\}\} 变量/.test(broken.data.error || ''), broken.data.error);
+  eq('报错时卡片未被改动（先检查、后调用）', await filledWhen(), 0);
+  await api('PUT', `/api/templates/${twTpl.id}`, { content: origContent });
+  eq('还原模板后又能正常工作（证明上面那条红确实是变量引起的）', (await dry()).status, 200);
+
+  // ⑩ 不认识的 target 的错误信息里要**列出全部三份规格**（新加规格时这句话会自己更新）
+  const bad = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'nope' });
+  eq('不认识的 target → 400', bad.status, 400);
+  ok('列出全部三份规格（char_look / card_inject / timeline_when）',
+    ['char_look', 'card_inject', 'timeline_when'].every((k) => String(bad.data.error || '').includes(k)), bad.data.error);
+
+  // ⑪ 体检的 timeline_no_when 必须有出口、落到**那张卡**上，且文案已随反转更新
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const whenIssues = (aud.data.issues || []).filter((x) => x.code === 'timeline_no_when');
+  ok('体检报出了"没有时间点"的时间线卡', whenIssues.length >= 1, String(whenIssues.length));
+  eq('出口指向原著页', ((whenIssues[0] || {}).go || {}).page, 'novel');
+  eq('出口切到时间线卡这一类', (((whenIssues[0] || {}).go || {}).params || {}).kind, 'timeline');
+  eq('出口带上这份原著', (((whenIssues[0] || {}).go || {}).params || {}).source_id, src.id);
+  ok('出口落到**那张卡**上（只给 kind 的话落地还得自己找）',
+    whenIssues.every((x) => !!(((x.go || {}).params || {}).card_id)), JSON.stringify(whenIssues.map((x) => (x.go || {}).params)));
+  ok('card_id 确实是它自己那张', whenIssues.every((x) => ((x.card_ids || [])[0] || '') === (((x.go || {}).params || {}).card_id)));
+  ok('详情里指向「AI 补时间点」那个按钮（反转后仍要有出口）', /AI 补时间点/.test((whenIssues[0] || {}).detail || ''), (whenIssues[0] || {}).detail);
+  ok('且不再声称"没有让模型补的按钮"（旧文案已随反转更新）', !/没有"让模型补"的按钮/.test((whenIssues[0] || {}).detail || ''));
+  eq('仍然不是"机械可修"（要调模型、要花钱）', (whenIssues[0] || {}).fixable, false);
 }
 // ══════════════════════════════════════════════════════════════
 // 批 8 补 31：角色（资产库）字段的唯一漏斗

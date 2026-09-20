@@ -2545,8 +2545,141 @@ group('AI 回原文补场景道具字段（批 8 补 34：同一套机制，规�
     allGo.every((x) => (((x.go || {}).params || {}).card_id) === ((x.card_ids || [])[0] || '')), true);
   eq('落地还带上项目与原著（否则跳过去是空工作台）',
     allGo.every((x) => { const p = (x.go || {}).params || {}; return !!p.project_id && !!p.source_id; }), true);
-  ok('并**明说**这一项没有 AI 补值（时间点原文没写就只能人定，模型猜出来的会当正史）',
-    /没有"让模型补"的按钮/.test(whenIssue.detail || ''), whenIssue.detail);
+  // 补 35 **反转**了这条文案：补 32 写的是"这一项没有让模型补的按钮"，理由是"模型只能猜"。
+  // 那条理由的前提已被引文核对消掉（猜的没有引文可交、整条丢弃），所以文案必须跟着改 ——
+  // 断言也**跟着改而不是删**：改完仍要钉住"出口指向那个按钮"与"原文没写只能人定"两件事都在
+  ok('并指向那个"回原文找"的按钮（反转后仍要有出口）',
+    /AI 补时间点/.test(whenIssue.detail || ''), whenIssue.detail);
+  ok('反转后仍如实说清"原文确实没写就只能你来定"（不能让用户以为有了按钮就不必看）',
+    /只能你来定/.test(whenIssue.detail || ''), whenIssue.detail);
+  ok('反转后不再声称"没有让模型补的按钮"（旧文案已经不准了）',
+    !/没有"让模型补"的按钮/.test(whenIssue.detail || ''), whenIssue.detail);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 35：第三个规格（时间点）＋ 引文可见
+// ══════════════════════════════════════════════════════════════
+// 补 32 把 `timeline_no_when` **有意**排除在 AI 补值之外，理由是"时间点是关于世界的事实，
+// 原文没写就只能猜，而猜出来的会当正史进剧本提示词"。补 33/34 把那条理由的**前提**消掉了：
+// 现在模型必须交出原文原话、并与**这张卡自己**的片段逐字核对，猜的没有引文可交、整条丢弃。
+// 所以这一项定性同 char_look —— **不是"让模型写"，而是"让模型回去找"**。
+// 这一组钉的就是"反转之后，防线还在"：推算的时间进不了库、只收 when 一个键、模板说清了不许推算。
+group('AI 回原文补时间点（批 8 补 35：撤销补 32 的"只能猜"，但防线不能跟着撤）');
+{
+  const TW = story.fillSpec('timeline_when');
+  const LK = story.fillSpec('char_look');
+  const mk = (id, kind, name, extra = {}) => ({ id, kind, name, aliases: [], evidence: [], ...extra });
+
+  // ① 规格表：三份规格，形状与其他两份一致（同一个机制，只换数据）
+  ok('规格表里有补时间点这一份', !!TW);
+  eq('补时间点只管网时间线卡', TW.kinds.join(','), 'timeline');
+  eq('要补的字段就是 when（体检那条 timeline_no_when 判的也是它）', TW.fields.join(','), 'when');
+  eq('读自己的返回键（模板不同、schema 不同）', TW.payloadKey, 'whens');
+  eq('模板键与规格键同名（路由按 spec.template 去取模板）', TW.template, 'timeline_when');
+  ok('三个规格的 label/cardWord/emptyNote/noneNote 都是各自的具体说法，不是一句通用话',
+    new Set(Object.values(story.FILL_SPECS).map((s) => s.emptyNote)).size === Object.keys(story.FILL_SPECS).length,
+    Object.values(story.FILL_SPECS).map((s) => s.emptyNote).join(' | '));
+
+  // ② **完整判据只有一个**：类别 + 字段。少任何一半都会出假警报
+  const tl = mk('t', 'timeline', '三天后', { evidence: [0] });
+  const loc = mk('l', 'location', '临江茶馆', { evidence: [0] });
+  ok('没有 when 的时间线卡算"缺时间点"', story.specMissing(TW, tl) === true);
+  ok('时间线卡**不**算"缺长相"（类别不归它管）', story.specMissing(LK, tl) === false);
+  ok('地点卡**不**算"缺时间点"（少了类别那一半，每张地点卡都会被报成缺时间点）',
+    story.specMissing(TW, loc) === false);
+  ok('null 卡不炸', story.specMissing(TW, null) === false);
+  eq('字段表是固定的 when', story.fillFieldsOf(TW, tl).join(','), 'when');
+
+  // ③ 候选：有 when 的不缺；纯空白不算填过（与体检同一条 str().trim() 口径）
+  const hasWhen = mk('t2', 'timeline', '有时间的节点', { when: '次日清晨' });
+  const blank = mk('t3', 'timeline', '空壳', { when: '   ', evidence: [0] });
+  const sel = story.fillTargets(TW, [tl, hasWhen, blank, loc]);
+  eq('pool 只含时间线卡', sel.pool.map((c) => c.id).join(','), 't,t2,t3');
+  eq('targets 只挑没有时间点的', sel.targets.map((c) => c.id).join(','), 't,t3');
+  ok('空白不算填过', sel.targets.some((c) => c.id === 't3'));
+
+  // ④ 体检与候选名单**成对同源**（该报的报、不该报的不报 —— 否则把体检整个关掉也是绿的）
+  const codes = (c) => story.auditCards([c], {}).issues.map((i) => i.code);
+  ok('没 when 的时间线卡 → 体检报 timeline_no_when', codes(tl).includes('timeline_no_when'), codes(tl).join(','));
+  ok('有 when 的时间线卡 → 体检不报', !codes(hasWhen).includes('timeline_no_when'), codes(hasWhen).join(','));
+  ok('地点卡不会被报成缺时间点（类别判据必须在）', !codes(loc).includes('timeline_no_when'), codes(loc).join(','));
+
+  // ⑤ 清单：按类别称呼 + 把键名列出来
+  const chunks = [{ text: '三年前他离开临江，此后音讯全无。第三天的黄昏，林晚才等到那封信。' }];
+  const ex = story.fillExcerpts(TW, sel.targets, chunks);
+  eq('每张候选卡一条出处记录', ex.length, 2);
+  const lines = story.fillLines(ex, TW);
+  ok('按类别称呼（时间线卡），不是一律"卡片"', /1\. 时间线卡：三天后/.test(lines), lines.slice(0, 60));
+  ok('把键名 when 与中文名"时间点"都列出来',
+    /要补的字段：时间点（键名：when）/.test(lines), lines.slice(0, 80));
+  ok('条目带 kind（少了它字段表会被推成空 —— 补 34 的真 bug）', ex.every((e) => e.kind === 'timeline'));
+
+  // ⑥ 核对：与补长相/补场景**同一份实现**，规则完全一样
+  const byId = {}; ex.forEach((e) => { byId[e.id] = e.text; });
+  const run = (whens) => story.applyFillAssignments(ex, { whens }, byId, TW);
+  const good = run([{ index: 1, found: true, when: '三年前', quote: '三年前他离开临江' }]);
+  const g0 = good.patch[0] || {};
+  eq('① 引文能在原文里找到 → 落库', `${g0.id}/${g0.when}`, 't/三年前');
+  eq('① 计划记下要写的字段清单（调用方照它写，别按 kind 再推）', (g0.fields || []).join(','), 'when');
+  eq('① 没提到的那张计进 missing', good.missing.map((x) => x.index).join(','), '2');
+  // ② **这一组最要紧的一条**：模型"推算"出来的时间必须进不了库。
+  //    这里 when 看着很合理（"三年后"），但原文里根本没有这句话 → 没有引文可交 → 丢弃。
+  //    补 32 拒绝做这一项的理由就是"模型只能猜"，这条钉证明"猜的写不进去"。
+  const guess = run([{ index: 1, found: true, when: '三年后', quote: '三年后他回来了' }]);
+  eq('② 推算出来的时间（引文对不上原文）→ 一条都不写', `${guess.patch.length}|${guess.ungrounded.length}`, '0|1');
+  eq('② 而成对钉：同一张卡拿**原文里真有**的那句就收下（否则"核对整个关掉"也是绿的）',
+    (run([{ index: 1, found: true, when: '第三天的黄昏', quote: '第三天的黄昏' }]).patch[0] || {}).when, '第三天的黄昏');
+  eq('③ found=false（原文确实没写时间）→ not_found，不写', `${run([{ index: 1, found: false }]).patch.length}|${run([{ index: 1, found: false }]).not_found.length}`, '0|1');
+  // ④ 只收这张卡该补的键：时间线卡上还有 order_note，但这一轮**只补 when**
+  //    （体检只判 when；顺带多写一个字段就是"没被要求却动用户数据"）
+  const extra = run([{ index: 1, found: true, when: '三年前', order_note: '紧接着上一节', summary: '改写过的摘要', quote: '三年前他离开临江' }]);
+  const e0 = extra.patch[0] || {};
+  eq('④ 模型多给的键（order_note/summary）一律不写', (e0.fields || []).join(','), 'when');
+  eq('④ 那些多给的键也不进计划条目本体', `${e0.order_note === undefined}|${e0.summary === undefined}`, 'true|true');
+  eq('⑤ 编号越界 → invalid', ((run([{ index: 9, found: true, quote: 'x' }]).invalid[0] || {}).reason), 'index_out_of_range');
+  eq('⑥ 长度**不**在这里截（由调用方过 clipField）',
+    String((run([{ index: 1, found: true, when: '长'.repeat(200), quote: '三年前他离开临江' }]).patch[0] || {}).when || '').length, 200);
+  eq('⑦ 引文必须来自**这张卡自己**的片段（互不重叠的出处下成对钉）',
+    story.applyFillAssignments(ex, { whens: [{ index: 2, found: true, when: '三年前', quote: '三年前他离开临江' }] },
+      { t: '三年前他离开临江', t3: '空壳的角落' }, TW).ungrounded.length, 1);
+  eq('⑦ 而同一句话给对的卡就收下',
+    story.applyFillAssignments(ex, { whens: [{ index: 2, found: true, when: '空壳的角落', quote: '空壳的角落' }] },
+      { t: '三年前他离开临江', t3: '空壳的角落' }, TW).patch.length, 1);
+
+  // ⑧ 模板：成败全在提示词有没有把"不许推算"与"引文会被核对"写死
+  const tpl = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'timeline_when');
+  ok('内置模板里有 timeline_when', !!tpl);
+  ok('模板说明这是**回原文找**，不是创作', /回(到)?原文/.test(tpl.system + tpl.content) && /不创作/.test(tpl.system));
+  ok('模板要求交出原文原话（quote）', /quote/.test(tpl.content) && /原话/.test(tpl.content));
+  ok('模板写明引文会被逐字核对、对不上就丢弃', /逐字比对/.test(tpl.content) && /丢弃/.test(tpl.content));
+  ok('模板写明原文没写就 found=false（不许编）', /found=false/.test(tpl.content) && /编造/.test(tpl.system + tpl.content));
+  // 这一条是时间点**独有**的风险：引文是真的、但认错了是哪一句（同一段里既写"三年前"又写"次日"）
+  ok('模板点名"同一段里可能不止一个时间，认错哪一句就算错"', /不止一个时间/.test(tpl.content), tpl.content.slice(0, 200));
+  ok('模板明令**不许推算**（不许从年龄/剧情顺序倒推一个时间）', /不许推算/.test(tpl.content));
+  ok('模板明令照原文说法写、不换算成具体日期', /换算成具体日期/.test(tpl.content));
+  ok('模板的返回格式是 whens 数组且用 index 对位', /"whens":\[\{"index":1/.test(tpl.content));
+  ok('模板变量与路由传入的键一致', /\{\{时间线卡与原文片段\}\}/.test(tpl.content));
+  eq('模板数比补 34 多了一个', seed.DEFAULT_TEMPLATES.length, 20);
+
+  // ⑨ **跨文件棘轮**：每个规格的 varName 都必须真的出现在它自己的模板正文里。
+  //    变量名对不上是**静默**失败 —— `renderPrompt` 会把"没给的 {{…}}"替换成**空串**，
+  //    于是卡片清单整个发不出去、模型只能凭名字编，而链路上零报错（补 34 真踩到）。
+  //    写成循环而不是逐份手抄：将来新加规格时这条自动管住它
+  for (const key of Object.keys(story.FILL_SPECS)) {
+    const s = story.FILL_SPECS[key];
+    const t = seed.DEFAULT_TEMPLATES.find((x) => x.key === s.template) || {};
+    ok(`规格「${key}」的 varName 真的在模板「${s.template}」正文里（写错就是静默发空）`,
+      String(t.content || '').includes(`{{${s.varName}}}`), `${s.varName} ∉ ${s.template}`);
+  }
+  // ⑩ 反向：模板正文里**不许**有本规格之外的补字段占位符（抄错模板时会把两份规格混起来）
+  const twTpl = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'timeline_when') || {};
+  ok('时间点模板里没有别人的占位符（抄模板抄错会串味）',
+    !/\{\{人物与原文片段\}\}/.test(twTpl.content) && !/\{\{卡片与原文片段\}\}/.test(twTpl.content));
+
+  // ⑪ 引文可见：报告必须能逐张给出"写进去的值 + 它的引文"，否则用户只能盲信
+  //     （这一条在 selftest 里只能钉纯函数产出的形状；路由真的把它返回、界面真的渲染，由 apitest/uitest 钉）
+  ok('落库计划条目带着引文（报告要按它渲染"值 ← 原话"）', !!g0.quote, JSON.stringify(g0.quote));
+  eq('引文原样保留（不做 trim/截断之外的加工，界面要显示的就是它）', g0.quote, '三年前他离开临江');
 }
 
 // ══════════════════════════════════════════════════════════════

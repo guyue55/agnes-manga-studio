@@ -333,14 +333,14 @@ group('B4 画风分层');
     // **把钉钉在 fillStages 这个函数体上**：`costConfirm(` 在本页别处也出现（其它生成入口也用它），
     // 拿整份文件去 test 就是"因错误的原因通过"—— 把 fillStages 里的计费确认删掉，断言照样绿。
     // 同理 `d.invalid`/`d.missing` 也不能靠 `|bad\b` 这种兜底分支（那等于没钉）
-    const fillBody = (novelMaxSrc.match(/async function fillStages\(\)[\s\S]*?\n  \}/) || [''])[0];
+    const fillBody = (novelMaxSrc.match(/async function fillStages\([^)]*\)[\s\S]*?\n  \}/) || [''])[0];
     ok('4.1 找得到 fillStages 的函数体（下面几条都钉在它身上，钉不到就是空测）',
       fillBody.length > 200, String(fillBody.length));
     ok('4.1 前端有补幕次的端点封装，且带 dry_run（干跑不花钱）',
       /storyStageFill:/.test(stageApiSrc) && /\/api\/story\/stage-fill/.test(stageApiSrc) && /dry_run/.test(stageApiSrc));
     ok('4.1 补幕次按钮只在"还有拍点没标幕次"时才渲染（没有待定时不摆一个点了没反应的按钮）',
       /d\.stage_covered < d\.beat_count/.test(novelMaxSrc) && /data-outline-stage/.test(novelMaxSrc));
-    ok('4.1 按钮点击接到了 fillStages', /\[data-outline-stage\][^\n]*fillStages\(\)/.test(novelMaxSrc));
+    ok('4.1 按钮点击接到了 fillStages', /\[data-outline-stage\][^\n]*fillStages\(/.test(novelMaxSrc));
     // 花钱的动作必须过本页统一的计费闸门，而不是自己弹一个"确认吗"
     ok('4.1 补幕次先干跑拿到"要补几拍"再走计费确认（不许直接开跑）',
       /storyStageFill\(sourceId, \{ dryRun: true \}\)/.test(fillBody) && /costConfirm\(/.test(fillBody));
@@ -371,13 +371,13 @@ group('B4 画风分层');
     const lookStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
     // 同样把行为钉收进 fillFields 的函数体：`costConfirm(`/`toast.ok(` 在本页别处也出现，
     // 拿整份文件 test 就是"因错误的原因通过"（补 32 的 IW 对照正是这么抓出来的）
-    const lookBody = (novelMaxSrc.match(/async function fillFields\(target\)[\s\S]*?\n  \}/) || [''])[0];
+    const lookBody = (novelMaxSrc.match(/async function fillFields\(target[^)]*\)[\s\S]*?\n  \}/) || [''])[0];
     ok('4.1 找得到 fillFields 的函数体（下面几条都钉在它身上，钉不到就是空测）',
       lookBody.length > 400, String(lookBody.length));
     ok('4.1 前端有回原文补字段的端点封装，且带 dry_run（干跑不花钱）',
       /storyFieldFill:/.test(lookApiSrc) && /\/api\/story\/field-fill/.test(lookApiSrc) && /dry_run/.test(lookApiSrc));
     ok('4.1 工具栏有「AI 补长相」按钮，且点击接到了 char_look 目标',
-      /id="nov-look"/.test(novelMaxSrc) && /'#nov-look'[\s\S]{0,60}fillFields\('char_look'\)/.test(novelMaxSrc));
+      /id="nov-look"/.test(novelMaxSrc) && /'#nov-look'[\s\S]{0,60}fillFields\('char_look'/.test(novelMaxSrc));
     ok('4.1 补长相先干跑拿到"要补几张"再走计费确认（不许直接开跑）',
       /storyFieldFill\(sourceId, target, \{ dryRun: true \}\)/.test(lookBody) && /costConfirm\(/.test(lookBody));
     ok('4.1 干跑里就拦住"一张都不缺"的情况（不弹确认也不花钱）',
@@ -413,7 +413,7 @@ group('B4 画风分层');
     const injStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
     const injRouteSrc = read(path.join(ROOT, 'lib', 'routes.js'));
     ok('4.1 工具栏有「AI 补场景字段」按钮，且点击接到了 card_inject 目标',
-      /id="nov-inject"/.test(novelMaxSrc) && /'#nov-inject'[\s\S]{0,60}fillFields\('card_inject'\)/.test(novelMaxSrc));
+      /id="nov-inject"/.test(novelMaxSrc) && /'#nov-inject'[\s\S]{0,60}fillFields\('card_inject'/.test(novelMaxSrc));
     ok('4.1 两条路的文案表是**两份配置**（各自的"叫什么/缺什么"不同），而不是把函数抄两遍',
       /FILL_TARGETS = \{[\s\S]*?char_look:[\s\S]*?card_inject:/.test(novelMaxSrc)
       && /补人物长相/.test(novelMaxSrc) && /补场景道具字段/.test(novelMaxSrc)
@@ -438,15 +438,84 @@ group('B4 画风分层');
     // 体检的两个出口（补 34 之前只有结论、没有出口）
     ok('4.1 体检的 no_inject 有出口，且切到**该卡的类别**（地点卡与道具卡要补的字段不同）',
       /code: 'no_inject'[\s\S]{0,700}?kind: c\.kind, card_id: c\.id \}/.test(injStorySrc));
-    ok('4.1 体检的 timeline_no_when 也有出口（并明说这一项没有 AI 补值）',
-      /code: 'timeline_no_when'[\s\S]{0,900}?kind: 'timeline', card_id: c\.id \}/.test(injStorySrc)
-      && /没有"让模型补"的按钮/.test(injStorySrc));
+    ok('4.1 体检的 timeline_no_when 也有出口（落到那张时间线卡上）',
+      /code: 'timeline_no_when'[\s\S]{0,900}?kind: 'timeline', card_id: c\.id \}/.test(injStorySrc));
     // 出口一律带 card_id（落到那张卡上），别只在新加的两个上补 —— 同一张卡的两个问题点下去行为要一致。
     // 这条是**静态**的形态检查，真正的棘轮在 selftest（对真实体检结果断言"按类别落到卡片的出口都带 card_id"）
     ok('4.1 三个"按类别落到某张卡"的出口都带 card_id（char_no_look 也补上了）',
       /kind: 'character', card_id: c\.id \}/.test(injStorySrc)
       && /kind: c\.kind, card_id: c\.id \}/.test(injStorySrc)
       && /kind: 'timeline', card_id: c\.id \}/.test(injStorySrc));
+  }
+
+  // 批 8 补 35：第三个规格（时间点）＋ **引文可见**
+  {
+    const whenApiSrc = read(path.join(PUB, 'js', 'api.js'));
+    const whenSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    const whenStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
+    const whenRouteSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+    ok('4.1 工具栏有「AI 补时间点」按钮，且点击接到了 timeline_when 目标',
+      /id="nov-when"/.test(novelMaxSrc) && /'#nov-when'[\s\S]{0,60}fillFields\('timeline_when'/.test(novelMaxSrc));
+    // 三份规格共用一个 fillFields —— 每加一份就抄一个函数的写法迟早会分叉（引文核对抄两份最危险）
+    ok('4.1 三条路仍然只有**一个** fillFields 函数（规格是数据，不是三份实现）',
+      (novelMaxSrc.match(/async function fillFields\(/g) || []).length === 1
+      && /timeline_when: \{[\s\S]{0,200}?what: '补时间点'/.test(novelMaxSrc)
+      && /所有时间线卡都已经有时间点了/.test(novelMaxSrc));
+    ok('4.1 前端仍然只发一个端点（不按 target 分叉）',
+      (whenApiSrc.match(/\/api\/story\/field-fill/g) || []).length === 1 && /target,/.test(whenApiSrc));
+    // 规格表：第三份规格的形状与另两份一致（同一个机制、只换数据）
+    ok('4.1 服务端规格表里有 timeline_when，且只管网时间线卡、只补 when',
+      /key: 'timeline_when'/.test(whenStorySrc) && /kinds: \['timeline'\]/.test(whenStorySrc)
+      && /fields: \['when'\]/.test(whenStorySrc) && /payloadKey: 'whens'/.test(whenStorySrc));
+    ok('4.1 规格里的变量名与模板正文逐字一致（对不上就静默发空清单）',
+      /varName: '时间线卡与原文片段'/.test(whenStorySrc) && /\{\{时间线卡与原文片段\}\}/.test(whenSeedSrc));
+    ok('4.1 补时间点用的提示词模板在内置模板表里',
+      whenSeedSrc.includes("key: 'timeline_when'") && /不许推算/.test(whenSeedSrc));
+    // **反转**：补 32 写的"这一项没有让模型补的按钮"已经不成立，文案必须跟着改（改，不是删）
+    ok('4.1 体检的 timeline_no_when 文案已随反转更新（指向按钮，且不再声称没有 AI 补值）',
+      /AI 补时间点/.test(whenStorySrc) && !/没有"让模型补"的按钮/.test(whenStorySrc));
+    // ── 引文可见：报告必须逐张给出"写进去的值 + 它的引文" ──
+    // 只报一个张数（或一闪而过的 toast），用户就只能盲信；时间点这类**事实型**字段尤其如此
+    ok('4.1 原著页有一个**持久**的报告容器（toast 会消失，引文必须留在页面上）',
+      /id="nov-fill-box"/.test(novelMaxSrc));
+    ok('4.1 报告渲染的是服务端给的 assigned_items（不是前端自己再算一遍）',
+      /renderFillReport\(d, cfg\)/.test(novelMaxSrc) && /d\.assigned_items \|\| \[\]/.test(novelMaxSrc));
+    ok('4.1 报告里同时给出**写进去的值**与它的**原文原话**（值 ← 原话，才核对得了）',
+      /x\.values/.test(novelMaxSrc) && /x\.quote/.test(novelMaxSrc) && /依据原文原话/.test(novelMaxSrc));
+    // 注意事项 11：断言要能区分"定义了"与"被调用了" —— 带上行首与分号，避免匹配到函数定义
+    ok('4.1 报告函数**被调用**了（不是只定义在那儿 —— 定义了不调用在界面上就是没有）',
+      /^\s*renderFillReport\(d, cfg\);$/m.test(novelMaxSrc));
+    ok('4.1 三种"没写成"在报告里**各带名字**（只说"有 3 张没写"，用户还得自己去几十张卡里找）',
+      /原文确实没写/.test(novelMaxSrc) && /引文对不上原文，已丢弃不写/.test(novelMaxSrc)
+      && /arr \|\| \[\]\)\.map\(\(x\) => esc\(x\.name\)\)/.test(novelMaxSrc));
+    // 路由：报告必须是**真的写进去**的那一份（截断之后），不是模型的提议
+    ok('4.1 路由返回 assigned_items，且记的是**实际落库**的 patch（截断之后）',
+      /assigned_items: written/.test(whenRouteSrc) && /written\.push\(\{ id: p\.id, name: p\.name/.test(whenRouteSrc)
+      && /values: patch/.test(whenRouteSrc));
+    ok('4.1 assigned_names 与 assigned_items 同源（不再各算一遍，否则一个说 2 一个说 1）',
+      /assigned_names: written\.map/.test(whenRouteSrc));
+    ok('4.1 一个字都没写的不算进 assigned（"成功但没写"不能报成功）',
+      /if \(Object\.keys\(patch\)\.length\) \{\s*\n\s*written\.push/.test(whenRouteSrc));
+    // ── setBusy 的防呆（批 8 补 35 真机测试抓到的真 bug） ──
+    // `setBusy(el, true, …)` 会把 `el.innerHTML` 换成 spinner —— 传**容器**进来就等于把整页抹掉，
+    // 连带里面所有已绑定的监听；而链路上零报错（toast 照样报成功，只是列表不再刷新、页面变哑）。
+    // 补 32「AI 补幕次」与补 33/34「回原文补字段」两处都这么错过了。两道防线：
+    // ① 结构棘轮：页面模块里不许再把容器传给 setBusy；② 运行时防呆：setBusy 自己拒绝非控件
+    ok('4.1 页面模块里没有把**容器**传给 setBusy（那会把整页内容与监听一起抹掉）',
+      !/setBusy\(\s*container\b/.test(novelMaxSrc));
+    ok('4.1 setBusy 自己拒绝非控件（把静默的"页面变哑"变成看得见的失败）',
+      // **不能只钉"那句话在文件里"**：正对照 JK 把 `if` 条件换成 `if (false)`，字符串还在、
+      // 断言照样绿 —— 那钉的是"存在"不是"生效"（注意事项 11）。条件必须与拒绝逻辑**紧挨着**才算活的。
+      // 真机上的行为断言在 browser-test（故意喂一个 div，页面内容必须原样留着）
+      (() => {
+        const uiSrc = read(path.join(PUB, 'js', 'ui.js'));
+        const at = uiSrc.indexOf('setBusy 只能传按钮');
+        if (at < 0) return false;
+        return /if \(!\/\^\(BUTTON\|INPUT\|A\)\$\/\.test\(String\(btn\.tagName/.test(uiSrc.slice(Math.max(0, at - 400), at));
+      })());
+    ok('4.1 补字段与补幕次都把**按钮**传给了 setBusy（用 e.currentTarget，不是 container）',
+      /fillFields\('timeline_when', e\.currentTarget\)/.test(novelMaxSrc)
+      && /fillStages\(e\.currentTarget\)/.test(novelMaxSrc));
   }
 
   // 批 8 补 31：角色字段上限表的前后端镜像（角色的 appearance 会原文进每一次出图提示词）

@@ -2210,6 +2210,157 @@ try {
       }
     }
 
+    group('引文可见契约（批 8 补 35：写进去的值必须能对上它的原文原话）');
+    {
+      // 引文是"回原文补字段"唯一可核对的东西。服务端**已经**在逐字核对（补 33/34 有断言），
+      // 但界面上此前只有一闪而过的 toast 报个张数 —— 用户看不到引文，就只能**盲信**：
+      // "模型编的"与"原文真写的"在卡片上长得一模一样。时间点这类**事实型**字段尤其如此
+      // （引文可能是真的、但认错了是哪一句）。这里验真机全链路：点按钮 → 报告面板上
+      // 逐张出现"值 ← 原话"，且这条报告**留在页面上**（不是 toast）。
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              // 时间线卡**不带 when** → 正是"缺时间点"的候选
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'timeline', name: '离开临江', order_note: '全书开头' },
+                { kind: 'character', name: '林晚', role: '主角', appearance: '白衣' },
+              ] }) } }] });
+            }
+            // 补时间点：交出一句**真的在原文里**的原话（服务端会逐字核对，编的过不去）
+            if (/"whens"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ whens: [
+                { index: 1, found: true, when: '三年前', quote: '三年前他离开临江' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'quote-key' }) });
+        pid = (await POST('/api/projects', { name: '引文可见验收剧' })).id;
+        const NOVEL = '三年前他离开临江，此后音讯全无。'.repeat(20);
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '引文·原著', text: NOVEL, reduce: false });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        const TL = (await J(`/api/story/cards?project_id=${pid}`)).find((c) => c.kind === 'timeline');
+        ok('解析出了没有时间点的时间线卡', !!TL && !String(TL.when || '').trim(), JSON.stringify(TL || {}).slice(0, 120));
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-when');`), '「AI 补时间点」按钮', 15000);
+
+        // 付费确认：本组之前可能已经有"今天内不再提醒"的票据，所以弹窗**可能有也可能没有** ——
+        // 用固定 sleep 赌时序会偶发红（弹窗慢一点就点空，然后干等超时）。这里把
+        // "弹了就点确认"与"等报告出现"合并成一个轮询循环，两种情况都能确定性地走完
+        await cdp.eval(`document.querySelector('#nov-when').click(); return true;`);
+        let report = '';
+        let seen = '';
+        let seenH = '';
+        for (let i = 0; i < 40; i++) {
+          await cdp.eval(`const y=document.querySelector('.modal-mask [data-yes]'); if (y) y.click(); return true;`);
+          const now = await cdp.eval(`return JSON.stringify({
+            r: (document.querySelector('#nov-fill-box')||{}).innerText||'',
+            h: ((document.querySelector('#nov-fill-box')||{}).outerHTML||'').slice(0, 400),
+            t: [...document.querySelectorAll('.toast')].map((x)=>x.innerText).join(' | '),
+          });`);
+          let snap = {};
+          try { snap = JSON.parse(now); } catch { snap = {}; }
+          // toast 会自己消失 —— 必须**边跑边收**，否则失败原因在读取时已经没了
+          if (snap.t) seen = snap.t;
+          if (snap.h) seenH = snap.h;
+          report = snap.r || '';
+          if (/已写入/.test(report)) break;
+          await sleep(250);
+        }
+        if (!/已写入/.test(report)) {
+          const probe = await cdp.eval(`return JSON.stringify({
+            pages: document.querySelectorAll('.page').length,
+            fillBoxes: document.querySelectorAll('#nov-fill-box').length,
+            cards: document.querySelectorAll('#nov-cards').length,
+            rej: (window.__uiRejects||[]).slice(-2),
+            chain: (()=>{ let e=document.querySelector('#nov-fill-box'), out=[]; while(e && out.length<7){ out.push(e.tagName+(e.id?'#'+e.id:'')+(e.className?'.'+String(e.className).trim().split(/\\s+/).join('.'):'')); e=e.parentElement; } return out; })(),
+          });`);
+          ok('点「AI 补时间点」后报告面板出现', false, `toast="${String(seen).slice(0, 120)}" html="${String(seenH).slice(0, 120)}" probe=${String(probe).slice(0, 500)}`);
+        } else {
+          ok('点「AI 补时间点」后报告面板出现', true);
+        }
+        ok('报告面板列出**写进去的值**（不是只报一个张数）', /离开临江/.test(report) && /三年前/.test(report), JSON.stringify(report.slice(0, 300)));
+        ok('并且把**原文原话**摆在值旁边（"值 ← 原话"才核对得了）',
+          /依据原文原话/.test(report) && /三年前他离开临江/.test(report), JSON.stringify(report.slice(0, 400)));
+        ok('说的是"已写入"（这张卡真的落库了，不是只报了个数）', /已写入/.test(report), JSON.stringify(report.slice(0, 200)));
+        // **持久**：toast 会自己消失，报告必须留在页面上 —— 否则用户回头想核对时引文已经没了
+        await sleep(1500);
+        const still = await cdp.eval(`return (document.querySelector('#nov-fill-box')||{}).innerText||'';`);
+        ok('报告不会自己消失（引文必须留得住，toast 做不到这一点）', /三年前他离开临江/.test(still), JSON.stringify(still.slice(0, 200)));
+        // 卡片上真的写进去了（报告说的与卡片上存的是同一件事）
+        const stored = (await J(`/api/story/cards?project_id=${pid}`)).find((c) => c.id === TL.id) || {};
+        ok('卡片上真的存着报告里那个值（报告与卡片同源，不是各说各话）', stored.when === '三年前', JSON.stringify(stored.when));
+        // 能收起
+        await cdp.eval(`const b=document.querySelector('#nov-fill-close'); if (b) b.click(); return true;`);
+        const gone = await cdp.eval(`return ((document.querySelector('#nov-fill-box')||{}).innerText||'').length;`);
+        ok('报告能收起（收起后不留残影）', gone === 0, String(gone));
+        // **这条流程不许留下未处理的 Promise 拒绝**。本轮就是靠它抓到真 bug 的：
+        // setBusy 被传了容器（而不是按钮）→ 整页 innerHTML 被换成 spinner → 报告与卡片刷新双双报错，
+        // 而 toast 照样报"成功"。全局那条 __uiRejects 断言会被后续页面的 reload 清空，所以这里就近钉一次
+        const rej = await cdp.eval(`return JSON.stringify((window.__uiRejects||[]).slice(0,3));`);
+        ok('补字段这条流程没有留下未处理的 Promise 拒绝（"成功但页面已经变哑"最难发现）', rej === '[]', rej);
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
+    group('setBusy 防呆契约（批 8 补 35：传容器会把整页内容与监听一起抹掉）');
+    {
+      // 补 32/补 33/补 34 三处都犯过：`setBusy(container, true, …)` —— 它会把 `container.innerHTML`
+      // 换成 spinner，于是整页内容（连同里面所有已绑定的监听）一起没了，而链路上**零报错**：
+      // toast 照样报"成功"，只是列表不再刷新、页面从此变哑。这里直接对共享模块做**行为**断言
+      // （不是"文件里有那句话"—— 正对照 JK 证明那种钉法把条件换成 `if (false)` 也照样绿）。
+      const r = await cdp.eval(`
+        const m = await import('/js/ui.js');
+        const before = (window.__uiRejects || []).length;
+        const div = document.createElement('div');
+        div.innerHTML = '<span>原有的内容</span>';
+        document.body.appendChild(div);
+        m.setBusy(div, true, '测试');
+        const kept = div.innerHTML.includes('原有的内容');
+        const busy = div.dataset.busy === '1';
+        const msgs = (window.__uiRejects || []).slice(before);
+        window.__uiRejects.length = before;   // 这次是**故意**触发的，不能污染最后那条"无未处理拒绝"的全局断言
+        div.remove();
+        // 配对：真按钮必须照常进加载态（否则"一律拒绝"也能让上面两条通过）
+        const btn = document.createElement('button');
+        btn.innerHTML = '<span>出图</span>';
+        document.body.appendChild(btn);
+        m.setBusy(btn, true, '生成中');
+        const spun = btn.dataset.busy === '1' && /spinner/.test(btn.innerHTML) && btn.disabled === true;
+        m.setBusy(btn, false);
+        const restored = btn.dataset.busy === undefined && /出图/.test(btn.innerHTML) && btn.disabled === false;
+        btn.remove();
+        return JSON.stringify({ kept, busy, msgs, spun, restored });
+      `);
+      let d = {};
+      try { d = JSON.parse(r); } catch { d = {}; }
+      ok('把容器喂给 setBusy 时页面内容原样留着（不再被 spinner 抹掉）', d.kept === true, String(r).slice(0, 200));
+      ok('并且拒绝进入加载态（不是"抹了但看起来还在转"）', d.busy === false, String(r).slice(0, 200));
+      ok('同时把这次误用**报出来**（进 __uiRejects，真机测试看得见）',
+        Array.isArray(d.msgs) && d.msgs.length >= 1 && /按钮/.test(String(d.msgs[0])), JSON.stringify(d.msgs || []));
+      ok('配对：真按钮照常进加载态（证明防呆不是"一律拒绝"）', d.spun === true, String(r).slice(0, 200));
+      ok('配对：还原后按钮回到原样（文案与禁用态都还原）', d.restored === true, String(r).slice(0, 200));
+    }
+
     group('剧情卡人物闭环体检（批 8 补 28：involved 里的人真的存在吗）');
     {
       // `involved` 一直被抽出来、也一直显示在分集大纲里（"涉及：…"），却从没人核对过那些名字是否存在。

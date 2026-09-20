@@ -102,7 +102,9 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
             <button class="btn btn-xs" id="nov-look" title="给还没有外貌/服装的人物卡回原文找一遍（找到的必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补长相</button>
             <button class="btn btn-xs" id="nov-inject" title="给没有任何可注入描述的地点卡/道具卡回原文找一遍（氛围/地域/时段/特征、持有者/用途/特征；同样必须带原文原话，对不上原文的一律丢弃）">${icon('sparkles', 13)}AI 补场景字段</button>
+            <button class="btn btn-xs" id="nov-when" title="给没有时间点的时间线卡回原文找一遍（只照原文的说法写，不换算、不推算；必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补时间点</button>
           </div>
+          <div id="nov-fill-box"></div>
           <div id="nov-outline-box"></div>
           <div id="nov-chap-box"></div>
           <div id="nov-cover-box"></div>
@@ -633,7 +635,7 @@ export default async function novel(container, params = {}) {
         toast.ok(`已复制分集骨架（${d.episode_count} 集 / ${d.beat_count} 拍）——粘进剧本模板变量即可`);
       } catch { toast.err('复制失败——浏览器没给剪贴板权限，请手动选中'); }
     });
-    on(box, '[data-outline-stage]', 'click', () => fillStages());
+    on(box, '[data-outline-stage]', 'click', (e) => fillStages(e.currentTarget));
     on(box, '[data-outline-toscript]', 'click', () => toScriptOutline());
   }
 
@@ -642,7 +644,7 @@ export default async function novel(container, params = {}) {
    * 幕次是分集的依据，所以补完要**重新切一遍**并如实报出分集依据有没有真的变好
    * （`basis` 从 count 变成 stage 才是"这次调用有用"的证据）。
    */
-  async function fillStages() {
+  async function fillStages(btn) {
     if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
     const dry = await api.storyStageFill(sourceId, { dryRun: true });
     if (!dry.ok) { toast.err(dry.error); return; }
@@ -655,7 +657,10 @@ export default async function novel(container, params = {}) {
         + '已经标好的幕次不会被动；模型返回的幕次只要不是「起/承/转/合」就会被丢掉并如实告诉你。',
     });
     if (!yes) return;
-    setBusy(container, true, '正在补幕次');
+    // **必须传按钮**，不能传 container：setBusy 会把 innerHTML 换成 spinner，
+    // 传容器会把整页抹掉（下面的 loadCards/runOutline 就都会对着一个 spinner 找节点 → 报错）。
+    // 补 32 就是这么写的：toast 报"已补 N 拍"，而卡片与大纲**从来没有刷新**、页面监听也全没了
+    setBusy(btn, true, '正在补幕次');
     try {
       const r = await api.storyStageFill(sourceId);
       if (!r.ok) { toast.err(r.error); return; }
@@ -669,7 +674,7 @@ export default async function novel(container, params = {}) {
       if (d.basis_before !== d.basis_after) toast.ok(`分集依据：${d.basis_before} → ${d.basis_after}`);
       await loadCards();
       await runOutline();
-    } finally { setBusy(container, false); }
+    } finally { setBusy(btn, false); }
   }
 
   /** 分集骨架 → 故事脚本页（与「带入剧本」同一条链路，只是换成骨架文本） */
@@ -1144,9 +1149,58 @@ export default async function novel(container, params = {}) {
       what: '补场景道具字段', label: '场景/道具描述', unit: '张卡片',
       empty: '所有地点卡/道具卡都已经有可注入的描述',
     },
+    timeline_when: {
+      what: '补时间点', label: '时间点', unit: '张时间线卡',
+      empty: '所有时间线卡都已经有时间点了',
+    },
   };
 
-  async function fillFields(target) {
+  /**
+   * 补字段报告：**逐张列出"写进去的值 ← 它的原文原话"**。
+   *
+   * 引文是这个机制唯一可核对的东西 —— 只报一个张数（或一闪而过的 toast），用户就只能盲信，
+   * 而"模型编的"与"原文真写的"在卡片上长得一模一样。时间点这类**事实型**字段尤其如此：
+   * 引文可能是真的、但**认错了是哪一句**（同一段里既有"三年前"又有"次日"），
+   * 只有把原话摆在写进去的值旁边，人才能一眼看出来 —— 这也是本轮先做"引文可见"、再做时间点的原因。
+   * 值取的是**实际落库**的那一份（服务端截断之后），不是模型的提议：报告与卡片必须是同一份数据。
+   */
+  function renderFillReport(d, cfg) {
+    const box = container.querySelector('#nov-fill-box');
+    const items = d.assigned_items || [];
+    const rowOf = (x) => `
+      <div class="row" style="gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)">
+        <span class="chip green" style="flex:none">已写入</span>
+        <div style="flex:1;min-width:0">
+          <div class="hint-xs"><b>${esc(x.name)}</b></div>
+          ${(x.fields || []).map((f) => `<div class="hint-xs">${esc(STORY_CARD_FIELD_LABELS[f] || f)}：<b>${esc(String((x.values || {})[f] || ''))}</b></div>`).join('')}
+          ${x.quote ? `<div class="hint-xs" style="opacity:.75;margin-top:2px">依据原文原话：「${esc(x.quote)}」</div>` : ''}
+        </div>
+      </div>`;
+    // 三种"没写成"分开列，且**各带名字** —— 只说"有 3 张没写"，用户还得自己去几十张卡里找是哪三张
+    const bucket = (title, arr, cls) => ((arr || []).length
+      ? `<div class="hint-xs" style="margin-top:6px"><span class="chip ${cls}">${esc(title)}</span> ${(arr || []).map((x) => esc(x.name)).join('、')}</div>`
+      : '');
+    box.innerHTML = `
+      <div class="card" style="margin-bottom:10px;padding:12px">
+        <div class="row wrap" style="gap:6px;align-items:center">
+          <b>${esc(cfg.what)}：写入 ${d.assigned}/${d.targets} ${esc(cfg.unit)}</b>
+          <div class="spacer"></div>
+          <button class="btn btn-xs" id="nov-fill-close">收起</button>
+        </div>
+        <div class="hint-xs" style="margin-top:4px">下面每一张都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。</div>
+        ${d.note ? `<div class="hint-xs" style="margin-top:6px">${esc(d.note)}</div>` : ''}
+        ${items.length ? items.map(rowOf).join('') : ''}
+        ${bucket(`原文确实没写（${(d.not_found || []).length} 张）—— 这是结论，不是失败`, d.not_found, 'gray')}
+        ${bucket(`引文对不上原文，已丢弃不写（${(d.ungrounded || []).length} 张）—— 那是它编的`, d.ungrounded, 'red')}
+        ${bucket('没接住，已保持原样（模型没给全或编号越界）', (d.missing || []).concat(d.invalid || [], d.empty || []), 'gold')}
+        ${d.no_source ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">没有原文出处，已跳过</span> ${d.no_source} 张（人工新建或来自全局归并、没有段号，回原文找无从谈起）</div>` : ''}
+        ${d.aligned === false ? '<div class="hint-xs" style="margin-top:6px;color:var(--warn)">这份原著的重新切块与解析时不一致，补上的内容请人工核对一遍。</div>' : ''}
+      </div>`;
+    const close = box.querySelector('#nov-fill-close');
+    if (close) close.onclick = () => { box.innerHTML = ''; };
+  }
+
+  async function fillFields(target, btn) {
     const cfg = FILL_TARGETS[target];
     if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
     const dry = await api.storyFieldFill(sourceId, target, { dryRun: true });
@@ -1161,7 +1215,11 @@ export default async function novel(container, params = {}) {
         + `绝不会拿编的顶上。${noSrc ? `其中 ${noSrc} 张没有可定位的原文出处，会被跳过（回原文找无从谈起）。` : ''}`,
     });
     if (!yes) return;
-    setBusy(container, true, '正在回原文找');
+    // **必须传按钮**，不能传 container：setBusy 会把 innerHTML 换成 spinner，
+    // 传容器会把整页抹掉 —— 下面 `renderFillReport` 与 `loadCards` 都会对着一个 spinner 找节点 → 报错。
+    // 补 33/34 就是这么写的：toast 报"已补 N 张"，而报告没出来、卡片**从来没有刷新**、
+    // 页面监听也随 innerHTML 一起没了（"成功但页面已经变哑"是最难发现的一类失败）
+    setBusy(btn, true, '正在回原文找');
     try {
       const r = await api.storyFieldFill(sourceId, target);
       if (!r.ok) { toast.err(r.error); return; }
@@ -1176,12 +1234,15 @@ export default async function novel(container, params = {}) {
       if (rest) toast.err(`另有 ${rest} ${cfg.unit}没接住（模型没给全，或返回的编号越界），已保持原样`);
       if (d.no_source) toast(`有 ${d.no_source} ${cfg.unit}没有可定位的原文出处，已跳过`, 'info', 6000);
       if (d.aligned === false) toast.err('这份原著的重新切块与解析时不一致，补上的内容请人工核对一遍');
+      // toast 会消失、报告不会：引文必须留在页面上，用户才有机会核对（补 35）
+      renderFillReport(d, cfg);
       await loadCards();
-    } finally { setBusy(container, false); }
+    } finally { setBusy(btn, false); }
   }
 
-  container.querySelector('#nov-look').onclick = () => fillFields('char_look');
-  container.querySelector('#nov-inject').onclick = () => fillFields('card_inject');
+  container.querySelector('#nov-look').onclick = (e) => fillFields('char_look', e.currentTarget);
+  container.querySelector('#nov-inject').onclick = (e) => fillFields('card_inject', e.currentTarget);
+  container.querySelector('#nov-when').onclick = (e) => fillFields('timeline_when', e.currentTarget);
 
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => {

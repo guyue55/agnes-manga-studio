@@ -449,6 +449,19 @@ export function options(items, valueKey = 'value', labelKey = 'label', current) 
  */
 export function setBusy(btn, busy, label = '', hint = '') {
   if (!btn) return;
+  // 防呆：第一个参数是**控件**（按钮/输入框），不是容器 —— 这个函数会把 `innerHTML` 换成 spinner。
+  // 传容器进来会把整页内容连同**里面所有已绑定的监听**一起抹掉，而链路上**零报错**：
+  // toast 照样报"成功"，只是列表不再刷新、页面从此变哑（要等 setBusy(false) 才把 HTML 字符串贴回去，
+  // 那时节点已经是新的、监听全没了）。批 8 补 32「AI 补幕次」与补 33/34「回原文补字段」
+  // 都这么错过了 —— 两处都只在真机上表现成"点了没反应"，直到补 35 补了真机测试才抓到。
+  // 这里把错误用法变成**看得见的失败**（进 __uiRejects，真机测试会红），而不是留给下一个人再踩一次。
+  if (!/^(BUTTON|INPUT|A)$/.test(String(btn.tagName || ''))) {
+    const msg = `setBusy 只能传按钮/输入框，收到 <${String(btn.tagName || '?').toLowerCase()}>`
+      + ' —— 传容器会把整页内容与监听一起抹掉';
+    if (typeof window !== 'undefined') (window.__uiRejects = window.__uiRejects || []).push(msg);
+    console.warn('[setBusy]', msg);
+    return;
+  }
   if (busy) {
     if (btn.dataset.busy === '1') return; // 已经在转了，别叠加
     btn.dataset.busy = '1';
