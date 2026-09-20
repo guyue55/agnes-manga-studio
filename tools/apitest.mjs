@@ -1907,6 +1907,21 @@ group('章节识别与章节级溯源（批 8 补 21：段号是切块的副产�
   ok('每章都带上自己的段数（界面要显示"几段"）',
     r.data.chapters.every((c) => c.chunk_count >= 1), JSON.stringify(r.data.chapters.map((c) => c.chunk_count)));
 
+  // 章节复核（批 8 补 22）：光有张数没法判断抽得对不对，得能就地列出"这一章抽到了什么"
+  ok('每章给出抽到的卡片 id（界面据此就地列出）',
+    r.data.chapters.every((c) => Array.isArray(c.card_ids)), JSON.stringify(r.data.chapters.map((c) => c.card_ids)));
+  ok('张数与 id 列表同源（不出现"3 张卡"却只列 2 张）',
+    r.data.chapters.every((c) => c.card_count === c.card_ids.length), JSON.stringify(r.data.chapters.map((c) => [c.card_count, c.card_ids.length])));
+  const allIds = new Set((await api('GET', `/api/story/cards?project_id=${PID}`)).data.map((c) => c.id));
+  ok('列出的 id 都是这份原著真抽出来的卡片（不凭空造 id）',
+    r.data.chapters.every((c) => c.card_ids.every((id) => allIds.has(id))), JSON.stringify([...allIds]));
+  const gotCh = r.data.chapters.find((c) => c.card_ids.length);
+  ok('至少有一章列出了卡片（否则上面几条是空转）', !!gotCh, JSON.stringify(r.data.chapters.map((c) => c.title)));
+
+  // 章的原文开头必须**从这一章的标题开始**：一章从块中间开始时，块开头是上一章的正文
+  ok('每章的原文开头都以它自己的标题起头（点开第二章不会看到第一章的文字）',
+    r.data.chapters.every((c) => c.preview.startsWith(c.title)), JSON.stringify(r.data.chapters.map((c) => [c.title, c.preview.slice(0, 12)])));
+
   // 溯源面板要能说"第几章"
   const card = (await api('GET', `/api/story/cards?project_id=${PID}`)).data[0];
   const cs = await api('GET', `/api/story/card-source?card_id=${card.id}`);

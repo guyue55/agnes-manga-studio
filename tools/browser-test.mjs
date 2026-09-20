@@ -1914,6 +1914,30 @@ try {
         ok('溯源面板也带上章节标题（出处口径一致）',
           /第[一二三四五六七八九十]+章/.test(srcPanel), JSON.stringify(srcPanel.slice(0, 240)));
 
+        // 章节复核（批 8 补 22）：点开一章 → 就地看"这一章抽到了什么" → 点一张卡看它的原文依据
+        // 点**真有卡片的那一章**（卡片落在哪一块由切块结果决定，写死章号会变成"测试假设"而不是契约）
+        const chData = await J(`/api/story/chapters?source_id=${an.source.id}`);
+        const withCards = (chData.chapters || []).find((c) => (c.card_ids || []).length);
+        ok('接口给出"这一章抽到了哪些卡"（界面据此就地列出）', !!withCards, JSON.stringify((chData.chapters || []).map((c) => [c.title, c.card_count])));
+        const ci = withCards.chapter;
+        await cdp.eval(`document.querySelector('[data-chap="${ci}"]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!(document.querySelector('[data-chap-slot="${ci}"]')||{}).innerHTML;`), '章节复核面板', 10000);
+        const chapText = await cdp.eval(`return (document.querySelector('[data-chap-slot="${ci}"]')||{}).innerText||'';`);
+        ok('点开一章先给这一章的原文开头（确认点开的是不是这一章）',
+          chapText.includes(withCards.title), JSON.stringify(chapText.slice(0, 200)));
+        ok('并就地列出这一章抽到的卡（光有张数没法判断抽得对不对）',
+          /人物卡/.test(chapText) && /林晚/.test(chapText), JSON.stringify(chapText.slice(0, 300)));
+
+        // 点卡 → 跳到主列表那张卡的原文依据（命中处标出来）
+        const chipId = await cdp.eval(`const b=document.querySelector('[data-chap-slot="${ci}"] [data-chap-card]'); return b?b.getAttribute('data-chap-card'):'';`);
+        await cdp.eval(`document.querySelector('[data-chap-slot="${ci}"] [data-chap-card]').click(); return true;`);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('[data-src-slot="${chipId}"] .src-quote');`), '章节面板跳原文依据', 15000);
+        const fromChap = await cdp.eval(`return (document.querySelector('[data-src-slot="${chipId}"]')||{}).innerText||'';`);
+        ok('从章节面板点卡片能直接看到原文依据（不是"点了没反应"）',
+          /原文依据/.test(fromChap) && /<mark>/.test(await cdp.eval(`return (document.querySelector('[data-src-slot="${chipId}"] .src-quote')||{}).innerHTML||'';`)), JSON.stringify(fromChap.slice(0, 160)));
+        ok('章节面板与主列表看到的是同一张卡（共用一份实现）',
+          /第[一二三四五六七八九十0-9]+章/.test(fromChap), JSON.stringify(fromChap.slice(0, 160)));
+
         await cdp.eval(`document.querySelector('#nov-chap-close').click(); return true;`);
         ok('章节目录能收起', await cdp.eval(`return (document.querySelector('#nov-chap-box')||{}).innerHTML === '';`));
       } finally {

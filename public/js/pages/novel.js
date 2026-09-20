@@ -411,6 +411,51 @@ export default async function novel(container, params = {}) {
     });
   }
 
+  // 打开某张卡的「原文依据」。主列表与章节复核面板**共用这一份实现** ——
+  // 两处各写一遍，行为迟早会分叉（一边标了命中、另一边没标）。
+  // 片段由服务端切成 {t, hit} 且**不含 HTML**，这里只负责转义与包裹：命中的词来自模型输出，必须转义。
+  async function openSource(id, opts) {
+    let slot = container.querySelector(`#nov-src-${id}`);
+    if (!slot) {
+      // 被类别筛选挡住的卡片在主列表里没有槽位 —— 先解除筛选再渲染一次，否则点了没反应
+      kindFilter = '';
+      syncViewParams({ kind: '' });
+      renderKindChips();
+      renderCards();
+      slot = container.querySelector(`#nov-src-${id}`);
+      if (!slot) return;
+    }
+    if (opts && opts.scroll) slot.scrollIntoView({ block: 'center' });
+    // 主列表里点自己那一行是"开关"（再点一次收起）；从章节复核面板点过来是"给我看"
+    // —— 那时用户看的是章节面板、不是那张卡，把它**关掉**会莫名其妙（force 由章节面板传）。
+    if (!slot.hidden && !(opts && opts.force)) { slot.hidden = true; slot.innerHTML = ''; return; }
+    slot.hidden = false;
+    slot.innerHTML = `<div class="note" style="margin-top:6px">${skeleton('row', 1)}</div>`;
+    const r = await api.storyCardSource(id);
+    if (!r.ok) { slot.innerHTML = errBox(r.error, '原文没取到', r.trace); return; }
+    const d = r.data;
+    const hl = (segs) => (segs || []).map((x) => (x.hit ? `<mark>${esc(x.t)}</mark>` : esc(x.t))).join('');
+    slot.innerHTML = `
+      <div class="note" style="margin-top:6px">
+        <div class="row wrap" style="gap:6px;align-items:flex-start">
+          <div style="flex:1;min-width:180px">
+            <b>原文依据</b><span class="hint-xs">　来自「${esc(d.source_title || '原著')}」</span>
+            <div class="hint-xs" style="margin-top:3px">核对这张卡说得对不对，不用再回原文里数段。命中处已标出；片段只截了命中附近，不是完整段落。</div>
+          </div>
+          <button class="btn btn-xs" data-src-close="${esc(d.card_id)}">收起</button>
+        </div>
+        ${(d.notes || []).length ? `<div class="hint-xs" style="margin-top:6px;color:var(--warn)">${d.notes.map(esc).join('；')}</div>` : ''}
+        ${(d.excerpts || []).length ? d.excerpts.map((x) => `
+          <div style="margin-top:8px">
+            <div class="hint-xs">${x.chapter_title ? `<b>${esc(x.chapter_title)}</b> · ` : ''}<b>${esc(x.label)}</b>${x.spans_chapters > 1 ? '<span style="opacity:.7">（这一段跨了多章）</span>' : ''} · 共 ${countLabel(x.chars)}${x.hits.length ? ` · 命中 ${esc(x.hits.join('、'))}` : ' · 这段里没找到这个名字'}</div>
+            <div class="src-quote">${hl(x.segments)}${x.truncated ? '<span class="hint-xs">…（前后还有内容，只显示命中附近）</span>' : ''}</div>
+          </div>`).join('') : `<div class="hint-xs" style="margin-top:6px">没有可展示的原文片段。</div>`}
+      </div>`;
+    const cb = slot.querySelector('[data-src-close]');
+    if (cb) cb.onclick = () => { slot.hidden = true; slot.innerHTML = ''; };
+    
+  }
+
   function renderCards() {
     const box = container.querySelector('#nov-cards');
     if (!cards.length) {
@@ -429,37 +474,7 @@ export default async function novel(container, params = {}) {
     const shown = kindFilter ? cards.filter((c) => c.kind === kindFilter) : cards;
     box.innerHTML = shown.map(cardHtml).join('');
     // 卡片溯源：把"证据段 3"变成能直接读的原文（命中处标出来）。
-    // 片段由服务端切成 {t, hit} 且**不含 HTML**，这里只负责转义与包裹 —— 命中的词来自模型输出，必须转义。
-    on(box, '[data-src-of]', 'click', async (e) => {
-      const id = dataOf(e.currentTarget, 'src-of');
-      const slot = container.querySelector(`#nov-src-${id}`);
-      if (!slot) return;
-      if (!slot.hidden) { slot.hidden = true; slot.innerHTML = ''; return; }
-      slot.hidden = false;
-      slot.innerHTML = `<div class="note" style="margin-top:6px">${skeleton('row', 1)}</div>`;
-      const r = await api.storyCardSource(id);
-      if (!r.ok) { slot.innerHTML = errBox(r.error, '原文没取到', r.trace); return; }
-      const d = r.data;
-      const hl = (segs) => (segs || []).map((x) => (x.hit ? `<mark>${esc(x.t)}</mark>` : esc(x.t))).join('');
-      slot.innerHTML = `
-        <div class="note" style="margin-top:6px">
-          <div class="row wrap" style="gap:6px;align-items:flex-start">
-            <div style="flex:1;min-width:180px">
-              <b>原文依据</b><span class="hint-xs">　来自「${esc(d.source_title || '原著')}」</span>
-              <div class="hint-xs" style="margin-top:3px">核对这张卡说得对不对，不用再回原文里数段。命中处已标出；片段只截了命中附近，不是完整段落。</div>
-            </div>
-            <button class="btn btn-xs" data-src-close="${esc(d.card_id)}">收起</button>
-          </div>
-          ${(d.notes || []).length ? `<div class="hint-xs" style="margin-top:6px;color:var(--warn)">${d.notes.map(esc).join('；')}</div>` : ''}
-          ${(d.excerpts || []).length ? d.excerpts.map((x) => `
-            <div style="margin-top:8px">
-              <div class="hint-xs">${x.chapter_title ? `<b>${esc(x.chapter_title)}</b> · ` : ''}<b>${esc(x.label)}</b>${x.spans_chapters > 1 ? '<span style="opacity:.7">（这一段跨了多章）</span>' : ''} · 共 ${countLabel(x.chars)}${x.hits.length ? ` · 命中 ${esc(x.hits.join('、'))}` : ' · 这段里没找到这个名字'}</div>
-              <div class="src-quote">${hl(x.segments)}${x.truncated ? '<span class="hint-xs">…（前后还有内容，只显示命中附近）</span>' : ''}</div>
-            </div>`).join('') : `<div class="hint-xs" style="margin-top:6px">没有可展示的原文片段。</div>`}
-        </div>`;
-      const cb = slot.querySelector('[data-src-close]');
-      if (cb) cb.onclick = () => { slot.hidden = true; slot.innerHTML = ''; };
-    });
+    on(box, '[data-src-of]', 'click', (e) => openSource(dataOf(e.currentTarget, 'src-of')));
     on(box, '[data-edit]', 'click', (e) => { editingId = dataOf(e.currentTarget, 'edit'); renderCards(); });
     on(box, '[data-cancel]', 'click', () => { editingId = null; renderCards(); });
     // 参考图选中态：勾选后给卡片描边（否则选中与未选中在缩略图上几乎看不出差别）
@@ -746,6 +761,9 @@ export default async function novel(container, params = {}) {
   async function runChapters() {
     const box = container.querySelector('#nov-chap-box');
     if (!sourceId) { box.innerHTML = ''; toast.err('先在左侧选中一份原著'); return; }
+    // 卡片列表还没加载就先补上：章节面板要按 id 列出"这一章抽到了什么"，
+    // 手里没有卡片时它会写成"这一章没有抽到卡片" —— 把"不知道"说成"没有"（假信息比不报更糟）
+    if (!cards.length) await loadCards();
     if (!box.innerHTML) {
       box.innerHTML = `<div class="card" style="margin-bottom:10px">${skeleton('row', 3)}</div>`;
     }
@@ -767,16 +785,23 @@ export default async function novel(container, params = {}) {
     }
     chunkChapter = {};
     (d.chapters || []).forEach((c) => (c.chunks || []).forEach((i) => { if (chunkChapter[i] == null) chunkChapter[i] = c.title; }));
+    const byId = new Map(cards.map((c) => [c.id, c]));
     const rows = (d.chapters || []).map((c) => {
       // 只有"真丢数据"才报警：模型说"这段没信息"是正常结局（对照补 18/补 19）
       const lost = (c.dropped || 0) + (c.failed || 0);
+      // 就地展开"这一章抽到了什么"：光有张数没法判断抽得对不对，得看得见是哪几张、点得进原文
+      const got = (c.card_ids || []).map((id) => byId.get(id)).filter(Boolean);
+      const preview = (c.preview || '').replace(/\s+/g, ' ');
       return `
-      <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)">
-        <span class="chip ${lost ? 'red' : c.card_count ? 'green' : 'gray'}" style="flex:none">${c.card_count} 张卡</span>
-        <div style="flex:1;min-width:0">
-          <div class="hint-xs"><b>${esc(c.title)}</b> · ${countLabel(c.chars)} · ${c.chunk_count} 段</div>
-          ${lost ? `<div class="hint-xs" style="color:var(--warn)">这一段里有 ${lost} 段没接住（模型返回了条目却被丢掉，或调用失败）——去「抽取覆盖」看是哪几段</div>` : ''}
+      <div style="border-top:1px solid var(--line);padding:6px 0">
+        <div class="row" style="gap:8px;align-items:center;cursor:pointer" data-chap="${c.chapter}">
+          <span class="chip ${lost ? 'red' : c.card_count ? 'green' : 'gray'}" style="flex:none">${c.card_count} 张卡</span>
+          <div style="flex:1;min-width:0">
+            <div class="hint-xs"><b>${esc(c.title)}</b> · ${countLabel(c.chars)} · ${c.chunk_count} 段<span style="opacity:.7">${got.length ? ' · 点开看抽到了什么' : ''}</span></div>
+            ${lost ? `<div class="hint-xs" style="color:var(--warn)">这一段里有 ${lost} 段没接住（模型返回了条目却被丢掉，或调用失败）——去「抽取覆盖」看是哪几段</div>` : ''}
+          </div>
         </div>
+        <div id="nov-chap-${c.chapter}" data-chap-slot="${c.chapter}" hidden></div>
       </div>`;
     }).join('');
     box.innerHTML = `
@@ -791,6 +816,32 @@ export default async function novel(container, params = {}) {
       </div>`;
     const cb = box.querySelector('#nov-chap-close');
     if (cb) cb.onclick = () => { box.innerHTML = ''; };
+    // 章节复核：点开一章就地看"这一章抽到了什么"，每张卡都能直接跳到它的原文依据。
+    // 只列这一章真抽到的卡（按 evidence 落在哪一章判定），不做任何推测。
+    on(box, '[data-chap]', 'click', (e) => {
+      const ch = dataOf(e.currentTarget, 'chap');
+      const slot = box.querySelector(`#nov-chap-${ch}`);
+      if (!slot) return;
+      if (!slot.hidden) { slot.hidden = true; slot.innerHTML = ''; return; }
+      const info = (d.chapters || []).find((x) => String(x.chapter) === String(ch)) || {};
+      const got = (info.card_ids || []).map((id) => byId.get(id)).filter(Boolean);
+      const preview = (info.preview || '').replace(/\s+/g, ' ');
+      slot.hidden = false;
+      slot.innerHTML = `
+        <div class="note" style="margin:6px 0 0">
+          <div class="hint-xs">${esc(preview)}${(info.preview || '').length >= 120 ? '…' : ''}</div>
+          ${got.length ? `<div class="row wrap" style="gap:6px;margin-top:8px">
+            ${got.map((x) => `<button class="chip" data-chap-card="${esc(x.id)}" title="看这张卡的原文依据">${esc(storyKindLabel(x.kind))}·${esc(x.name)}</button>`).join('')}
+          </div>
+          <div class="hint-xs" style="margin-top:4px">点一张卡就能看到它对应的原文依据（命中处会标出来）。</div>`
+          : '<div class="hint-xs" style="margin-top:6px">这一章没有抽到卡片。</div>'}
+        </div>`;
+      // 章节面板里的卡片 → 跳到主列表那张卡的原文依据（共用同一份实现）
+      on(slot, '[data-chap-card]', 'click', (ev) => {
+        ev.stopPropagation();
+        openSource(dataOf(ev.currentTarget, 'chap-card'), { scroll: true, force: true });
+      });
+    });
   }
 
   async function runCoverage() {

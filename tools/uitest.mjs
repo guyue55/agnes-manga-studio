@@ -1286,6 +1286,23 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('溯源面板显示章节标题', /x\.chapter_title \? `<b>\$\{esc\(x\.chapter_title\)\}<\/b>/.test(novelSrc17));
   ok('一段跨多章时如实标注', /这一段跨了多章/.test(novelSrc17));
 
+  // ── 章节复核（批 8 补 22）──
+  ok('点开一章就地看"这一章抽到了什么"', /data-chap="\$\{c\.chapter\}"/.test(novelSrc17) && /nov-chap-\$\{c\.chapter\}/.test(novelSrc17));
+  ok('每张卡可直接跳到它的原文依据', /data-chap-card="\$\{esc\(x\.id\)\}"/.test(novelSrc17));
+  ok('从章节面板点卡片是"给我看"而不是"开关"（把已展开的依据关掉会莫名其妙）',
+    /openSource\(dataOf\(ev\.currentTarget, 'chap-card'\), \{ scroll: true, force: true \}\)/.test(novelSrc17)
+    && /if \(!slot\.hidden && !\(opts && opts\.force\)\)/.test(novelSrc17));
+  ok('列出的是这一章真抽到的卡（按 evidence 落在哪一章判定，不做推测）',
+    /const got = \(c\.card_ids \|\| \[\]\)\.map\(\(id\) => byId\.get\(id\)\)\.filter\(Boolean\)/.test(novelSrc17));
+  ok('原文开头先给一眼（确认点开的是不是这一章）', /info\.preview/.test(novelSrc17));
+  ok('溯源只有一份实现（章节面板与主列表共用，避免两处行为分叉）',
+    /async function openSource\(id, opts\)/.test(novelSrc17)
+    && (novelSrc17.match(/api\.storyCardSource\(/g) || []).length === 1);
+  ok('卡片列表还没加载时先补上（否则会把"不知道"说成"这一章没有抽到卡片"）',
+    /if \(!cards\.length\) await loadCards\(\)/.test(novelSrc17));
+  ok('被类别筛选挡住时先解除筛选再打开（否则点了没反应）',
+    /kindFilter = '';\n\s+syncViewParams\(\{ kind: '' \}\);\n\s+renderKindChips\(\);\n\s+renderCards\(\);/.test(novelSrc17));
+
   // ── 卡片溯源（批 8 补 20）──
   ok('卡片溯源走纯本地端点（随时可点、不花钱）',
     /storyCardSource: \(cardId\) => req\('GET', `\/api\/story\/card-source\?card_id=/.test(apiSrc20));

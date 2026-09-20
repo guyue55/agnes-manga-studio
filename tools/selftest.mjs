@@ -610,6 +610,22 @@ group('章节识别与章节级溯源（批 8 补 21：段号是切块的副产�
   ok('第二章的字数接近它自己的长度，而不是只剩标题那几个字',
     asg2.by_chapter[1].chars >= 50, String(asg2.by_chapter[1].chars));
   eq('横跨两章的块如实报 spans=2', asg2.by_chunk[0].spans, 2);
+
+  // 章在块内的**起始位置**（批 8 补 22）：界面要"从这一章的标题开始"截原文给用户看。
+  // 拿块的开头当章的开头是错的 —— 一章从块中间开始时，块开头是**上一章**的正文，
+  // 点开第二章却看到第一章的文字（写探针时真踩到）。
+  eq('块内每章的起始位置就是它标题出现的位置',
+    JSON.stringify(asg2.by_chunk[0].starts), JSON.stringify([{ chapter: 0, at: 0 }, { chapter: 1, at: asg2.by_chunk[0].starts[1].at }]));
+  eq('第二章在块内的起始位置正是"第二章 乙"那五个字的位置',
+    asg2.by_chunk[0].starts.find((x) => x.chapter === 1).at, '第一章 甲\n\n'.length + 50 + 2);
+  eq('起始位置落在块内（截取不会越界）',
+    asg2.by_chunk[0].starts.every((x) => x.at >= 0 && x.at < `第一章 甲\n\n${'甲'.repeat(50)}\n\n第二章 乙`.length), true);
+  // 口径是"**这一章在这一块里的正文从哪儿开始**"，不是"这一块里有没有标题"：
+  // 承接来的章在这一块里确实从 0 开始（块本身是从章的中间截断的），如实报 0 才对。
+  eq('承接来的章在这一块里从 0 开始（块是从章的中间截断的）',
+    JSON.stringify(asg2.by_chunk[1].starts), JSON.stringify([{ chapter: 1, at: 0 }]));
+  eq('起始位置与 chunks 名单口径一致：报出来的章都在这块的 chunks 里',
+    asg2.by_chunk.every((x) => x.starts.every((st) => asg2.by_chapter[st.chapter].chunks.includes(x.index))), true);
   // `chunk_count` 的口径是"**涉及**到几块"，不是"独占几块"：一块横跨两章就算在两章里。
   // 这是刻意的 —— 问题定位要求"凡涉及的章都要报"（只报主导章会把问题报在错的章上，对照 BW）。
   eq('每章带上自己的段数（由纯函数给出，调用方不再自己数一遍）',
