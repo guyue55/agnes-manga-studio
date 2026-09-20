@@ -3278,7 +3278,13 @@ group('内置提示词同步（批 8 补 28：改了提示词，老库也能收�
     builtin.length > 0 && builtin.every((t) => Number.isInteger(t.builtin_version) && /^[0-9a-f]{8}$/.test(t.builtin_digest || '')),
     JSON.stringify(builtin.slice(0, 2)));
   const ne0 = list.find((t) => t.key === 'novel_extract');
-  eq('本次改过的抽取提示词版本已 bump 到 2', ne0.builtin_version, 2);
+  // 别把版本号写死：它每轮都会涨（上一轮写死 2，这一轮升到 3 就红了）。
+  // 真正要守的是"改过内容就要 bump、而且老版本指纹要登记进历史表"——后者才是老库能升级的原因
+  ok('改过内容的抽取提示词版本已 bump（≥2，老库才认得出这是新版）',
+    Number.isInteger(ne0.builtin_version) && ne0.builtin_version >= 2, String(ne0.builtin_version));
+  ok('上一版官方指纹已登记进历史表（没有它，补28之前装的库永远升不上来）',
+    (seedLib.TEMPLATE_SUPERSEDED.novel_extract || []).includes('04ec3962'),
+    JSON.stringify(seedLib.TEMPLATE_SUPERSEDED.novel_extract));
   ok('提示词写明了 involved 只写本名（预防）+ 体检（验收）成对', /本名/.test(ne0.content));
 
   // ── 端到端：拿一个**独立的库**当"老用户"，起一个独立实例，看它到底改了谁、没改谁 ──

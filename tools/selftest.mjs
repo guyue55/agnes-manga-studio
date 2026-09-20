@@ -2206,6 +2206,61 @@ group('剧情卡人物闭环体检（批 8 补 28）');
   eq('还没生成任何分镜时就能发现（镜头侧要等分镜生成完）', run([plot('苏婉儿')]).issues.length, 1);
 }
 
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 29：字段闭环（系统认识的字段，必须有提示词在向模型要）
+// ══════════════════════════════════════════════════════════════
+// 两个真相来源：`CARD_FIELDS` 是**归一化**的真相（哪些字段存在、怎么排序、怎么显示），
+// 提示词的 JSON schema 是**向模型要什么**的真相。两者分叉时字段会永远是空的，
+// 而界面上**看不出**"模型没抽到"和"我们从没要过"的区别 —— 用户只会觉得"这功能抽不全"。
+// 本轮实测发现 6 个字段从没被任何提示词要过：character.gender/age、location.region/time_of_day、
+// prop.features、timeline.order_note；其中前三个里的 region/time_of_day/features 还在 `STORY_INJECT_FIELDS` 里
+// —— 也就是说"这两段会进画面描述"是**写在代码里的承诺**，却永远注入不出内容（同一个场景每张图不一样）。
+group('字段闭环（批 8 补 29）');
+{
+  // 从提示词的 JSON schema 行里抽"这一版向模型要了哪些字段"
+  const askedBy = (key) => {
+    const t = seed.DEFAULT_TEMPLATES.find((x) => x.key === key);
+    const out = {};
+    for (const line of String(t.content).split('\n')) {
+      if (!/\"kind\"/.test(line)) continue;
+      const kind = (/\"kind\":\"([a-z]+)\"/.exec(line) || [])[1];
+      if (!kind) continue;
+      out[kind] = [...line.matchAll(/\"([a-z_]+)\":/g)].map((m) => m[1]).filter((f) => f !== 'kind');
+    }
+    return out;
+  };
+  const chunk = askedBy('novel_extract');   // 分块抽取：人物/地点/道具/剧情/信息/时间线
+  // 全局归并的 schema 长得不一样：它是 {"world":{…},"plots":[…]}，**没有 kind 键**，
+  // 所以不能复用上面那个按 kind 找行的解析器（第一版就这么写错，把 world 的字段误报成"从没要过"）
+  const reduceWorld = (() => {
+    const t = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'story_bible');
+    const m = /"world"\s*:\s*\{([^}]*)\}/.exec(String(t.content));
+    return m ? [...m[1].matchAll(/"([a-z_]+)":/g)].map((x) => x[1]) : [];
+  })();
+  const reduce = { world: reduceWorld };
+  const askedAnywhere = (kind, field) => (chunk[kind] || []).includes(field) || (reduce[kind] || []).includes(field);
+  // 每个类别都有的通用字段（不列在 CARD_FIELDS 里，由 normalizeCard 统一处理）
+  const COMMON = ['name', 'aliases', 'summary'];
+
+  for (const [kind, fields] of Object.entries(story.CARD_FIELDS)) {
+    const missing = fields.filter((f) => !askedAnywhere(kind, f));
+    ok(`字段 ${kind} 的每个字段都有提示词在要`, missing.length === 0, `从没被要过: ${missing.join(',')}`);
+  }
+  // 最吃劲的一类：这些字段会**直接进画面描述**，永远为空 = 承诺了却做不到
+  for (const [kind, fields] of Object.entries(story.STORY_INJECT_FIELDS)) {
+    const missing = fields.filter((f) => !askedAnywhere(kind, f));
+    ok(`${kind} 卡"会进画面描述"的字段都在向模型要`, missing.length === 0, `从没被要过: ${missing.join(',')}`);
+  }
+  // 反向：提示词要了、系统却不认识的字段会被 normalizeCard 丢掉（模型白花钱、还进 dropped 计数）
+  for (const [kind, fields] of Object.entries(chunk)) {
+    const unknown = fields.filter((f) => !COMMON.includes(f) && !(story.CARD_FIELDS[kind] || []).includes(f));
+    ok(`分块提示词要的 ${kind} 字段系统都认识`, unknown.length === 0, `系统不认识: ${unknown.join(',')}`);
+  }
+  ok('分块抽取与全局归并都要了信息卡（信息卡来自归并）', (chunk.world || []).length > 0 && reduceWorld.length > 0);
+  ok('归并提示词要了 theme/logline/mainline（信息卡的主线三件套只在归并里产出）',
+    ['theme', 'logline', 'mainline'].every((f) => reduceWorld.includes(f)), reduceWorld.join(','));
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
