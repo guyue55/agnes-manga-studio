@@ -2727,6 +2727,102 @@ group('逐集生成也要看见全剧设定（批 8 补 36：设定进上下文 
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
+group('角色名册进输入指纹（批 8 补 37：存指纹与复算指纹必须同源）');
+{
+  const pj = await api('POST', '/api/projects', { name: '名册指纹测试剧' });
+  const PID = pj.data.id;
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '名册·原著', text: `__LONGARC__${'长弧线的故事。'.repeat(40)}`,
+  });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const SRC = an.data.source.id;
+  const briefUrl = `/api/story/episode-brief?project_id=${PID}&source_id=${SRC}&per_episode=4&episode=1`;
+  const staleUrl = `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`;
+
+  // ① 项目里还没有角色：名册为空、且**指纹里也没有它**（不许凭空多出过期）
+  const b0 = (await api('GET', briefUrl)).data;
+  ok('名册验收：这一集有拍表', b0.exists && b0.brief.includes('第 1 集（'), String(b0.brief).slice(0, 80));
+  eq('没有角色 → roster_count 为 0', Number(b0.roster_count), 0);
+  eq('没有角色 → roster_text 为空串（前端原样跳过，不产生空块）', String(b0.roster_text), '');
+
+  // ② 建一个角色 → 名册进上下文，**指纹跟着变**
+  const ch = await api('POST', '/api/characters', {
+    project_id: PID, name: '林晚', alias: '晚晚', appearance: '黑色长直发，丹凤眼', outfit: '白色衬衫',
+    personality: '冷静', role: '主角',
+  });
+  const CID = ch.data.id;
+  ok('建角色成功（拿得到 id）', !!CID, JSON.stringify(ch.data).slice(0, 120));
+  const b1 = (await api('GET', briefUrl)).data;
+  eq('有角色 → roster_count 为 1', Number(b1.roster_count), 1);
+  ok('roster_text 是本名册（含本名与别名，且明确要求用本名）',
+    String(b1.roster_text).includes('【本剧角色名册】') && String(b1.roster_text).includes('林晚')
+    && String(b1.roster_text).includes('晚晚'), String(b1.roster_text).slice(0, 140));
+  ok('名册**不**混进 brief（它由前端拼在提示词最前面，两处都塞会重复）',
+    !String(b1.brief).includes('【本剧角色名册】'));
+  ok('加了角色 → 指纹确实变了（名册是喂给模型的输入，不该在指纹外）',
+    b1.input_digest !== b0.input_digest, `${b0.input_digest} → ${b1.input_digest}`);
+
+  // ③ **跨端点同源**：用 brief 给的指纹存剧本，staleness 必须判 ok
+  //    （两边各算一遍、少挂一处名册 → 这里会立刻变成"永久报过期"）
+  const sc = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'story_concept', episode_number: 1, title: '第 1 集',
+    content: '第 1 集的剧本正文', plan_digest: b1.input_digest,
+  });
+  eq('存剧本成功', sc.status, 200);
+  const st0 = (await api('GET', staleUrl)).data;
+  eq('存指纹的端点与复算指纹的端点算出同一个指纹 → 第 1 集一致（同源）',
+    st0.episodes.find((x) => x.episode_number === 1).script_state, 'ok');
+  eq('（前提）没有多出来的过期', st0.counts.script_stale, 0);
+
+  // ④ 反向先做：改**不进名册**的字段不许乱喊过期（假警报比不检查更糟）
+  const putP = await api('PUT', `/api/characters/${CID}`, { personality: '暴躁', role: '配角' });
+  eq('（前提）personality 确实写进去了 —— 否则下面那条是空的（注意事项 11）',
+    putP.data.personality, '暴躁');
+  const b2 = (await api('GET', briefUrl)).data;
+  eq('只改 personality/role（不进名册）→ 指纹不许变', b2.input_digest, b1.input_digest);
+  eq('只改 personality/role → 第 1 集仍是 ok',
+    (await api('GET', staleUrl)).data.episodes.find((x) => x.episode_number === 1).script_state, 'ok');
+
+  // ⑤ 正向：改了外貌（外貌进名册）→ 有剧本的集**如实**报过期
+  //    （从前是静默的：名册换了、剧本没重生成、界面显示"没问题"）
+  await api('PUT', `/api/characters/${CID}`, { appearance: '短发，圆脸，右眉有一道疤' });
+  const b3 = (await api('GET', briefUrl)).data;
+  ok('改了角色的外貌 → 指纹变了', b3.input_digest !== b1.input_digest, `${b1.input_digest} → ${b3.input_digest}`);
+  ok('新名册里是改后的外貌', String(b3.roster_text).includes('右眉有一道疤'), String(b3.roster_text).slice(0, 140));
+  const st1 = (await api('GET', staleUrl)).data;
+  eq('改了角色的外貌 → 第 1 集报过期', st1.episodes.find((x) => x.episode_number === 1).script_state, 'stale');
+  eq('过期计数如实上报', st1.counts.script_stale, 1);
+
+  // ⑥ 新增一个角色也如实报过期（模型看到的名单变了）
+  await api('POST', '/api/characters', { project_id: PID, name: '顾寒', appearance: '黑甲' });
+  const b4 = (await api('GET', briefUrl)).data;
+  eq('新增角色 → roster_count 变 2', Number(b4.roster_count), 2);
+  ok('新增角色 → 指纹再变一次', b4.input_digest !== b3.input_digest, `${b3.input_digest} → ${b4.input_digest}`);
+
+  // ⑦ 删掉全部角色 → 指纹回到最初那一份（证明指纹的变化**只**来自名册，不是别的东西在漂）
+  for (const c of (await api('GET', `/api/characters?project_id=${PID}`)).data) {
+    await api('DELETE', `/api/characters/${c.id}`);
+  }
+  const b5 = (await api('GET', briefUrl)).data;
+  eq('角色都删掉 → roster_count 回到 0', Number(b5.roster_count), 0);
+  eq('角色都删掉 → 指纹逐字节回到最初（变化的来源只有名册）', b5.input_digest, b0.input_digest);
+
+  // ⑧ 名册端点：纯计算、按项目取、形状稳定
+  await api('POST', '/api/characters', { project_id: PID, name: '林晚', appearance: '黑衣', is_locked: true });
+  const before = (await api('GET', `/api/characters?project_id=${PID}`)).data.length;
+  const r1 = await api('POST', '/api/story/roster', { project_id: PID, text: '林晚走进茶馆' });
+  eq('名册端点 200', r1.status, 200);
+  eq('名册端点回传 count', Number(r1.data.count), 1);
+  ok('名册端点回传 names（调用方不用再解析文本）', Array.isArray(r1.data.names) && r1.data.names[0] === '林晚', JSON.stringify(r1.data.names));
+  ok('名册端点回传 text', String(r1.data.text).includes('林晚'));
+  eq('名册端点是**纯计算**：调完角色一条都没多',
+    (await api('GET', `/api/characters?project_id=${PID}`)).data.length, before);
+  const r2 = await api('POST', '/api/story/roster', { project_id: 'no-such-project', text: '林晚' });
+  eq('名册端点按项目取（别的项目看不到这些角色）', Number(r2.data.count), 0);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
 group('人物卡 ↔ 资产库漂移（批 8 补 11：同步只动会注入提示词的字段）');
 {
   const pj = await api('POST', '/api/projects', { name: '漂移体检测试剧' });

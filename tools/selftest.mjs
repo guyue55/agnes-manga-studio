@@ -1432,8 +1432,9 @@ group('画风写死体检（批 8 补 7：提示词里不该写死系统要注�
 
 
 {
-  const { characterRoster } = await import(pathToFileURL(path.join(ROOT, 'public/js/consts.js')).href);
-  const { splitShotCharacters, auditShotBindings } = require('./lib/story.js');
+  // 批 8 补 37：名册构造器搬到了服务端（唯一一份）—— 它现在要进输入指纹，
+  // 而指纹是服务端算的；前端那份已删（同一套排序规则写两遍必然分叉）
+  const { characterRoster, splitShotCharacters, auditShotBindings } = require('./lib/story.js');
   const chars = [
     { name: '林晚', alias: '晚晚、林老板', appearance: '黑色长直发垂至腰间，丹凤眼，左眉尾有一颗小痣，皮肤偏冷白', outfit: '白色衬衫', is_locked: true },
     { name: '顾寒', alias: ['阿寒'], appearance: '黑甲', is_locked: false },
@@ -2867,6 +2868,79 @@ group('角色字段的唯一漏斗（批 8 补 31）');
   eq('导入时 appearance 被截到上限内', conv.appearance.length, story.CHARACTER_FIELD_MAX.appearance);
   ok('导入时 notes 也被截到上限内（以前写死 400、与表里另一个数）',
     conv.notes.length <= story.CHARACTER_FIELD_MAX.notes, `实际 ${conv.notes.length}`);
+}
+
+group('角色名册进输入指纹（批 8 补 37：喂给模型的东西，指纹里也必须有）');
+{
+  const {
+    planEpisodes, planWithRosters, episodeBriefText, episodeInputDigest, characterRoster, auditStaleness,
+  } = require('./lib/story.js');
+  const plot = (id, name, stage, order, extra) => Object.assign({ id, kind: 'plot', name, stage, order }, extra || {});
+  const beats = [plot('p1', '初见', '起', 1, { conflict: '误会' }), plot('p2', '和解', '合', 2, { outcome: '结盟' })];
+  const plan = planEpisodes(beats, { perEpisode: 2 });
+  const chars = [
+    { id: 'c1', name: '林晚', alias: '晚晚、林老板', appearance: '黑色长直发，丹凤眼', outfit: '白色衬衫', personality: '冷静', role: '主角' },
+    { id: 'c2', name: '顾寒', appearance: '黑甲', personality: '寡言' },
+  ];
+
+  // ① 名册是**确定性**的：同一组角色，输入顺序不同也必须排出同一份文本
+  {
+    const a = characterRoster(chars, { text: '顾寒' });
+    const b = characterRoster(chars.slice().reverse(), { text: '顾寒' });
+    eq('同一组角色、输入顺序不同 → 名册逐字相同（顺序要进指纹，不能依赖输入次序）', a.text, b.text);
+    ok('提到过的排前面（本集最可能出场的先给模型看）', a.text.split('\n')[1].includes('顾寒'), a.text.split('\n')[1]);
+    ok('名册排序不用 localeCompare（顺序进指纹，locale 依赖会让同一份输入在不同机器上算出不同指纹）',
+      !/\.localeCompare\(/.test(characterRoster.toString()), characterRoster.toString().slice(0, 120));
+  }
+
+  // ② 名册**挂在分集结果上**（指纹与"存/复算"两条路都从它取）；没有名册时逐字节等同于从前
+  {
+    const bare = episodeInputDigest(plan, 1);
+    const noChars = planWithRosters(beats, [], { perEpisode: 2 });
+    eq('项目里一个角色都没有 → 指纹与从前逐字节一致（不 push 空串，不许凭空多出过期）',
+      episodeInputDigest(noChars, 1), bare);
+    const withChars = planWithRosters(beats, chars, { perEpisode: 2 });
+    ok('planWithRosters 把每集名册挂在 plan 上（指纹想忘也忘不掉）',
+      !!(withChars.roster_texts || {})[1] && String(withChars.roster_texts[1].text).includes('【本剧角色名册】'));
+    ok('名册挂上 plan 后指纹确实变了（名册是喂给模型的输入，不该在指纹外）',
+      episodeInputDigest(withChars, 1) !== bare, `${bare} → ${episodeInputDigest(withChars, 1)}`);
+  }
+
+  // ③ 端到端：改了角色 → 这一集如实报过期；改了**不进名册**的字段 → 不许误报
+  //    （判定侧必须拿到**同一份带名册的 plan** —— 这正是"漏挂就永久报过期"的那个坑）
+  {
+    const mk = (cs) => {
+      const p = planWithRosters(beats, cs, { perEpisode: 2 });
+      const digest = episodeInputDigest(p, 1);
+      return { p, digest, scripts: [{ id: 's1', episode_number: 1, title: '第1集', content: '正文', plan_digest: digest }] };
+    };
+    const base = mk(chars);
+    eq('（前提）角色没变 → 这一集是 ok', auditStaleness(base.p, base.scripts, []).episodes[0].script_state, 'ok');
+
+    // 场景：剧本是**角色改之前**生成的（存的是 base 指纹），现在拿"角色改过之后"的 plan 去判定
+    // 正向：外貌改了（外貌进名册）→ 指纹变 → stale
+    const lookChanged = mk([Object.assign({}, chars[0], { appearance: '短发，圆脸' }), chars[1]]);
+    ok('改了角色的外貌 → 指纹变了', lookChanged.digest !== base.digest, `${base.digest} → ${lookChanged.digest}`);
+    eq('改了角色的外貌 → 这一集报过期（从前是静默的：名册换了、剧本没重生成）',
+      auditStaleness(lookChanged.p, base.scripts, []).episodes[0].script_state, 'stale');
+
+    // 正向：新增一个角色 → 名册变 → stale
+    const added = mk(chars.concat([{ id: 'c3', name: '苏婉儿', appearance: '红衣' }]));
+    eq('角色库里新增一个角色 → 这一集报过期（模型看到的名单变了）',
+      auditStaleness(added.p, base.scripts, []).episodes[0].script_state, 'stale');
+
+    // 反向：只改 personality/role —— 它们**不进名册**，不许报过期（假警报比不检查更糟）
+    const inert = mk([Object.assign({}, chars[0], { personality: '暴躁', role: '配角' }), chars[1]]);
+    eq('只改 personality/role（不进名册）→ 指纹不许变（否则每改一次人设就全剧报过期）',
+      inert.digest, base.digest);
+    eq('只改 personality/role → 这一集仍是 ok', auditStaleness(inert.p, base.scripts, []).episodes[0].script_state, 'ok');
+
+    // ④ 漏挂名册的后果要能被看见：判定侧拿到的是**不带名册**的 plan（模拟"少挂一处"）
+    //    —— 断言它会误报 stale，这样"两边必须同源"就不是一句注释
+    const forgot = planEpisodes(beats, { perEpisode: 2 });
+    eq('判定侧漏挂名册 → 明明没改也报过期（这就是必须合成一步的原因，假警报比不检查更糟）',
+      auditStaleness(forgot, base.scripts, []).episodes[0].script_state, 'stale');
+  }
 }
 
 group('逐集生成也要看见全剧设定（批 8 补 36：一份渲染 / 指纹跟着设定走 / 没设定不误报）');

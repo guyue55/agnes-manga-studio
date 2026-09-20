@@ -1870,9 +1870,27 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     && /人物:\$\{who\}/.test(boardsSrc));
 
   // ── 角色名册（批 8 补 6）──
-  ok('consts.js 导出角色名册构造器（纯函数，两个生成入口共用同一份口径）',
-    /export function characterRoster\(chars, opts = \{\}\)/.test(consts)
-    && /必须使用下列本名/.test(consts) && /不要写进 image_prompt \/ video_prompt/.test(consts));
+  // 批 8 补 37：名册是喂给模型的输入之一，而"输入变了要报过期"靠服务端算的指纹 ——
+  // 所以渲染只许有**一处**（前端那份已删）。这里钉两件事：服务端有唯一实现，
+  // 且前端不再自己算（两处各写一遍排序/截断 = "提示词里的名册与指纹里的名册不是同一份"）。
+  ok('角色名册的渲染只有服务端一处（前端那份必须删掉，否则两处迟早分叉）',
+    /function characterRoster\(chars, opts = \{\}\)/.test(storySrc)
+    && /必须使用下列本名/.test(storySrc) && /不要写进 image_prompt \/ video_prompt/.test(storySrc)
+    && !/characterRoster/.test(consts)
+    && !/export function characterRoster/.test(scriptsSrc) && !/export function characterRoster/.test(boardsSrc));
+  ok('名册排序不依赖运行环境（顺序进指纹，localeCompare 会让同一份输入在不同机器上算出不同指纹）',
+    (() => {
+      const i = storySrc.indexOf('function characterRoster');
+      if (i < 0) return false;
+      const j = storySrc.indexOf('\n}', i);
+      // 注释里**会**提到 localeCompare（正是为了说明"不许用"），所以只查代码；
+      // 同时正向要求那把码点比较器真的在（否则"函数不存在"也能让这条绿 —— 注意事项 11）
+      const body = storySrc.slice(i, j).replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      return body.length > 200 && !/localeCompare/.test(body) && /const byName = /.test(body);
+    })());
+  ok('名册走一个端点（两个生成入口都调它，不各算一遍）',
+    /storyRoster: \(body\) => req\('POST', '\/api\/story\/roster'/.test(apiSrc)
+    && /api\.storyRoster\(/.test(scriptsSrc) && /api\.storyRoster\(/.test(boardsSrc));
   ok('分镜生成把名册写进请求体（不是只在前端显示）',
     /const roster = await loadRoster\(text\)/.test(boardsSrc) && /\$\{roster\.text \? `\$\{roster\.text\}\\n\\n` : ''\}\$\{text\}/.test(boardsSrc));
   ok('分镜生成的系统提示禁止把长相写进提示词（长相只由使用点注入一次）',
@@ -1880,10 +1898,16 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('分镜页进页面就说明会不会带上名册（不留到生成完才发现名字对不上）',
     /id="roster-hint"/.test(boardsSrc) && /loadRoster\(''\)/.test(boardsSrc) && /个角色名册/.test(boardsSrc));
   ok('剧本生成也带名册（名字对齐要发生在最上游）',
-    /characterRoster,/.test(scriptsSrc) && /await refreshRoster\(\)/.test(scriptsSrc)
+    /await refreshRoster\(\)/.test(scriptsSrc) && /roster = r\.ok/.test(scriptsSrc)
     && /const ctx = \[roster\.text/.test(scriptsSrc) && /ctx\.join\('\\n\\n'\)/.test(scriptsSrc));
   ok('剧本页在门禁计数之前刷新名册（显示的字数与发出的字数必须是同一份）',
     scriptsSrc.indexOf('await refreshRoster()') < scriptsSrc.indexOf('await gateBeforeGenerate(tpl)'));
+  // 批 8 补 37：载入某一集时，名册随 brief 一起回来且与 input_digest **同源** ——
+  // 此时再"现算一份"就会让提示词里的名册与指纹里的名册分叉（改了角色会漏报过期）
+  ok('载入某一集就采纳服务端那份名册（与指纹同源），不再现算一份把它盖掉',
+    /if \(r\.data\.roster_text !== undefined\)/.test(scriptsSrc)
+    && /roster_count/.test(scriptsSrc)
+    && /if \(!epDigest\) await refreshRoster\(\)/.test(scriptsSrc));
   ok('润色也带名册（润色会重写全文，改名 = 下游全部失配）',
     /const prompt = roster\.text \? `\$\{roster\.text\}\\n\\n\$\{base\}` : base/.test(scriptsSrc));
   ok('体检把"名字在角色库里找不到"单独报一类（名册的验收环）',

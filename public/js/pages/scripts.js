@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, relTime, extractJson, extractJsonArray, copyText, SCRIPT_TYPES, modelChoices,
-  nextScriptStep, stepNo, pickBibleVar, UPSTREAM_LABELS, characterRoster,
+  nextScriptStep, stepNo, pickBibleVar, UPSTREAM_LABELS,
 } from '../consts.js';
 import {
   charCount, countLabel, limitState, promptLength, checkPromptVars, promptGate, isLongVar,
@@ -224,6 +224,15 @@ export default async function scripts(container, params) {
     });
     if (!r.ok) { toast.err(r.error); return null; }
     epDigest = r.data.input_digest || '';
+    // 批 8 补 37：这一集的名册与指纹是**同一份**（服务端按本集上下文算的），
+    // 所以载入即采纳 —— 否则"改了角色"这件事会因为提示词与指纹各算一遍而漏报
+    if (r.data.roster_text !== undefined) {
+      roster = {
+        count: r.data.roster_count || 0,
+        text: r.data.roster_text || '',
+        truncated: r.data.roster_truncated || 0,
+      };
+    }
     prior = {
       text: r.data.prior || '', episodes: r.data.prior_episodes || [], omitted: r.data.prior_omitted || [],
       chars: r.data.prior_chars || 0, truncated: !!r.data.prior_truncated,
@@ -248,7 +257,7 @@ export default async function scripts(container, params) {
     const setNote = setChars
       ? `（含全剧设定 ${Number(r.data.world_count) || 0} 张 / 时间线 ${Number(r.data.timeline_count) || 0} 张）`
       : '（这份原著还没有信息卡/时间线卡，未带全剧设定）';
-    toast.ok(`已载入第 ${epNo} 集大纲${setNote}${prior.episodes.length ? ` + 前情 ${prior.episodes.length} 集` : ''}${pick ? '' : '（没找到合适的大纲变量，可手动粘贴）'}`);
+    toast.ok(`已载入第 ${epNo} 集大纲${roster.count ? `（名册 ${roster.count} 个角色）` : ''}${setNote}${prior.episodes.length ? ` + 前情 ${prior.episodes.length} 集` : ''}${pick ? '' : '（没找到合适的大纲变量，可手动粘贴）'}`);
     return r.data;
   }
 
@@ -362,7 +371,8 @@ export default async function scripts(container, params) {
         const brief = await loadEpisodeBrief(ep, withPrior);
         if (!brief) { done.push({ ep, ok: false, error: '这一集没有拍' }); continue; }
         if (!withPrior) prior = { text: '', episodes: [], omitted: [], chars: 0, truncated: false };
-        await refreshRoster();
+        // 名册已经随 brief 带回来了（与 epDigest 同源），这里**不再现算** —— 现算会用
+        // 更大的文本重排名册，于是提示词里的名册与指纹里的名册不是同一份（补 37 的病根）
         const r = await api.genText({
           messages: buildMessages(tpl),
           model: container.querySelector('#model').value,
@@ -497,12 +507,22 @@ export default async function scripts(container, params) {
    * 角色名册（批 8 补 6）：模型不知道项目里已有哪些角色，于是同一部剧里"女主/苏婉儿/婉儿"混着写，
    * 下游的镜头绑定谁也匹配不上、谁都没有外貌注入（同一张脸在几十个镜头里各长一样，且不报错）。
    * 把名册写进请求体是从源头对齐名字。**只有名字进提示词**，长相由系统在使用点统一注入。
+   *
+   * 批 8 补 37：渲染**只在服务端一处**（`story.characterRoster`）—— 名册是喂给模型的输入，
+   * 而"输入变了要报过期"靠服务端算的指纹，两处各写一遍排序/截断迟早会出现
+   * "提示词里的名册与指纹里的名册不是同一份"。载入某一集时用**那一集服务端算好的那份**
+   * （与 `input_digest` 同源），没载入（没有指纹）才现算一份。
    */
-  let roster = { count: 0, text: '' };
+  let roster = { count: 0, text: '', truncated: 0 };
   async function refreshRoster() {
-    if (!projectId) { roster = { count: 0, text: '' }; return roster; }
-    const r = await api.characters(projectId);
-    roster = r.ok ? characterRoster(r.data, { text: [].concat(...[...fields.values()]).join('\n') }) : { count: 0, text: '' };
+    if (!projectId) { roster = { count: 0, text: '', truncated: 0 }; return roster; }
+    const r = await api.storyRoster({
+      project_id: projectId,
+      text: [].concat(...[...fields.values()]).join('\n'),
+    });
+    roster = r.ok
+      ? { count: r.data.count, text: r.data.text, truncated: r.data.truncated }
+      : { count: 0, text: '', truncated: 0 };
     return roster;
   }
 
@@ -554,7 +574,10 @@ export default async function scripts(container, params) {
       toast.err('还没配置 Agnes API Key，请到「设置」页填写。');
       return;
     }
-    await refreshRoster(); // 先取最新名册：门禁计数与真正发出的请求体必须包含同一份内容
+    // 门禁计数与真正发出的请求体必须包含同一份内容。载入过某一集时，名册已经随 brief
+    // 带回来且与 input_digest 同源 —— 再现算一遍会让"提示词里的名册"与"指纹里的名册"分叉
+    // （要换名册就重新载入那一集，载入是纯本地的、不花钱）
+    if (!epDigest) await refreshRoster();
     if (!(await gateBeforeGenerate(tpl))) return;
     const messages = buildMessages(tpl);
 

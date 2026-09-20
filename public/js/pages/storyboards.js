@@ -5,7 +5,7 @@
  */
 import {
   icon, esc, extractJsonArray, copyText, SHOT_TYPES, STORYBOARD_STATUS, secondsToFrames, sizeForAspect, artStylePhrase, characterPhrase,
-  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS, characterRoster, negativePhrase,
+  storyCardPhrase, storyCardLook, STORY_CARD_INJECT_FIELDS, STORY_CARD_LABELS, negativePhrase,
   effectiveVideoSeconds, VIDEO_DURATION_RANGE,
   CAMERA_MOVES, CAMERA_MOVE_GROUPS, cameraMovePhrase, cameraMoveAffectsStill,
 } from '../consts.js';
@@ -739,8 +739,12 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
   async function loadRoster(text) {
     const box = container.querySelector('#roster-hint');
     if (!projectId) { if (box) box.textContent = ''; return { count: 0, text: '' }; }
-    const r = await api.characters(projectId);
-    const roster = r.ok ? characterRoster(r.data, { text: text || '' }) : { count: 0, text: '' };
+    // 批 8 补 37：名册渲染只在服务端一处（前端原先那份已删）—— 同一套规则写两遍，
+    // 迟早出现"分镜页显示的名册与剧本页用的名册不是同一份"
+    const r = await api.storyRoster({ project_id: projectId, text: text || '' });
+    const roster = r.ok
+      ? { count: r.data.count, text: r.data.text, truncated: r.data.truncated }
+      : { count: 0, text: '', truncated: 0 };
     if (box) {
       box.innerHTML = roster.count
         ? `${icon('check', 12)} 生成时会带上 ${roster.count} 个角色名册（名字 + 别名，长相不进提示词）——让分镜里的「出场人物」直接用本名，自动绑定才命中${roster.truncated ? `；另有 ${roster.truncated} 个角色名册过长未列出` : ''}`

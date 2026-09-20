@@ -225,6 +225,9 @@ export const api = {
     return req('GET', `/api/story/audit?${q.toString()}`);
   },
   storyAuditFix: (body) => req('POST', '/api/story/audit/fix', body),
+  // 角色名册（批 8 补 37）：名册是喂给模型的输入，渲染规则只在服务端一份 ——
+  // 前端自己再算一遍，迟早出现"提示词里的名册与指纹里的名册不是同一份"
+  storyRoster: (body) => req('POST', '/api/story/roster', body),
 
   importData: (data, mode) => req('POST', '/api/import', { data, mode }),
   logs: () => req('GET', '/api/logs'),

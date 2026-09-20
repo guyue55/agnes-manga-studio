@@ -622,59 +622,6 @@ export function storyCardPhrase(prompt, cards) {
   return p.trim() ? `${p}, ${block}` : block;
 }
 
-/**
- * 角色名册（批 8 补 6）：把资产库里的角色名单渲染成一段"生成时必须沿用这些名字"的提示词。
- *
- * 为什么需要：分镜表/剧本都是模型写的，它**不知道**项目里已经有哪些角色 —— 于是同一部剧里
- * "女主""苏婉儿""婉儿"三种叫法混着出现，落到镜头绑定上就是**谁也匹配不上、谁都没有外貌注入**
- * （同一张脸在几十个镜头里各长一样，而且不会有任何报错）。把名册写进提示词是从源头解决：
- * 模型照着本名写「出场人物」，绑定与注入自然就对上了。
- *
- * 只给**名字与别名**，长相只给一行摘要且明确要求"不要写进 image_prompt/video_prompt" ——
- * 长相由系统在使用点统一注入（`characterPhrase`），两处都写等于两套描述在打架。
- *
- * @param {Array} chars 资产库角色（`GET /api/characters`）
- * @param {{text?: string, limit?: number}} [opts] `text` 用来把"本集真的会出场"的角色排到前面
- * @returns {{count:number, names:string[], text:string, truncated:number}} 没有角色时 `text` 为空串（调用方原样跳过）
- */
-export function characterRoster(chars, opts = {}) {
-  const list = (Array.isArray(chars) ? chars : []).filter((c) => c && String(c.name || '').trim());
-  if (!list.length) return { count: 0, names: [], text: '', truncated: 0 };
-  const limit = Math.max(1, Number(opts.limit) || 30);
-  const text = String(opts.text || '');
-  const lower = text.toLowerCase();
-  const score = (c) => {
-    const names = [String(c.name).trim()].concat(
-      Array.isArray(c.alias) ? c.alias : String(c.alias || '').split(/[、,，/|]/).map((x) => x.trim()),
-    ).filter((n) => n.length >= 2);
-    // 排序依据：本集文本里真的提到了 → 锁定（无条件注入）→ 名字。与"谁更可能出场"同序
-    const hit = names.some((n) => lower.includes(n.toLowerCase())) ? 1 : 0;
-    return hit * 2 + (c.is_locked ? 1 : 0);
-  };
-  const sorted = list.slice().sort((a, b) => (score(b) - score(a)) || String(a.name).localeCompare(String(b.name)));
-  const kept = sorted.slice(0, limit);
-  const lines = kept.map((c) => {
-    const alias = (Array.isArray(c.alias) ? c.alias : String(c.alias || '').split(/[、,，/|]/))
-      .map((x) => String(x).trim()).filter((x) => x.length >= 2);
-    const look = [c.appearance, c.outfit].map((x) => String(x || '').trim()).filter(Boolean).join('，');
-    const brief = look.length > 30 ? `${look.slice(0, 30)}…` : look;
-    const head = alias.length ? `${String(c.name).trim()}（别名：${alias.join('、')}）` : String(c.name).trim();
-    return brief ? `- ${head}｜${brief}` : `- ${head}`;
-  });
-  const truncated = Math.max(0, sorted.length - kept.length);
-  return {
-    count: kept.length,
-    names: kept.map((c) => String(c.name).trim()),
-    truncated,
-    text: [
-      '【本剧角色名册】剧本与分镜里的出场人物**必须使用下列本名**（原文里的代称如"女主/男主/少女"要换成对应本名；不要自己另起名字）：',
-      ...lines,
-      ...(truncated ? [`（另有 ${truncated} 个角色未列出，需要时请沿用原文里的称呼，不要新造名字）`] : []),
-      '名册里的长相只供你把握人物形象，**不要写进 image_prompt / video_prompt** —— 人物长相由系统在使用点统一注入，写两遍会让同一个角色在不同镜头里长得不一样。',
-    ].join('\n'),
-  };
-}
-
 export const STORYBOARD_STATUS = {
   pending: { label: '待处理', cls: 'gray' },
   image_ready: { label: '有图片', cls: 'blue' },

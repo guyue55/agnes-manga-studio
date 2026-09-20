@@ -4114,6 +4114,123 @@ try {
       }
     }
 
+    group('角色名册真的进了请求体、且与指纹同源（批 8 补 37）');
+    {
+      // 服务端纯函数有 selftest、跨端点同源有 apitest，但**"页面发给模型的那一份名册，
+      // 就是服务端算进指纹的那一份"**只有真机看得见 —— 这正是补 37 的病根
+      // （前端自己算一份 → 改了角色，提示词变了、指纹没变、界面显示"没问题"）。
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pj = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '名册真机剧' }) });
+      const pid = pj.id;
+      const scriptBodies = [];
+      let cardsSeen = 0;
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            // 名册分支放最前：只有"写剧本"这条路会带名册（分镜表模板里也可能出现"分镜"字样）
+            if (user.includes('【本剧角色名册】')) { scriptBodies.push(cb); return send(200, { choices: [{ message: { content: '第 1 集剧本正文（真机）' } }] }); }
+            if (/分镜表/.test(user)) return send(200, { choices: [{ message: { content: JSON.stringify({ shots: [] }) } }] });
+            cardsSeen++;
+            // 8 拍（每幕 2 拍，per_episode 默认 4 → 恰好切成 2 集）。
+            // **安琪只出现在第 1 集、苏婉儿只出现在第 2 集** —— 于是第 2 集的名册：
+            //   服务端按"本集拍表 + 前情"算 → 两个都命中（并列）→ 按名字码点排 → 安琪,苏婉儿
+            //   前端若只按"本集拍表"算（补 37 之前的错法）→ 苏婉儿命中、安琪不命中 → 苏婉儿,安琪
+            // 顺序不同 → 真机那条"发出去的名册 === 指纹里的名册"才会**真的会红**（否则是空跑）
+            const plots = [
+              ['名册·安琪登场', '起', 'C1', '安琪'], ['名册·旧案线索', '起', 'C2', '安琪'],
+              ['名册·追寻', '承', 'C3', '安琪'], ['名册·对峙', '承', 'C4', '安琪'],
+              ['名册·苏婉儿出场', '转', 'C5', '苏婉儿'], ['名册·反击', '转', 'C6', '苏婉儿'],
+              ['名册·真相浮现', '合', 'C7', '苏婉儿'], ['名册·落幕', '合', 'C8', '苏婉儿'],
+            ];
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: plots.map(([name, stage, conflict, involved]) => ({ kind: 'plot', name, stage, conflict, involved })) }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'roster-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '名册原著', text: '名册原文。'.repeat(30), reduce: false }) });
+        let j = null;
+        for (let i = 0; i < 40; i++) { await sleep(250); j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        ok('名册真机：解析完成且真的调过模型（自证非空跑）', j && j.status === 'done' && cardsSeen > 0, JSON.stringify({ s: j && j.status, cardsSeen }));
+
+        // 角色库里有一个人（带别名）→ 名册必须把他写进去
+        const mkChar = (body) => J('/api/characters', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({ project_id: pid }, body)) });
+        const c1 = await mkChar({ name: '安琪', alias: '小安', appearance: '长发及腰' });
+        const c2 = await mkChar({ name: '苏婉儿', appearance: '红衣' });
+        ok('名册真机：两个角色都建好了', !!c1.id && !!c2.id, JSON.stringify([c1.id, c2.id]));
+        const src = an.source.id;
+        // 第 2 集：服务端算进指纹的那一份名册（权威版）
+        const br = await J(`/api/story/episode-brief?project_id=${pid}&source_id=${src}&episode=2`);
+        const rosterText = String(br.roster_text || '');
+        ok('服务端第 2 集名册非空（含本名与别名）',
+          rosterText.includes('【本剧角色名册】') && rosterText.includes('安琪') && rosterText.includes('小安')
+          && rosterText.includes('苏婉儿'), rosterText.slice(0, 160));
+        // 自证这条真机钉**不是空跑**：服务端（带前情）与"只按本集拍表算"必须排出不同顺序
+        const briefOnly = await J('/api/story/roster', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, text: String(br.brief || '') }) });
+        ok('（自证非空跑）只按本集拍表算的名册与服务端那份**顺序不同** —— 否则这条真机钉测不出东西',
+          String(briefOnly.text) !== rosterText && String(briefOnly.text).includes('【本剧角色名册】'),
+          JSON.stringify({ server: rosterText.split('\n')[1], briefOnly: String(briefOnly.text).split('\n')[1] }));
+
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#ep-load');`), '分集卡（载入本集按钮）就绪', 12000);
+
+        // 集号是靠 `#ep-no` 的 **onchange** 落到模块状态里的（直接改 .value 不触发），
+        // 所以必须真的派发一次 change —— 否则页面载入的还是第 1 集，而断言在拿第 2 集的名册比，
+        // 这条钉就会**因错误的原因通过**（本轮真踩到：见下面的自证断言）
+        await cdp.eval(`const n=document.querySelector('#ep-no'); if (n) { n.value='2'; n.dispatchEvent(new Event('change')); } document.querySelector('#ep-load').click(); return true;`);
+        let toastTxt = '';
+        for (let i = 0; i < 30; i++) {
+          await sleep(120);
+          const t = await cdp.eval(`return (document.querySelector('#toasts')||{}).innerText||'';`);
+          if (t) { toastTxt = t; if (/名册/.test(t)) break; }
+        }
+        ok('载入提示如实说出带了几个角色的名册（带没带在界面上长得一样就白带了）',
+          /名册 2 个角色/.test(toastTxt), toastTxt.replace(/\s+/g, ' ').slice(0, 160));
+        // **自证非空跑**：界面载入的必须真的是第 2 集 —— 否则下面那条"发出去的名册 === 指纹里的名册"
+        // 会拿第 1 集的输入去比第 2 集的名册（顺序碰巧一样就绿了，本轮真踩到）
+        const loaded = await cdp.eval(`const t=document.querySelector('#fields textarea'); return t ? t.value : '';`);
+        ok('（自证非空跑）界面载入的是第 2 集的大纲（集号真的切过去了）',
+          String(loaded).includes('第 2 集（'), String(loaded).slice(0, 60));
+
+        // 点"生成内容"：门禁可能弹确认（本集大纲已载入，通常不弹），弹了就点确定
+        await cdp.eval(`document.querySelector('#gen').click(); return true;`);
+        for (let i = 0; i < 40 && !scriptBodies.length; i++) {
+          await sleep(150);
+          await cdp.eval(`const y=document.querySelector('.modal-mask [data-yes]'); if (y) y.click(); return true;`);
+        }
+        ok('真机发出的请求体里带上了名册（自证请求真的发出去了）', scriptBodies.length > 0, `捕获 ${scriptBodies.length} 次`);
+        const sent = String(((scriptBodies[0] || {}).messages || []).find((m) => m.role === 'user')?.content || '');
+        // **本组的核心不变量**：页面发出去的那一份 === 服务端算进指纹的那一份
+        ok('页面发给模型的名册与服务端算进指纹的名册**逐字相同**（同一份来源）',
+          rosterText.length > 0 && sent.startsWith(rosterText), JSON.stringify({ head: sent.slice(0, 60), rosterHead: rosterText.slice(0, 60) }));
+        ok('名册排在提示词最前面（谁 → 前情 → 任务，注意力最强留给任务本身）',
+          sent.indexOf('【本剧角色名册】') === 0, sent.slice(0, 60));
+        ok('第 2 集的名册把"前情里出现过"的安琪也排进了名单（前情也是本集的上下文）',
+          sent.includes('安琪') && sent.includes('苏婉儿'), sent.slice(0, 200));
+        // 本组自己导航过（每次文档加载会把 __uiRejects 清空），所以这里就地断言
+        const rej = await cdp.eval(`return window.__uiRejects || [];`);
+        ok('本组交互期间没有未处理 Promise 拒绝（含 toast/渲染链）', rej.length === 0, JSON.stringify(rej));
+      } finally {
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: '', agnes_api_key: '' }) }).catch(() => null);
+        mock.close();
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+      }
+    }
+
     const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);
     ok('异常钩子存活（自证非空跑：reload 后仍可捕获）', collected?.hookLive === true, JSON.stringify(collected));
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
