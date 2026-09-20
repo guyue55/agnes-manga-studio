@@ -4037,6 +4037,83 @@ try {
       await put({ agnes_api_base_url: '', agnes_api_key: '' });
     }
 
+    group('逐集生成看见全剧设定契约（批 8 补 36：信息卡的六个字段真的进上下文）');
+    {
+      // 真机要验的是**用户看得见的那一层**：载入第 N 集之后，模板变量里到底有没有全剧设定。
+      // 服务端纯函数有 selftest、接口有 apitest，但"页面把服务端算好的那份搬进输入框"只有这里看得见。
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const pj = await J('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '全剧设定真机剧' }) });
+      const pid = pj.id;
+      let cardsSeen = 0;
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/分镜表/.test(user)) return send(200, { choices: [{ message: { content: JSON.stringify({ shots: [] }) } }] });
+            cardsSeen++;
+            // 一张**六字段齐全**的信息卡 + 四拍剧情：设定块与拍表都非空才验得了"先设定后本集"
+            const plots = [['设定·起1', '起', 'C1'], ['设定·承1', '承', 'C2'], ['设定·转1', '转', 'C3'], ['设定·合1', '合', 'O1']];
+            return send(200, { choices: [{ message: { content: JSON.stringify({ cards: [
+              { kind: 'world', name: '全剧基调', genre: '古装悬疑', tone: '沉郁',
+                worldview: '架空王朝末年', theme: '旧案与人心', logline: '一件旧案牵出三代人', mainline: '顺藤摸瓜查清旧案' },
+              ...plots.map(([name, stage, conflict]) => ({ kind: 'plot', name, stage, conflict })),
+            ] }) } }] });
+          }
+          return send(200, { ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mp = mock.address().port;
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_key: 'worldset-probe-key', agnes_api_base_url: `http://127.0.0.1:${mp}/v1` }) });
+        const an = await J('/api/story/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: pid, title: '全剧设定原著', text: '全剧设定原文。'.repeat(30), reduce: false }) });
+        let j = null;
+        for (let i = 0; i < 40; i++) { await sleep(250); j = await J(`/api/batch/${an.jobId}`); if (j.status !== 'running') break; }
+        ok('全剧设定真机：解析完成且真的调过模型（自证非空跑）', j && j.status === 'done' && cardsSeen > 0, JSON.stringify({ s: j && j.status, cardsSeen }));
+
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}&tab=episode_script'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(900);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#ep-load');`), '分集卡（载入本集按钮）就绪', 12000);
+
+        // 载入第 1 集；toast 3.8 秒会飘走，所以在轮询里顺手抓下来
+        await cdp.eval(`document.querySelector('#ep-load').click(); return true;`);
+        let toastTxt = '';
+        for (let i = 0; i < 30; i++) {
+          await sleep(120);
+          const t = await cdp.eval(`return (document.querySelector('#toasts')||{}).innerText||'';`);
+          if (t) { toastTxt = t; if (/全剧设定/.test(t)) break; }
+        }
+        await waitFor(() => cdp.eval(`return /【全剧设定】/.test(((document.querySelector('#fields textarea')||{}).value)||'');`), '本集大纲落进变量', 10000).catch(() => null);
+        const val = await cdp.eval(`const t=document.querySelector('#fields textarea'); return t ? t.value : '';`);
+
+        ok('本集大纲变量里带【全剧设定】小节（逐集生成终于看得见全剧设定）',
+          String(val).includes('【全剧设定】'), String(val).slice(0, 140));
+        ok('信息卡的六个字段都进了上下文（从前只有 题材/基调 到得了提示词）',
+          ['题材：古装悬疑', '基调：沉郁', '世界观：架空王朝末年', '主题：旧案与人心',
+            '一句话简介：一件旧案牵出三代人', '主线：顺藤摸瓜查清旧案'].every((f) => String(val).includes(f)),
+          String(val).slice(0, 320));
+        ok('顺序是"先全剧设定、后本集拍表"（与写剧本时的读法一致）',
+          String(val).indexOf('【全剧设定】') >= 0 && String(val).indexOf('【全剧设定】') < String(val).indexOf('第 1 集（'),
+          String(val).slice(0, 160));
+        ok('载入提示如实说出带了全剧设定（带没带在界面上长得一样就白带了）',
+          /含全剧设定/.test(toastTxt), toastTxt.replace(/\s+/g, ' ').slice(0, 160));
+        // 本组自己导航过（每次文档加载会把 __uiRejects 清空），所以这里就地断言，别指望全局那条
+        const rej = await cdp.eval(`return window.__uiRejects || [];`);
+        ok('本组交互期间没有未处理 Promise 拒绝（含 toast/渲染链）', rej.length === 0, JSON.stringify(rej));
+      } finally {
+        await fetch(`http://127.0.0.1:${port}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: '', agnes_api_key: '' }) }).catch(() => null);
+        mock.close();
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+      }
+    }
+
     const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);
     ok('异常钩子存活（自证非空跑：reload 后仍可捕获）', collected?.hookLive === true, JSON.stringify(collected));
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));

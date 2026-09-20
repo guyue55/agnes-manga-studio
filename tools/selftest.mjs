@@ -2869,6 +2869,107 @@ group('角色字段的唯一漏斗（批 8 补 31）');
     conv.notes.length <= story.CHARACTER_FIELD_MAX.notes, `实际 ${conv.notes.length}`);
 }
 
+group('逐集生成也要看见全剧设定（批 8 补 36：一份渲染 / 指纹跟着设定走 / 没设定不误报）');
+{
+  const {
+    planEpisodes, episodeOutlineText, episodeBriefText, episodeInputDigest,
+    settingLines, cardLine, auditStaleness,
+  } = require('./lib/story.js');
+  const plot = (id, name, stage, order, extra) => Object.assign({ id, kind: 'plot', name, stage, order }, extra || {});
+  const world = (extra) => Object.assign({
+    id: 'w1', kind: 'world', name: '全剧基调', order: 0,
+    genre: '悬疑', tone: '冷峻', worldview: '末日后重建', theme: '信任与背叛',
+    logline: '一个失忆的侦探找回家人', mainline: '顺藤摸瓜查清旧案',
+  }, extra || {});
+  const tl = { id: 't1', kind: 'timeline', name: '三日后', when: '第三天黄昏', order_note: '紧接第一幕', order: 1 };
+  const beats = [plot('p1', '初见', '起', 1, { conflict: '误会' }), plot('p2', '和解', '合', 2, { outcome: '结盟' })];
+
+  // ① 设定小节是**一份实现**：全剧大纲与单集拍表取到逐字相同的一块
+  {
+    const cards = [world(), tl].concat(beats);
+    const p = planEpisodes(cards, { perEpisode: 2 });
+    const blk = String(p.setting_text || ''); // 兜底：被关掉时要以"断言不成立"呈现，不是 TypeError 中止整轮（注意事项 14）
+    ok('planEpisodes 产出 setting_text（设定挂在分集结果上，调用方想忘也忘不掉）',
+      typeof blk === 'string' && blk.includes('【全剧设定】'), JSON.stringify(blk));
+    eq('settingLines 就是那一块的唯一来源（plan 与它逐字一致）', blk, settingLines(cards).join('\n'));
+    ok('单集拍表带全剧设定', episodeBriefText(p, 1).includes(blk));
+    ok('单集拍表带全剧时间线（含顺序说明）',
+      episodeBriefText(p, 1).includes('【全剧时间线】') && episodeBriefText(p, 1).includes('紧接第一幕'));
+    ok('全剧大纲带同一块（两条路不再分叉）', episodeOutlineText(cards, p).includes(blk));
+    ok('顺序是"先全剧设定、后本集拍表"（与写剧本时的读法一致）',
+      episodeBriefText(p, 1).indexOf('【全剧设定】') < episodeBriefText(p, 1).indexOf('第 1 集（'));
+  }
+
+  // ② 信息卡的**六个字段都要真的进提示词**（从前只渲染 题材/基调，另外四个是孤儿）
+  {
+    const line = cardLine(world());
+    ['题材：悬疑', '基调：冷峻', '世界观：末日后重建', '主题：信任与背叛',
+      '一句话简介：一个失忆的侦探', '主线：顺藤摸瓜查清旧案'].forEach((frag) => {
+      ok(`信息卡的字段进了提示词：${frag}`, line.includes(frag), line);
+    });
+    // 与 CARD_FIELDS 对差集：信息卡认得的字段一个都不许漏（补 29 的同一枚硬币另一面）
+    const known = require('./lib/story.js').CARD_FIELDS.world;
+    const missing = known.filter((f) => {
+      const probe = world({ [f]: `探针-${f}` });
+      return !cardLine(probe).includes(`探针-${f}`);
+    });
+    eq('信息卡没有任何"抽出来却到不了提示词"的字段', missing.length, 0, missing.join(','));
+  }
+
+  // ③ 指纹跟着设定走：改了设定 → 相关集**如实**报过期（从前是静默的）
+  {
+    const cards = [world(), tl].concat(beats);
+    const p = planEpisodes(cards, { perEpisode: 2 });
+    const base = episodeInputDigest(p, 1);
+    ok('指纹是 8 位十六进制', /^[0-9a-f]{8}$/.test(base), base);
+    ['worldview', 'mainline', 'theme', 'logline', 'genre', 'tone'].forEach((f) => {
+      const changed = planEpisodes([world({ [f]: '改过了' }), tl].concat(beats), { perEpisode: 2 });
+      ok(`改信息卡的 ${f} → 本集指纹跟着变（设定变了就该重生成）`,
+        episodeInputDigest(changed, 1) !== base, `${f}: ${episodeInputDigest(changed, 1)}`);
+    });
+    const tlChanged = planEpisodes([world(), Object.assign({}, tl, { when: '第二年春天' })].concat(beats), { perEpisode: 2 });
+    ok('改时间线卡的时间点 → 本集指纹跟着变', episodeInputDigest(tlChanged, 1) !== base);
+    // 反向：**没改设定**时指纹必须稳定（否则每轮都报过期，等于把体检关掉）
+    eq('设定没动 → 指纹逐字节稳定', episodeInputDigest(planEpisodes(cards, { perEpisode: 2 }), 1), base);
+  }
+
+  // ④ 没有信息卡/时间线卡时**一个字节都不变**（不制造假警报）
+  {
+    const noSet = beats;
+    const p = planEpisodes(noSet, { perEpisode: 2 });
+    eq('没有设定卡 → setting_text 是空串（不是 undefined）', p.setting_text, '');
+    eq('没有设定卡 → 单集拍表仍以集号开头', episodeBriefText(p, 1).split('\n')[0], '第 1 集（起·合｜2 拍）');
+    eq('没有设定卡 → 单集拍表行数仍等于拍数 + 1', episodeBriefText(p, 1).split('\n').length - 1, 2);
+    ok('没有设定卡 → 不出现空标题', !episodeBriefText(p, 1).includes('【全剧设定】'));
+    eq('没有设定卡 → 不传 plan 也照样能算（既有调用不受影响）',
+      episodeOutlineText([plot('p', '只有剧情', '起', 1)], null).includes('【全剧设定】'), false);
+    eq('只有信息卡、没有剧情卡时单集拍表仍为空（"没有这一集"要能与"有但没拍"区分）',
+      episodeBriefText(planEpisodes([world()], {}), 1), '');
+  }
+
+  // ⑤ 过期体检端到端：同一份剧本，改了信息卡就报 stale（纯本地、不调模型）
+  {
+    const cards = [world()].concat(beats);
+    const p = planEpisodes(cards, { perEpisode: 2 });
+    const script = { id: 'sc1', episode_number: 1, plan_digest: episodeInputDigest(p, 1, { withPrior: false }) };
+    const before = auditStaleness(p, [script], [], { withPrior: false });
+    eq('设定与剧本一致时 → ok', before.episodes[0].script_state, 'ok');
+    const after = planEpisodes([world({ mainline: '改成复仇线' })].concat(beats), { perEpisode: 2 });
+    const r2 = auditStaleness(after, [script], [], { withPrior: false });
+    eq('改了信息卡的主线 → 这一集报 stale', r2.episodes[0].script_state, 'stale');
+    eq('报 stale 的那一集指纹确实是新的', r2.episodes[0].input_digest, episodeInputDigest(after, 1, { withPrior: false }));
+  }
+
+  // ⑥ 设定块**不截断**：它是跨集一致性的锚点，悄悄截一半比不带更糟
+  {
+    const big = world({ mainline: '长'.repeat(5000) });
+    const p = planEpisodes([big].concat(beats), { perEpisode: 2 });
+    const bigText = String(p.setting_text || '');
+    ok('超长主线原样进设定块（不静默截断）', bigText.includes('长'.repeat(5000)));
+    ok('设定块长度如实可数（界面据此说出"带了多大"）', bigText.length > 5000, String(bigText.length));
+  }
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

@@ -241,7 +241,14 @@ export default async function scripts(container, params) {
       syncCounters();
     }
     syncEpStatus();
-    toast.ok(`已载入第 ${epNo} 集大纲${prior.episodes.length ? ` + 前情 ${prior.episodes.length} 集` : ''}${pick ? '' : '（没找到合适的大纲变量，可手动粘贴）'}`);
+    // 批 8 补 36：如实说出这份上下文里带了什么 —— 全剧设定/时间线是**跨集一致性**的锚点，
+    // 而它此前只出现在「全剧大纲」那条路上，逐集生成看不见（用户以为带了、其实没带）。
+    // 数字全来自服务端（不在前端复算），没带就说没带，别让用户以为带了。
+    const setChars = Number(r.data.setting_chars) || 0;
+    const setNote = setChars
+      ? `（含全剧设定 ${Number(r.data.world_count) || 0} 张 / 时间线 ${Number(r.data.timeline_count) || 0} 张）`
+      : '（这份原著还没有信息卡/时间线卡，未带全剧设定）';
+    toast.ok(`已载入第 ${epNo} 集大纲${setNote}${prior.episodes.length ? ` + 前情 ${prior.episodes.length} 集` : ''}${pick ? '' : '（没找到合适的大纲变量，可手动粘贴）'}`);
     return r.data;
   }
 

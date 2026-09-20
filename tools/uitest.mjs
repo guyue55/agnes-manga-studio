@@ -2030,6 +2030,71 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('批量入资产库前告知跳过语义（幂等，不制造重复角色）', /已在库里的会自动跳过/.test(novel));
 }
 
+// ── 批 8 补 36：逐集生成也要看见全剧设定 ────────────────────────
+group('全剧设定的单一来源与两条路合流（批 8 补 36）');
+{
+  const storySrc = read(path.join(ROOT, 'lib', 'story.js'));
+  const routeSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+  const scriptsSrc36 = read(path.join(PUB, 'js', 'pages', 'scripts.js'));
+  // 按函数名切出函数体（story.js 的顶层函数收在行首的 `}`）
+  const fnBody = (name) => {
+    const at = storySrc.indexOf(`function ${name}(`);
+    if (at < 0) return '';
+    const end = storySrc.indexOf('\n}', at);
+    return end < 0 ? '' : storySrc.slice(at, end);
+  };
+
+  // ① **一份实现**：`【全剧设定】` 全文件只许出现一次（就是 settingLines 里那一行）。
+  //    抄第二份渲染的代价不是多写几行，而是从此"全剧大纲"与"逐集生成"两套设定会各自漂移 ——
+  //    而它们本该是同一份（补 9「一段脚本→某一集分镜只有一个实现」、补 30「两把尺子」同一纪律）。
+  eq('「全剧设定」小节的渲染全项目只有一处（多一份就迟早分叉）',
+    (storySrc.match(/'【全剧设定】'/g) || []).length, 1);
+  eq('「全剧时间线」小节同理只有一处',
+    (storySrc.match(/'【全剧时间线】'/g) || []).length, 1);
+  ok('两处都在 settingLines 里（唯一的那份实现）',
+    fnBody('settingLines').includes("'【全剧设定】'") && fnBody('settingLines').includes("'【全剧时间线】'"));
+
+  // ② 分集结果**带着**设定（调用方想忘也忘不掉），而不是让每条路自己传
+  ok('planEpisodes 把设定挂在分集结果上（setting_text 由 settingLines 推出）',
+    /setting_text: settingLines\(list\)\.join\('\\n'\)/.test(fnBody('planEpisodes')));
+
+  // ③ 两条路都从那一份取 —— 而且**不许**再内联按 kind 渲染
+  ok('单集拍表从 plan.setting_text 取设定（这是补 36 的核心修复）',
+    /str\(\(plan \|\| \{\}\)\.setting_text\)/.test(fnBody('episodeBriefText')));
+  ok('单集拍表里没有第二份按 kind 渲染的设定',
+    !/kind === 'world'/.test(fnBody('episodeBriefText')) && !/kind === 'timeline'/.test(fnBody('episodeBriefText')));
+  ok('全剧大纲也从 plan.setting_text 取（两条路取同一份）',
+    /p\.setting_text === undefined \? settingLines\(list\)/.test(fnBody('episodeOutlineText')));
+  ok('全剧大纲里没有第二份按 kind 渲染的设定',
+    !/kind === 'world'/.test(fnBody('episodeOutlineText')) && !/kind === 'timeline'/.test(fnBody('episodeOutlineText')));
+  // 指纹跟着设定走：它复用 episodeBriefText，所以**不需要**任何额外代码
+  ok('输入指纹复用单集拍表（设定因此自动进指纹，没有第二处需要同步的地方）',
+    /episodeBriefText\(plan, ep\)/.test(fnBody('episodeInputDigest'))
+    && !/setting_text/.test(fnBody('episodeInputDigest')));
+
+  // ④ 信息卡的**六个字段**都要渲染（从前只有 题材/基调，另外四个抽出来却到不了任何提示词）
+  {
+    const wb = fnBody('cardLine');
+    const worldBranch = wb.slice(wb.indexOf("c.kind === 'world'"), wb.indexOf("c.kind === 'world'") + 700);
+    ['题材', '基调', '世界观', '主题', '一句话简介', '主线'].forEach((label) => {
+      ok(`cardLine 渲染信息卡的「${label}」（抽出来却没人读的字段等于没抽）`, worldBranch.includes(`\`${label}：`));
+    });
+  }
+
+  // ⑤ 界面要能说出"带了什么、有多大"：数字全来自服务端，前端只消费不复算
+  ok('episode-brief 回传 setting_chars / world_count / timeline_count（可见性）',
+    /setting_chars: str\(plan\.setting_text\)\.length/.test(routeSrc)
+    && /world_count: plan\.world_count/.test(routeSrc)
+    && /timeline_count: plan\.timeline_count/.test(routeSrc));
+  ok('故事脚本页**读**了这三个字段（只被回传、没人读的字段等于没有）',
+    /Number\(r\.data\.setting_chars\)/.test(scriptsSrc36)
+    && /r\.data\.world_count/.test(scriptsSrc36)
+    && /r\.data\.timeline_count/.test(scriptsSrc36));
+  ok('载入提示如实说出带没带全剧设定（带没带在界面上长得一样就白带了）',
+    /含全剧设定/.test(scriptsSrc36) && /未带全剧设定/.test(scriptsSrc36));
+  ok('前端**不**自己拼设定块（拼接只有服务端一份）', !/【全剧设定】/.test(scriptsSrc36));
+}
+
 console.log(`  前端检查：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {
   console.log('  失败项：');

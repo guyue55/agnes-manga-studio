@@ -156,6 +156,9 @@ const mock = http.createServer((req, res) => {
           // 批 8 补 35：多三张时间线卡 —— 两张"没有时间点"（候选），一张**带着时间点**（对照组）。
           // 对照组是"已有的一个都不动"这条钉的前提（补 33 踩过：连对照组一起清，钉就失效了）
           ...(userMsg.includes('__WHENFILL__') ? [{ kind: 'timeline', name: '离开临江' }, { kind: 'timeline', name: '夜访' }, { kind: 'timeline', name: '重逢', when: '第二年春天' }] : []),
+          // 批 8 补 36：给"全剧设定要进逐集上下文"造一张时间线卡。
+          // 分块抽取每段都会返回它，同名会被归并成一张 —— 正是我们想验的"归并后再渲染"。
+          ...(userMsg.includes('__WORLDSET__') ? [{ kind: 'timeline', name: '三日后', when: '第三天黄昏', order_note: '紧接第一幕' }] : []),
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
@@ -163,7 +166,11 @@ const mock = http.createServer((req, res) => {
         // 所以不可能影响其它分组的既有断言）
         if (userMsg.includes('__LONGARC__')) {
           return send(200, { choices: [{ message: { content: JSON.stringify({
-            world: { name: '长弧线旧事', genre: '古装悬疑', tone: '沉郁' },
+            // 批 8 补 36：world 卡补全 CARD_FIELDS.world 的六个字段 ——
+            // 从前 cardLine 只渲染 题材/基调，另外四个（世界观/主题/一句话简介/主线）
+            // 抽出来、界面上也显示，却到不了任何提示词。这里给全才验得了"真的进了提示词"
+            world: { name: '长弧线旧事', genre: '古装悬疑', tone: '沉郁', worldview: '架空王朝末年',
+              theme: '旧案与人心', logline: '一件旧案牵出三代人', mainline: '顺藤摸瓜查清旧案' },
             plots: [
               { name: '长弧·起1', stage: '起', conflict: 'C1' }, { name: '长弧·承1', stage: '承', conflict: 'C2' },
               { name: '长弧·转1', stage: '转', conflict: 'C3' }, { name: '长弧·合1', stage: '合', outcome: 'O1' },
@@ -1901,7 +1908,12 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     eq('单集接口 200', ep1.status, 200);
     eq('按每集 3 拍切出 2 集', ep1.data.episode_count, 2);
     eq('第 1 集存在', ep1.data.exists, true);
-    ok('第 1 集的大纲带集号与拍数', ep1.data.brief.startsWith('第 1 集（'), ep1.data.brief.split('\n')[0]);
+    // 批 8 补 36：本集拍表现在**前面还带全剧设定/时间线**（从前只有全剧大纲那条路有），
+    // 所以断言从 `startsWith` 改成"含这一行" —— 断言的是**同一件事**（带集号与拍数），
+    // 不是把钉删掉（行为有意反转时，断言跟着改，别删）
+    ok('第 1 集的大纲带集号与拍数', /^第 1 集（/m.test(ep1.data.brief), ep1.data.brief.split('\n')[0]);
+    ok('第 1 集的大纲前面带全剧设定（__LONGARC__ 的信息卡；补 36 之前这条路上没有）',
+      ep1.data.brief.includes('【全剧设定】') && ep1.data.setting_chars > 0, String(ep1.data.setting_chars));
     ok('本集大纲就是全剧骨架里那一集（拍名一致）', ep1.data.brief.includes('长弧·起1'), ep1.data.brief);
     eq('第 1 集没有前情（它是开头）', ep1.data.prior, '');
     eq('第 1 集的前情集数为 0', ep1.data.prior_episodes.length, 0);
@@ -2619,6 +2631,99 @@ group('剧本/分镜过期体检（批 8 补 12：输入变了要能被发现，
   eq('源剧本被删 → 分镜报过期（不是静默"没问题"）', st6.episodes.find((x) => x.episode_number === 1).shot_state, 'stale');
 
   eq('体检是纯本地的：一次模型都没调', storyChatCalls, callsBeforeStale);
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+group('逐集生成也要看见全剧设定（批 8 补 36：设定进上下文 / 改设定如实报过期 / 没设定不误报）');
+{
+  const pj = await api('POST', '/api/projects', { name: '全剧设定测试剧' });
+  const PID = pj.data.id;
+  // __LONGARC__ 给 8 拍 + 一张六字段齐全的信息卡；__WORLDSET__ 再给一张时间线卡
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '设定·原著', text: `__LONGARC__ __WORLDSET__${'长弧线的故事。'.repeat(40)}`,
+  });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const SRC = an.data.source.id;
+  const cards = (await api('GET', `/api/story/cards?source_id=${SRC}`)).data;
+  const w = cards.find((c) => c.kind === 'world');
+  const tl = cards.find((c) => c.kind === 'timeline');
+  ok('设定验收：拿到了信息卡', !!w, JSON.stringify(cards.map((c) => `${c.kind}:${c.name}`)));
+  ok('设定验收：拿到了时间线卡', !!tl, JSON.stringify(cards.map((c) => c.name)));
+
+  const b1 = (await api('GET', `/api/story/episode-brief?project_id=${PID}&source_id=${SRC}&per_episode=4&episode=1`)).data;
+
+  // ① 本集拍表现在**带全剧设定/时间线**（从前只有"全剧大纲"那条路有，逐集生成看不见）
+  ok('本集拍表带【全剧设定】小节', b1.brief.includes('【全剧设定】'), b1.brief.slice(0, 160));
+  ok('本集拍表带【全剧时间线】小节（含顺序说明）',
+    b1.brief.includes('【全剧时间线】') && b1.brief.includes('紧接第一幕'), b1.brief.slice(0, 240));
+  ok('顺序是"先全剧设定、后本集拍表"（与写剧本时的读法一致）',
+    b1.brief.indexOf('【全剧设定】') < b1.brief.indexOf('第 1 集（'));
+
+  // ② 信息卡的**六个字段**都要真的进提示词（从前只有 题材/基调，另外四个是孤儿）
+  ['题材：古装悬疑', '基调：沉郁', '世界观：架空王朝末年', '主题：旧案与人心',
+    '一句话简介：一件旧案牵出三代人', '主线：顺藤摸瓜查清旧案'].forEach((frag) => {
+    ok(`信息卡的字段进了本集上下文：${frag}`, b1.brief.includes(frag), b1.brief.slice(0, 240));
+  });
+
+  // ③ 界面要能说出"带了什么、有多大"（数字全来自服务端，不在前端复算）
+  ok('回传 setting_chars 且 > 0', Number(b1.setting_chars) > 0, String(b1.setting_chars));
+  eq('回传 world_count', Number(b1.world_count) >= 1, true);
+  eq('回传 timeline_count', Number(b1.timeline_count) >= 1, true);
+  // 报出去的数必须**就是**真的发出去的那一段：`setting_chars` 若与 brief 各算一遍，
+  // 界面上就会出现"说带了 105 字、其实一个字没带"（对照 KT 第一版只钉了 `> 0` 与 `< brief.length`，
+  // 把设定从 brief 里拿掉照样绿 —— 断言不能因错误的原因通过，注意事项 11）
+  const stBlock = b1.brief.slice(0, Number(b1.setting_chars));
+  ok('setting_chars 就是 brief 开头那一段的长度（报的数与真的发出去的是同一份）',
+    stBlock.includes('【全剧设定】') && b1.brief[Number(b1.setting_chars)] === '\n',
+    JSON.stringify({ chars: b1.setting_chars, head: stBlock.slice(0, 40), next: b1.brief[Number(b1.setting_chars)] }));
+
+  // ④ 与全剧大纲那条路**取同一份**（两条路不再分叉）
+  const outline = (await api('GET', `/api/story/episodes?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  const blk = String(outline.text).slice(String(outline.text).indexOf('【全剧设定】'), String(outline.text).indexOf('【分集骨架】')).trim();
+  ok('全剧大纲与本集拍表里的设定块逐字相同', blk.length > 0 && b1.brief.includes(blk), blk.slice(0, 120));
+
+  // ⑤ 改了信息卡 → 有剧本的集**如实**报过期（从前是静默的：设定改了、界面显示"没问题"）
+  const sc = await api('POST', '/api/scripts', {
+    project_id: PID, script_type: 'story_concept', episode_number: 1, title: '第 1 集',
+    content: '第 1 集的剧本正文', plan_digest: b1.input_digest,
+  });
+  const st0 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('刚生成完 → 第 1 集一致', st0.episodes.find((x) => x.episode_number === 1).script_state, 'ok');
+
+  // ⑤ 反向先做（必须在改主线**之前**，否则状态已经 stale，这条断言就是空的）：
+  //    改**不进上下文**的字段不许乱喊过期（假警报比不检查更糟）。
+  //    world 的 summary 只在"一个可渲染字段都没有"时才兜底，有 genre 时它不上场。
+  const putSum = await api('PUT', `/api/story/cards/${w.id}`, { summary: '这段摘要根本不会被渲染进上下文' });
+  eq('（前提）summary 确实写进去了 —— 否则下面那条断言是空的（对照注意事项 11）',
+    putSum.data.summary, '这段摘要根本不会被渲染进上下文');
+  const st2 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('改不进上下文的字段 → 不报过期（体检盯的是"真的发出去的东西"）',
+    st2.episodes.find((x) => x.episode_number === 1).script_state, 'ok');
+
+  // ⑥ 正向：改了信息卡的主线 → 有剧本的集**如实**报过期
+  //    （从前是静默的：设定改了、剧本没重生成、界面显示"没问题"）
+  await api('PUT', `/api/story/cards/${w.id}`, { mainline: '改成复仇线' });
+  const st1 = (await api('GET', `/api/story/staleness?project_id=${PID}&source_id=${SRC}&per_episode=4`)).data;
+  eq('改了信息卡的主线 → 第 1 集报过期', st1.episodes.find((x) => x.episode_number === 1).script_state, 'stale');
+  eq('过期计数如实上报', st1.counts.script_stale, 1);
+  const b2 = (await api('GET', `/api/story/episode-brief?project_id=${PID}&source_id=${SRC}&per_episode=4&episode=1`)).data;
+  ok('新上下文里是改后的主线（不是缓存里的旧设定）', b2.brief.includes('改成复仇线'), b2.brief.slice(0, 240));
+  ok('指纹确实变了', b2.input_digest !== b1.input_digest, `${b1.input_digest} → ${b2.input_digest}`);
+  ok('改后的上下文里不再有旧主线', !b2.brief.includes('顺藤摸瓜查清旧案'));
+
+  // ⑦ 没有设定卡的原著：上下文里不出现空标题，且不因此多出过期
+  const an2 = await api('POST', '/api/story/analyze', { project_id: PID, title: '无设定·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false });
+  for (let i = 0; i < 60; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an2.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const SRC2 = an2.data.source.id;
+  const b3 = (await api('GET', `/api/story/episode-brief?project_id=${PID}&source_id=${SRC2}&per_episode=4&episode=1`)).data;
+  if (b3.exists) {
+    ok('没有信息卡/时间线卡 → 不出现空标题',
+      !b3.brief.includes('【全剧设定】') && !b3.brief.includes('【全剧时间线】'), b3.brief.slice(0, 160));
+    eq('没有设定卡 → setting_chars 为 0（界面据此说"未带全剧设定"）', Number(b3.setting_chars), 0);
+  } else {
+    ok('没有剧情卡时如实说"还没有拍"（不是静默给一段空骨架）', b3.notes.length > 0, JSON.stringify(b3.notes));
+  }
+
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
