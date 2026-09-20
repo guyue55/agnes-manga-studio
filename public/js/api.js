@@ -90,6 +90,9 @@ export const api = {
   createStoryboard: (s) => req('POST', '/api/storyboards', s),
   createStoryboards: (rows) => req('POST', '/api/storyboards', { rows }),
   updateStoryboard: (id, s) => req('PUT', `/api/storyboards/${id}`, s),
+  // 批 8 补 39：提示词的合成、调用与落库全在服务端（唯一一份实现），前端只负责逐条推进度。
+  // 前端拼提示词的话，服务端看不到真正发出去的那一份，也就无法给它算输入指纹。
+  genStoryboardPrompt: (id, kind) => req('POST', `/api/storyboards/${id}/prompt`, { kind }, { timeoutMs: TIMEOUT.gen }),
   deleteStoryboard: (id) => req('DELETE', `/api/storyboards/${id}`),
   reorderStoryboards: (ids) => req('POST', '/api/storyboards/reorder', { ids }),
   clearStoryboards: (projectId, episode) => req('DELETE', `/api/storyboards?project_id=${encodeURIComponent(projectId)}&episode=${episode}`),

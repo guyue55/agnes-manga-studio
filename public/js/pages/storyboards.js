@@ -266,6 +266,29 @@ export default async function storyboards(container, params) {
     el.querySelectorAll('[data-inline]').forEach((b) => {
       b.onclick = () => inlineEdit(b);
     });
+    // 批 8 补 39：过期提示词的重做入口。批量补提示词**默认跳过已有提示词**，
+    // 所以"改了描述之后想过期的那几条重做"在批量入口里点不到 —— 出口必须就在标记旁边。
+    el.querySelectorAll('[data-redo-prompt]').forEach((b) => {
+      b.onclick = () => redoPrompt(b);
+    });
+  }
+
+  /** 重做一条过期提示词（服务端合成 → 生成 → 落库 → 重记指纹，见 api.genStoryboardPrompt） */
+  async function redoPrompt(btn) {
+    const id = btn.getAttribute('data-redo-prompt');
+    const kind = btn.getAttribute('data-kind') === 'video' ? 'video' : 'image';
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '重做中…';
+    try {
+      const r = await api.genStoryboardPrompt(id, kind);
+      if (!r.ok) { toast.err(r.error); return; }
+      toast.ok(`镜头 #${r.data.shot_number} 的${kind === 'image' ? '图片' : '视频'}提示词已按当前内容重做`);
+      load();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = old;
+    }
   }
 
   /**
@@ -426,9 +449,19 @@ export default async function storyboards(container, params) {
     const withNeg = field === 'image_prompt' ? negativePhrase(artStylePhrase(withCam, style), s.negative_prompt) : artStylePhrase(withCam, style);
     const final = withNeg;
     const injected = chars.filter((c) => withChars.includes(c.name));
+    // 批 8 补 39：这一行的提示词**是不是按当前内容生成的**。提示词由服务端合成并记下输入指纹，
+    // 这里只读结论（`image_prompt_state` 随分镜列表一起下发）—— 改了画面描述之后，
+    // 提示词列自己会说"过期"，不用用户记住"我改过描述"（补 25：只被显示的标记等于没有）。
+    const stateKey = `${field}_state`;
+    const pstate = s[stateKey];
+    const staleTip = pstate === 'stale'
+      ? `这一行的画面描述/动作/出场人物（或提示词模板）改过，但这份提示词还是按**改动之前**的内容生成的 —— 点「批量补…提示词」不会重做它（已有提示词默认跳过），请用旁边的重做按钮重新生成`
+      : (pstate === 'unknown' ? '这份提示词没有输入指纹（多半是补 39 之前生成的），无法判断是否与当前内容一致' : '');
     // data-prompt 给测试与后续就地编辑一个稳定锚点（列内还有别的 .cell-ellipsis，靠选择器顺序取会取错）
     return `<div class="row prompt-cell" style="gap:6px" data-prompt="${field}">
       <button type="button" class="cell-ellipsis inline-target" data-inline="${esc(s.id)}" style="font-family:var(--mono);font-size:11px;max-width:180px;color:var(--text-3);text-align:left" title="点击就地编辑\n${final !== text ? `生成时实际发出：\n${esc(final)}` : esc(text)}">${esc(text)}</button>
+      ${pstate === 'stale' ? `<button type="button" class="prompt-tag prompt-stale" data-redo-prompt="${esc(s.id)}" data-kind="${field === 'image_prompt' ? 'image' : 'video'}" title="${esc(staleTip)}" style="cursor:pointer">提示词过期·点此重做</button>` : ''}
+      ${pstate === 'unknown' ? `<span class="prompt-tag" title="${esc(staleTip)}">未验</span>` : ''}
       ${withCards !== text ? `<span class="prompt-tag" title="原著场景道具由系统统一注入：${esc(cards.filter((c) => withCards.includes(c.name)).map((c) => c.name).join('、'))}">+场景</span>` : ''}
       ${withChars !== withCards ? `<span class="prompt-tag" title="出场角色由系统统一注入：${esc(injected.map((c) => c.name).join('、'))}">+角色</span>` : ''}
       ${withCam !== withChars ? `<span class="prompt-tag" title="运镜由系统统一注入：${esc(cam)}">+运镜</span>` : ''}
@@ -793,6 +826,15 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
 
   // ── 批量补提示词 ─────────────────────────────────────────
   let promptBusy = false;
+  /**
+   * 批量补图片/视频提示词（批 8 补 39：合成搬到服务端）。
+   *
+   * 前端此前**自己拼** system + user 再走 `/api/agnes/text` —— 于是服务端看不到真正发出去的
+   * 那一份，没法给它算输入指纹（"画面描述改了、英文提示词还是旧的"因此一路静默）。
+   * 现在合成、调用、落库、记指纹全在 `POST /api/storyboards/:id/prompt` 一次做完；
+   * 前端只负责逐条推进度条（取消/失败只丢这一条的行为不变）。
+   * 提示词模板也因此真正生效了 —— 改设置页的「分镜图片提示词」模板，下一次生成就按新的来。
+   */
   async function batchPrompts(kind) {
     if (promptBusy) return;
     const targets = rows.filter((r) => !(kind === 'image' ? r.image_prompt : r.video_prompt));
@@ -804,24 +846,9 @@ ${roster.text ? `${roster.text}\n\n` : ''}${text}`,
     try {
       for (const s of targets) {
         bar.innerHTML = `<div class="note gold"><div class="row"><div class="spinner sm"></div><span>${kind === 'image' ? '生成图片提示词' : '生成视频提示词'}：${done + failed + 1} / ${targets.length}（每条约 5〜20s）</span></div></div>`;
-      // 批 8 补 7：提示词只写"这一镜发生了什么"，**由系统在使用点注入的东西一律不写** ——
-      // 画风、人物长相、中文人名。写死的后果各不相同但都静默：换画风全部作废 / 与注入的长相打架导致换脸 /
-      // 名字进提示词会让 characterPhrase 跳过外貌注入（未锁定的角色）。
-      const sys = kind === 'image'
-        ? '你是专业的AI漫剧分镜图提示词工程师，请生成适合图像生成的英文提示词，细节丰富。只写镜头内容（主体、动作、表情、景别构图、局部光效），并且**不要写整体画风或媒介词**（anime style、oil painting、watercolor 等——画风由系统在使用点统一注入，写死会导致换画风全部作废）；**不要写人物长相**（发色、瞳色、服装、面部特征——长相由系统按角色档案注入，写两遍会打架）；**不要写中文人名**（写进英文提示词没有意义，还会让系统跳过这个角色的外貌注入）。只输出提示词，不要解释。'
-        : '你是专业的AI视频提示词工程师。请用英文输出，只描述画面运动与镜头运动，不要重复静态外观，也不要写画风/媒介词（由系统在使用点统一注入）。';
-      // 人物只给"有谁"，不给长相：模型据此安排画面，长相仍由注入决定
-      const who = flat(s.characters) || (Array.isArray(s.character_ids) ? s.character_ids
-        .map((id) => (charsOf().find((c) => c.id === id) || {}).name).filter(Boolean).join('、') : '');
-      const user = kind === 'image'
-        ? `为以下分镜生成英文图片提示词：景别:${s.shot_type}，画面:${s.scene_description}，人物:${who}，动作:${s.action}`
-        : `为以下分镜生成英文视频运动提示词：画面:${s.scene_description}，动作:${s.action}，台词:${s.dialogue}`;
-        const r = await api.genText({ messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], project_id: projectId });
-        if (r.ok) {
-          const txt = (r.data.content || '').trim().replace(/^["']|["']$/g, '');
-          await api.updateStoryboard(s.id, kind === 'image' ? { image_prompt: txt } : { video_prompt: txt });
-          done++;
-        } else failed++;
+        const r = await api.genStoryboardPrompt(s.id, kind);
+        if (r.ok) done++;
+        else failed++;
       }
       bar.innerHTML = failed
         ? `<div class="note orange">已为 ${done} 个镜头补充提示词，${failed} 条失败（保持原样，可重跑补差）</div>`

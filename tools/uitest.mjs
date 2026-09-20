@@ -556,7 +556,11 @@ group('B4 画风分层');
     return m ? [...m[1].matchAll(/'([^']+)':/g)].map((x) => x[1]).sort().join(',') : '';
   };
   ok('4.1 前后端画风映射表同构', keysOf(routesSrc) !== '' && keysOf(routesSrc) === keysOf(constsSrc));
-  ok('4.1 LLM 链禁烘画风（拆镜+补提示词，均在 storyboards）', (sbSrc.match(/不要写整体画风/g) || []).length >= 2);
+  // 批 8 补 39：补提示词那条链的 system 搬到服务端模板（前端不再自己拼提示词），
+  // 所以"禁令在哪"跟着搬家 —— 断言也搬，别删（禁令本身还是必须有，只是只有一处）
+  ok('4.1 LLM 链禁烘画风（拆镜在 storyboards，补提示词在服务端模板）',
+    /不要写整体画风/.test(sbSrc)
+    && /不要写整体画风或媒介词/.test(read(path.join(ROOT, 'lib', 'seed.js'))));
   ok('4.2 分镜提示词计算态预览', sbSrc.includes('artStylePhrase') && sbSrc.includes('+画风'));
   { // 1.6 防增量棘轮：字号地坪 11px 永不回退；裸 font-size 总量只减不增
     // 新页也必须进棘轮：否则"新加的页面"天然是裸字号与微字号的免检区
@@ -1784,8 +1788,10 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /story\.auditCharacterDrift\(cards/.test(routesSrc) && /drift_issues/.test(routesSrc)
     // 批 8 补 28：又加了卡片侧人物闭环一组 —— 这行断言要跟着走，否则"新增一组却忘了并进 issues"
     // （= 界面永远看不见）会静默通过
-    && /styleIssues\.issues, drift\.issues, refGaps\.issues, cast\.issues\)/.test(routesSrc)
-    && /cast_issues: cast\.issues/.test(routesSrc));
+    && /styleIssues\.issues, drift\.issues, refGaps\.issues, cast\.issues, promptStale\.issues\)/.test(routesSrc)
+    && /cast_issues: cast\.issues/.test(routesSrc)
+    // 批 8 补 39：又加一组（提示词过期）—— 同上，"新增一组却忘了并进 issues"必须红
+    && /prompt_issues: promptStale\.issues/.test(routesSrc));
   ok('同步修复只写外貌/服饰/别名，不碰角色定位与性格',
     /code === 'sync_character'/.test(routesSrc) && !/patch\.(role|personality|gender|age) =/.test(routesSrc));
 
@@ -1862,12 +1868,43 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /code === 'strip_style_word'/.test(routesSrc) && /before, after/.test(routesSrc));
   ok('原著页给画风问题配了修复按钮与确认文案',
     /strip_style_word: '删掉写死的画风词'/.test(novel) && /画风由<b>项目设置<\/b>在使用点统一注入/.test(novel));
-  ok('批量补提示词同样禁止写死画风与长相（提示词只写这一镜发生了什么）',
-    /不要写整体画风或媒介词/.test(boardsSrc) && /不要写人物长相\*\*（发色、瞳色、服装、面部特征/.test(boardsSrc)
-    && /不要写中文人名\*\*（写进英文提示词没有意义/.test(boardsSrc));
-  ok('批量补提示词的人物来自绑定（「出场人物」空着时用已绑角色名兜底）',
-    /const who = flat\(s\.characters\) \|\| \(Array\.isArray\(s\.character_ids\)/.test(boardsSrc)
-    && /人物:\$\{who\}/.test(boardsSrc));
+  // 批 8 补 39：补提示词的合成搬到服务端，三条禁令随之搬进 `DEFAULT_TEMPLATES` 的两个模板 ——
+  // 搬的是位置、不是"可以不要了"：这里改成钉**服务端模板**里有这三条，并钉前端**不再自己拼**
+  // （前端再拼一份 = 服务端看不到真正发出去的那一份 = 指纹形同虚设）。
+  {
+    const pSeed = read(path.join(ROOT, 'lib', 'seed.js'));
+    // 只取**这个模板对象**的正文（切到下一个 key: 为止），并从里面单独取出 content 字段 ——
+    // 注释里会**引用**被删掉的旧变量名（"{{镜头运动}} 因此删掉"），拿整段做匹配会打在注释上，
+    // 断言必须落在真正发出去的那一行（注意事项 11：别让断言因错误的原因通过/失败）
+    const segOf = (key) => {
+      const i = pSeed.indexOf(`key: '${key}'`);
+      if (i < 0) return { all: '', content: '' };
+      const rest = pSeed.slice(i);
+      const next = rest.indexOf("key: '", 10);
+      const all = next > 0 ? rest.slice(0, next) : rest;
+      const cm = all.match(/content: '([^']*)'/);
+      return { all, content: cm ? cm[1] : '' };
+    };
+    const imgSeg = segOf('image_prompt').all;
+    const vidSeg = segOf('video_prompt').all;
+    const imgContent = segOf('image_prompt').content;
+    const vidContent = segOf('video_prompt').content;
+    ok('补提示词的三条禁令在服务端模板里（画风 / 长相 / 中文人名）',
+      /不要写整体画风或媒介词/.test(imgSeg) && /不要写人物长相/.test(imgSeg) && /不要写中文人名/.test(imgSeg)
+      && /不要写画风\/媒介词/.test(vidSeg) && /不要写人物长相/.test(vidSeg) && /不要写中文人名/.test(vidSeg));
+    ok('模板正文里不写由使用点注入的东西（运镜 / 画风变量不许出现在 content 里）',
+      imgContent !== '' && vidContent !== ''
+      && !/\{\{镜头运动\}\}|\{\{画风\}\}|\{\{人物长相\}\}/.test(imgContent)
+      && !/\{\{镜头运动\}\}|\{\{画风\}\}|\{\{人物长相\}\}/.test(vidContent));
+    ok('前端不再自己拼提示词（合成只有服务端一份）',
+      !/const who = flat\(s\.characters\)/.test(boardsSrc)
+      && !/为以下分镜生成英文图片提示词/.test(boardsSrc)
+      && /api\.genStoryboardPrompt\(s\.id, kind\)/.test(boardsSrc));
+    ok('人物的兜底（「出场人物」空着时用已绑角色名）在服务端唯一实现里',
+      /function promptCastText/.test(storySrc)
+      && /const own = str\(shot && shot\.characters\)\.trim\(\)/.test(storySrc)
+      && /character_ids/.test(storySrc));
+  }
 
   // ── 角色名册（批 8 补 6）──
   // 批 8 补 37：名册是喂给模型的输入之一，而"输入变了要报过期"靠服务端算的指纹 ——

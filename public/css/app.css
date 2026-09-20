@@ -1143,6 +1143,9 @@ body.sb-collapsed .sb-toggle .lbl { display: none; }
 
 /* 提示词单元格的注入徽标（+角色 / +画风）：样式进 CSS 而不是页面里写裸 font-size */
 .prompt-tag { flex: none; color: var(--gold-light); font-size: 11px; cursor: help; }
+/* 批 8 补 39：提示词与当前画面描述不一致时的标记（可点重做）。
+   用警示色而不是报错色 —— 它不是故障，是"这份派生字段该重做了"。 */
+.prompt-tag.prompt-stale { color: #FCD34D; border-bottom: 1px dashed currentColor; }
 
 /* ── 剧本链路（批 4：R16 带入下一步 / R17 就地编辑 / R18 计数）─────
    样式一律进 CSS，不在页面里写裸 font-size —— uitest 有"裸字号棘轮"卡着（≤44 处）。 */

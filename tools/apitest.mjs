@@ -52,6 +52,9 @@ let queryTarget = 'base'; let flakyHits = 0; let denyHitsWithKey = 0;
 let videoCreateHits = 0; // 批 7：幂等断言要能证明"复用时确实没向上游下单"，光看响应形状证明不了
 let imagesDelayMs = 0; // 批量取消契约：把出图放慢，稳定制造「运行中」窗口（测试专用）
 let storyChatCalls = 0; // 批 8：/api/story/plan 必须**一次模型都不调**，靠这个计数证明
+// 批 8 补 39：记下服务端**真正发出去**的提示词 messages（断言"合成在服务端"不能只看落库结果 ——
+// 落库是产物，发出去的是输入，两者可以不一致，而这里要验的正是"发出去的那一份进了指纹"）
+let lastPromptChat = null;
 let badJsonUpstream = false; // R10：让上游回 200 + 非 JSON（真实世界里的"网关返回 HTML 错误页"） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
@@ -129,6 +132,17 @@ const mock = http.createServer((req, res) => {
       // 抽取走 mock 的两段式：第 2 段才出现"青铜钥匙"与更详细的外貌，
       // 用来验证"跨块去重合并"与"更详细的字段取胜"这两条真会发生。
       const userMsg = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+      // 批 8 补 39：分镜图片/视频提示词（服务端合成）。把收到的 messages 记下来，
+      // 并把 user 的特征回显进产物 —— 这样"落库的那份提示词"能证明它确实由这份输入生成。
+      // 判据用"提示词链独有的开头"——但**不锚定**开头：测试会换模板，锚定会让换了模板的请求
+      // 掉进别的分支（那样测出来的就不是这条链了，第一版就栽在这里）
+      if (userMsg.includes('为以下分镜生成英文图片提示词') || userMsg.includes('为以下分镜生成英文视频')) {
+        lastPromptChat = cb.messages;
+        // 空输出：验证"模型返回空"时**不写库**（把失败变成静默清空是最难发现的一类失败）
+        if (userMsg.includes('__EMPTYPROMPT__')) return send(200, { choices: [{ message: { content: '' } }] });
+        // 把收到的 user **原样回显**进产物：这样"落库的提示词"能证明它确实由这份输入生成
+        return send(200, { choices: [{ message: { content: `MOCKPROMPT:${userMsg.includes('视频') ? 'video' : 'image'}:${userMsg}` } }] });
+      }
       if (/"cards"\s*:/.test(userMsg)) {
         if (userMsg.includes('__BADCHUNK__')) return send(200, { choices: [{ message: { content: '抱歉，这一段我读不懂。' } }] });
         // 批 8 补 18：两种"没抽到卡片"的成因，用来验证覆盖体检能分开它们
@@ -1840,7 +1854,9 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   eq('总数 = 各分组之和（不许只算一边；漏一组就会在界面上少报问题）',
     audit.data.counts.warn,
     audit.data.card_counts.warn + audit.data.shot_counts.warn + audit.data.ref_counts.warn
-      + audit.data.style_counts.warn + audit.data.drift_counts.warn + audit.data.cast_counts.warn);
+      + audit.data.style_counts.warn + audit.data.drift_counts.warn + audit.data.cast_counts.warn
+      // 批 8 补 39：又加了一组（提示词过期）—— 这个等式是"新增一组必须同时进总数"的棘轮
+      + audit.data.prompt_counts.warn);
   // 把镜头 2 的绑定清掉，制造一条确定的漏绑
   await api('PUT', `/api/storyboards/${s2.id}`, { character_ids: [] });
   const audit2 = await api('GET', `/api/story/audit?project_id=${PID}`);
@@ -1962,8 +1978,9 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     ok('体检报告里同时有画风侧的一组（三源各自计数）',
       !!before.data.style_counts && !!before.data.card_counts && !!before.data.shot_counts,
       JSON.stringify(Object.keys(before.data)));
-    eq('总数 = 卡片侧 + 镜头侧 + 画风侧 + 参考图缺口侧',
-      before.data.counts.warn, before.data.card_counts.warn + before.data.shot_counts.warn + before.data.style_counts.warn + before.data.ref_counts.warn);
+    eq('总数 = 卡片侧 + 镜头侧 + 画风侧 + 参考图缺口侧 + 提示词过期侧',
+      before.data.counts.warn, before.data.card_counts.warn + before.data.shot_counts.warn
+        + before.data.style_counts.warn + before.data.ref_counts.warn + before.data.prompt_counts.warn);
     const st = (await api('POST', '/api/storyboards', {
       project_id: PID, episode_number: 3, shot_number: 91,
       image_prompt: 'a girl, oil painting style, visible brush strokes, holding a sword',
@@ -1977,9 +1994,10 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
     Array.isArray((await api('GET', `/api/story/audit?project_id=${PID}`)).data.ref_issues));
   ok('各分组的问题都并进 issues（面板渲染的是 issues，分组字段一个都不能落下）',
       a2.data.issues.some((x) => x.code === 'shot_style_baked')
-      && a2.data.issues.length === ['card', 'shot', 'style', 'drift', 'ref']
+      // 批 8 补 39：名单里加 'prompt'（新增一组就必须并进 issues，否则面板上看不见）
+      && a2.data.issues.length === ['card', 'shot', 'style', 'drift', 'ref', 'prompt']
         .reduce((n, k) => n + (a2.data[`${k}_issues`] || []).length, 0),
-      JSON.stringify({ issues: a2.data.issues.length, card: a2.data.card_issues.length, shot: a2.data.shot_issues.length, style: a2.data.style_issues.length, drift: (a2.data.drift_issues || []).length, ref: (a2.data.ref_issues || []).length }));
+      JSON.stringify({ issues: a2.data.issues.length, card: a2.data.card_issues.length, shot: a2.data.shot_issues.length, style: a2.data.style_issues.length, drift: (a2.data.drift_issues || []).length, ref: (a2.data.ref_issues || []).length, prompt: (a2.data.prompt_issues || []).length }));
     const baked = a2.data.style_issues.filter((x) => x.word === 'oil painting style, visible brush strokes');
     eq('报出提示词里写死的画风词（按词聚合）', baked.length, 1);
     eq('聚合里带上是哪个镜头', baked[0].shot_ids.includes(st.id), true);
@@ -4393,6 +4411,120 @@ group('分镜输入指纹覆盖名册（批 8 补 38：写入点与复算点必�
 
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
   await api('DELETE', `/api/projects/${pj2.data.id}?cascade=1`);
+}
+
+
+// ── 提示词的合成与输入指纹（批 8 补 39：派生字段过期）─────────────────
+{
+  const pj = await api('POST', '/api/projects', { name: `提示词指纹 ${Date.now()}` });
+  const PID = pj.data.id;
+  const SID = (await api('POST', '/api/scripts', {
+    project_id: PID, title: '第 1 集', episode_number: 1, content: '林晚推开门，看见顾寒站在雨里。',
+  })).data.id;
+  const chars = await api('POST', '/api/characters', { project_id: PID, name: '林晚', appearance: '黑色长直发' });
+  const CID = chars.data.id;
+  const sbs = await api('POST', '/api/storyboards', {
+    rows: [{
+      project_id: PID, episode_number: 1, shot_number: 1, shot_type: '近景',
+      scene_description: '雨夜的巷口', characters: '林晚', action: '回头',
+      dialogue: '别过来', narration: '雨声', sound_effect: '雷声',
+      camera_move: '推近', source_script_id: SID,
+    }],
+  });
+  const SB = sbs.data.rows[0].id;
+  eq('新建的分镜还没有提示词 → 状态是 missing（"还没做"不是"过期"）',
+    (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'missing');
+
+  // ① 生成：合成 / 调用 / 落库 / 记指纹全在服务端一次做完
+  lastPromptChat = null;
+  const gen = await api('POST', `/api/storyboards/${SB}/prompt`, { kind: 'image' });
+  eq('生成返回 ok', gen.data && gen.data.ok, true);
+  ok('落库的提示词就是模型给的那一份（mock 把收到的 user 原样回显）',
+    gen.data.prompt.startsWith('MOCKPROMPT:image:') && gen.data.prompt.includes('雨夜的巷口'));
+  ok('服务端真的把提示词发出去了（mock 收到了 messages）',
+    Array.isArray(lastPromptChat) && lastPromptChat.length === 2 && lastPromptChat[0].role === 'system');
+  ok('发出去的 user 里有这一镜自己的内容（画面/动作/台词都在）',
+    /雨夜的巷口/.test(lastPromptChat[1].content) && /回头/.test(lastPromptChat[1].content)
+    && /别过来/.test(lastPromptChat[1].content));
+  ok('发出去的 system 来自**设置页的模板**（不是前端硬编码的那份）',
+    /不要写整体画风或媒介词/.test(lastPromptChat[0].content)
+    && /不要写人物长相/.test(lastPromptChat[0].content));
+  eq('指纹覆盖"真的发出去的那一份"（system + user）', gen.data.digest,
+    storyLib.digestText([lastPromptChat[0].content, lastPromptChat[1].content].join('\n---\n')));
+
+  const row1 = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0];
+  eq('刚落库 → 列表里的状态是 ok', row1.image_prompt_state, 'ok');
+  eq('视频列还没生成 → missing', row1.video_prompt_state, 'missing');
+
+  // ② 改了画面描述 → 提示词过期（这就是本轮要报出来的那件事）
+  await api('PUT', `/api/storyboards/${SB}`, { scene_description: '晴天的天台' });
+  const row2 = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0];
+  eq('改了画面描述 → 图片提示词变 stale', row2.image_prompt_state, 'stale');
+  ok('提示词本身没被顺手改掉（过期是"没改"，不是"乱改"）',
+    row2.image_prompt.includes('雨夜的巷口') && !row2.image_prompt.includes('晴天的天台'));
+
+  // ③ 体检要报出来，并给得出出口
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const pIss = (aud.data.prompt_issues || []).filter((i) => i.storyboard_id === SB);
+  eq('体检报出 shot_prompt_stale', pIss.map((i) => i.code).join(','), 'shot_prompt_stale');
+  eq('体检的分组与合并字段同源（面板渲染的是 issues）',
+    (aud.data.issues || []).filter((i) => i.code === 'shot_prompt_stale').length,
+    pIss.length);
+  ok('体检项带出口（分镜页 + 项目 id，否则"只有结论没有出口"）',
+    pIss[0] && pIss[0].go && pIss[0].go.page === 'storyboards' && pIss[0].go.params.project === PID);
+  eq('体检的逐字段计数与问题数一致', aud.data.prompt_counts.warn, pIss.length);
+
+  // ④ 重做 → 回到 ok，且指纹按**新**描述算
+  const redo = await api('POST', `/api/storyboards/${SB}/prompt`, { kind: 'image' });
+  ok('重做后的提示词反映的是新描述', redo.data.prompt.includes('晴天的天台'));
+  eq('重做后回到 ok', (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'ok');
+
+  // ⑤ 改**不进提示词**的字段不许假警报（精确性）
+  await api('PUT', `/api/storyboards/${SB}`, { camera_move: '拉远', duration_seconds: 8, status: 'done' });
+  eq('改运镜/时长/状态 → 仍然 ok（这些在使用点注入，不在提示词里）',
+    (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'ok');
+
+  // ⑥ 手改提示词也记指纹（否则手写过的行永远报过期＝假警报）
+  await api('PUT', `/api/storyboards/${SB}`, { image_prompt: 'hand written prompt' });
+  eq('手写提示词后 → ok（记的是"写它时的输入"，不区分谁写的）',
+    (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'ok');
+  await api('PUT', `/api/storyboards/${SB}`, { action: '跳下天台' });
+  eq('手写之后改描述 → 照样会过期（体检对手写内容同样有效）',
+    (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'stale');
+
+  // ⑦ 模板真的生效：改模板 → 下一次生成按新模板来，且旧提示词被判过期
+  const tpls = (await api('GET', '/api/templates?template_type=image_prompt')).data;
+  const imgTpl = tpls.find((t) => t.key === 'image_prompt');
+  ok('设置页确实有 image_prompt 模板（它以前从没被读过）', !!imgTpl);
+  // 模板正文保留"这条链独有的开头"，只为让 mock 能认出这是提示词链（真实用户改模板不受此限）
+  await api('PUT', `/api/templates/${imgTpl.id}`, { content: '为以下分镜生成英文图片提示词。按新模板生成：{{画面描述}}' });
+  const gen2 = await api('POST', `/api/storyboards/${SB}/prompt`, { kind: 'image' });
+  ok('改模板后生成的提示词按新模板（模板真的被读了，不再是"只被显示"）',
+    gen2.data.prompt.includes('按新模板生成：') && gen2.data.prompt.includes('晴天的天台'));
+  ok('发出去的 user 就是新模板渲染的那一份', /按新模板生成：/.test(lastPromptChat[1].content));
+  eq('刚按新模板生成完 → ok', (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'ok');
+  await api('PUT', `/api/templates/${imgTpl.id}`, { content: '为以下分镜生成英文图片提示词。又换一版：{{画面描述}}' });
+  eq('模板再换 → 上一次生成的提示词变 stale',
+    (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt_state, 'stale');
+
+  // ⑧ 模型返回空 → **不写**（"成功但清空"是最难发现的一类失败）
+  const before = (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt;
+  await api('PUT', `/api/storyboards/${SB}`, { scene_description: '__EMPTYPROMPT__ 让模型返回空' });
+  const empty = await api('POST', `/api/storyboards/${SB}/prompt`, { kind: 'image' });
+  eq('模型返回空 → 报错（不是静默成功）', empty.status, 502);
+  eq('模型返回空 → 原来的提示词一个字都没动',
+    (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt, before);
+  await api('PUT', `/api/storyboards/${SB}`, { scene_description: '晴天的天台' }); // 清掉空输出标记
+  const vid = await api('POST', `/api/storyboards/${SB}/prompt`, { kind: 'video' });
+  ok('视频提示词也走同一条链（同一份实现，两种 kind）',
+    vid.data && vid.data.ok && /MOCKPROMPT:video:/.test(vid.data.prompt));
+  eq('图片提示词没有被视频那次生成动过', (await api('GET', `/api/storyboards?project_id=${PID}&episode=1`)).data[0].image_prompt, before);
+
+  // ⑨ 不存在的分镜 → 404（不是静默成功）
+  const nf = await api('POST', '/api/storyboards/nope/prompt', { kind: 'image' });
+  eq('给不存在的分镜生成 → 404', nf.status, 404);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }
 
 

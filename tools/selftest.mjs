@@ -3097,6 +3097,131 @@ group('分镜输入指纹要覆盖名册（批 8 补 38：剧本 → 分镜这�
     storyboardInputDigest(script, []), base === digestText(TEXT) ? base : digestText(TEXT));
 }
 
+group('图片/视频提示词：合成唯一一份 + 输入指纹（批 8 补 39：清单上的第 ① 条）');
+{
+  const {
+    promptInput, promptVars, promptCastText, auditPromptStaleness, digestText, renderPrompt,
+    promptField, promptDigestField, PROMPT_KINDS,
+  } = require('./lib/story.js');
+  const { DEFAULT_TEMPLATES } = require('./lib/seed.js');
+  const tplOf = (key) => {
+    const t = DEFAULT_TEMPLATES.find((x) => x.key === key) || {};
+    return { system: t.system || '', content: t.content || '' };
+  };
+  const TPL = { image: tplOf('image_prompt'), video: tplOf('video_prompt') };
+  const chars = [{ id: 'c1', name: '林晚' }, { id: 'c2', name: '顾寒' }];
+  const shot = {
+    id: 'sb1', project_id: 'p1', episode_number: 2, shot_number: 3, shot_type: '近景',
+    scene_description: '雨夜的巷口', characters: '林晚', character_ids: ['c1'],
+    action: '回头', dialogue: '别过来', narration: '雨声', sound_effect: '雷声',
+    camera_move: '推近', negative_prompt: 'low quality', duration_seconds: 3,
+  };
+
+  // ① 字段命名只有一份规则：PROMPT_KINDS 里每一种都能推出字段名与指纹字段名
+  eq('字段名规则与 PROMPT_KINDS 一致', PROMPT_KINDS.map((k) => `${k}:${promptField(k)}:${promptDigestField(k)}`).join('|'),
+    'image:image_prompt:image_prompt_digest|video:video_prompt:video_prompt_digest');
+
+  // ② 指纹覆盖**真的发出去的那一份**（system + user 逐字），不是"对输出的预测"
+  {
+    const inp = promptInput(shot, 'image', TPL.image, chars);
+    const user = renderPrompt(TPL.image.content, promptVars(shot, chars));
+    eq('发出去的 system 就是模板的 system', inp.messages[0].content, TPL.image.system);
+    eq('发出去的 user 就是模板正文渲染出来的那一份', inp.messages[1].content, user);
+    eq('指纹覆盖 system + user（逐字）', inp.digest, digestText([TPL.image.system, user].join('\n---\n')));
+    ok('input_chars 与真的发出去的那一份同源（不是另算一遍）', inp.input_chars === user.length && inp.input_chars > 0);
+  }
+
+  // ③ **棘轮**：模板里每一个 {{变量}} 都必须有人填 —— renderPrompt 会把没人填的换成空串（静默），
+  //    而"静默变成空"正是这类 bug 最难发现的地方（补 34 踩过一次）
+  {
+    const vars = promptVars(shot, chars);
+    for (const kind of PROMPT_KINDS) {
+      const names = [...TPL[kind].content.matchAll(/\{\{([^}]+)\}\}/g)].map((m) => m[1]);
+      const missing = [...new Set(names)].filter((n) => !(n in vars));
+      eq(`模板 ${kind} 的每个变量都有人填（没人填会被静默换成空串）`, missing.join(','), '');
+      // 反向：模板里不许出现"由使用点注入"的东西（写进去就是写两遍）
+      const banned = [...new Set(names)].filter((n) => /运镜|镜头运动|画风|长相/.test(n));
+      eq(`模板 ${kind} 不许要"使用点注入"的变量`, banned.join(','), '');
+    }
+  }
+
+  // ④ 人物兜底：自己写的优先，空着才回退绑定角色名（与前端原先那份逐字同构）
+  eq('「出场人物」有内容时原样用', promptCastText(shot, chars), '林晚');
+  eq('「出场人物」空着 → 回退到已绑角色的本名', promptCastText({ character_ids: ['c2', 'c1'] }, chars), '顾寒、林晚');
+  eq('绑了不存在的 id → 跳过（不编名字）', promptCastText({ character_ids: ['c1', 'nope'] }, chars), '林晚');
+  eq('两者都空 → 空串（不是 undefined）', promptCastText({}, chars), '');
+  eq('人物只给"有谁"、不给长相（长相由使用点注入）',
+    /黑色长直发/.test(promptVars(shot, [{ id: 'c1', name: '林晚', appearance: '黑色长直发' }]).人物), false);
+
+  // ⑤ 逐字段敏感性：改**会进提示词**的字段 → stale；改**不进**的 → 必须仍是 ok
+  {
+    const withStamp = (o) => {
+      const d = promptInput(o, 'image', TPL.image, chars).digest;
+      return Object.assign({}, o, { image_prompt: 'a rainy alley, medium shot', image_prompt_digest: d });
+    };
+    const row = withStamp(shot);
+    const stateOf = (o) => auditPromptStaleness([o], { characters: chars, templates: TPL }).states[o.id].image_prompt_state;
+    eq('什么都没改 → ok（不产生假警报）', stateOf(row), 'ok');
+    for (const [f, v] of [['scene_description', '晴天的天台'], ['action', '转身跑开'],
+      ['dialogue', '快走'], ['shot_type', '远景'], ['characters', '林晚、顾寒']]) {
+      eq(`改了会进提示词的 ${f} → stale`, stateOf(Object.assign({}, row, { [f]: v })), 'stale');
+    }
+    // 这些**不进图片提示词**（画风/运镜/长相/负面词都在使用点注入；旁白音效只进视频）
+    for (const [f, v] of [['camera_move', '拉远'], ['negative_prompt', 'blurry'],
+      ['narration', '旁白改了'], ['sound_effect', '雨声改了'], ['duration_seconds', 9],
+      ['shot_number', 99], ['status', 'done']]) {
+      eq(`改了不进提示词的 ${f} → 仍然 ok（否则每改一处都假警报）`,
+        stateOf(Object.assign({}, row, { [f]: v })), 'ok');
+    }
+    // 视频那一份对旁白/音效敏感、对景别与人物不敏感（模板决定，不是随手）
+    const vrow = Object.assign({}, shot, { video_prompt: 'camera pans', video_prompt_digest: promptInput(shot, 'video', TPL.video, chars).digest });
+    const vstate = (o) => auditPromptStaleness([o], { characters: chars, templates: TPL }).states[o.id].video_prompt_state;
+    eq('视频提示词：什么都没改 → ok', vstate(vrow), 'ok');
+    eq('视频提示词：改旁白 → stale', vstate(Object.assign({}, vrow, { narration: '改' })), 'stale');
+    eq('视频提示词：改音效 → stale', vstate(Object.assign({}, vrow, { sound_effect: '改' })), 'stale');
+    eq('视频提示词：改景别 → 仍 ok（模板里没有景别）', vstate(Object.assign({}, vrow, { shot_type: '远景' })), 'ok');
+    eq('视频提示词：改人物 → 仍 ok（运动描述里不含出场人物）', vstate(Object.assign({}, vrow, { characters: '顾寒' })), 'ok');
+  }
+
+  // ⑥ 模板本身改了 → 旧提示词确实"是按另一套要求写的"，该重生成
+  {
+    const d = promptInput(shot, 'image', TPL.image, chars).digest;
+    const row = Object.assign({}, shot, { image_prompt: 'x', image_prompt_digest: d });
+    const other = { image: { system: TPL.image.system + '补充要求', content: TPL.image.content }, video: TPL.video };
+    eq('换了提示词模板 → stale',
+      auditPromptStaleness([row], { characters: chars, templates: other }).states.sb1.image_prompt_state, 'stale');
+  }
+
+  // ⑦ 三态与"还没做"严格分开；计数与状态同源
+  {
+    const rows = [
+      Object.assign({}, shot, { id: 'a', image_prompt: 'p', image_prompt_digest: promptInput(shot, 'image', TPL.image, chars).digest }),
+      Object.assign({}, shot, { id: 'b', image_prompt: 'p', image_prompt_digest: 'deadbeef' }),
+      Object.assign({}, shot, { id: 'c', image_prompt: 'p' }),
+      Object.assign({}, shot, { id: 'd' }),
+    ];
+    const r = auditPromptStaleness(rows, { characters: chars, templates: TPL });
+    eq('ok / stale / unknown / missing 四态分明',
+      ['a', 'b', 'c', 'd'].map((id) => r.states[id].image_prompt_state).join(','), 'ok,stale,unknown,missing');
+    eq('"还没生成"不报过期（它不是过期，是还没做）', r.counts.warn, 1);
+    eq('逐字段计数与逐行状态同源',
+      `${r.by_field.image.ok},${r.by_field.image.stale},${r.by_field.image.unknown}`,
+      `${['a'].length},1,1`);
+    eq('过期项带 code / level / 不可一键修（要花钱重生成）',
+      r.issues.map((i) => `${i.code}|${i.level}|${i.fixable}`).join(','), 'shot_prompt_stale|warn|false');
+    ok('过期项给得出出口（分镜页 + 项目/集号，不然"只有结论没有出口"）',
+      r.issues[0] && r.issues[0].go && r.issues[0].go.page === 'storyboards'
+      && r.issues[0].go.params.project === 'p1' && r.issues[0].go.params.episode === '2');
+  }
+
+  // ⑧ 模板读不到 → 一律 unknown（宁可说不知道，也不猜）
+  {
+    const row = Object.assign({}, shot, { image_prompt: 'p', image_prompt_digest: 'deadbeef' });
+    eq('模板缺失 → unknown（不是 stale，也不是 ok）',
+      auditPromptStaleness([row], { characters: chars, templates: {} }).states.sb1.image_prompt_state, 'unknown');
+  }
+}
+
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

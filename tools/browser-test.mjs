@@ -4246,6 +4246,113 @@ try {
       }
     }
 
+    group('提示词由服务端合成、过期可见可重做（批 8 补 39）');
+    {
+      // 服务端合成有 selftest、端到端有 apitest，但"**页面上真的看得见过期、点得动重做**"
+      // 只有真机看得见 —— 而这一轮要治的正是"改了描述、提示词还是旧的，界面上两条都正常"。
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const jpost = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      const jput = (u, b) => J(u, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      const sentUsers = [];
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            const sys = String(((cb.messages || []).find((m) => m.role === 'system') || {}).content || '');
+            if (user.includes('为以下分镜生成英文')) {
+              sentUsers.push({ user, sys });
+              return send(200, { choices: [{ message: { content: `REALPROMPT ${sentUsers.length}` } }] });
+            }
+            return send(200, { choices: [{ message: { content: '{}' } }] });
+          }
+          send(200, {});
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mPort = mock.address().port;
+      try {
+        await jput('/api/settings', { agnes_api_base_url: `http://127.0.0.1:${mPort}/v1`, agnes_api_key: 'p39-mock-key' });
+        // 新建项目要走 Page.reload（注意事项 8：API 现建的项目不在壳层 state.projects 里，
+        // 直接改 hash 会被判"项目不存在"而切走，后面所有断言都在别的项目上跑）
+        const pid = (await jpost('/api/projects', { name: '提示词过期真机剧' })).id;
+        const SID = (await jpost('/api/scripts', { project_id: pid, title: '第 5 集', episode_number: 5, content: '雨夜的巷口，林晚回头。' })).id;
+        await jpost('/api/characters', { project_id: pid, name: '林晚', appearance: '黑色长直发' });
+        const SB = (await jpost('/api/storyboards', {
+          project_id: pid, episode_number: 5, shot_number: 1, shot_type: '近景',
+          scene_description: '雨夜的巷口', characters: '林晚', action: '回头',
+          dialogue: '别过来', narration: '雨声', sound_effect: '雷声', source_script_id: SID,
+        })).id;
+        await cdp.send('Page.reload', {});
+        await sleep(400);
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=5'; return true;`);
+        // 等"数据行"，不是等按钮（注意事项 8：静态按钮先于数据渲染，等按钮会点成"没有需要补充的镜头"）
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#table tbody tr').length >= 1`), '提示词组镜头行');
+        ok('刚建的行显示"待生成"（还没有提示词）',
+          await cdp.eval(`(document.querySelector('[data-prompt="image_prompt"] .link-btn')||{}).innerText || ''`).then((t) => /待生成/.test(t)));
+
+        // ① 点「批量补图片提示词」→ 服务端合成并落库
+        await cdp.eval(`document.querySelector('#gen-img-prompts').click(); return true;`);
+        let landed = true;
+        try { await waitFor(() => cdp.eval(`document.querySelector('[data-prompt="image_prompt"] .inline-target')?.innerText.includes('REALPROMPT')`), '提示词落进单元格', 20000); }
+        catch { landed = false; }
+        ok('① 批量补提示词走通：提示词出现在表格单元格里', landed);
+        ok('① 模型收到的是**服务端合成的** messages（含这一镜的画面/动作/台词）',
+          sentUsers.length === 1 && sentUsers[0].user.includes('雨夜的巷口')
+          && sentUsers[0].user.includes('回头') && sentUsers[0].user.includes('别过来'),
+          JSON.stringify(sentUsers.map((x) => x.user.slice(0, 40))));
+        ok('① 发出去的 system 来自设置页模板（三条禁令在服务端模板里，不在前端）',
+          /不要写整体画风或媒介词/.test(sentUsers[0].sys) && /不要写中文人名/.test(sentUsers[0].sys));
+        const rowA = (await J(`/api/storyboards?project_id=${pid}&episode=5`))[0];
+        ok('① 落库时同时记下输入指纹（8 位十六进制）',
+          /^[0-9a-f]{8}$/.test(String(rowA.image_prompt_digest || '')), String(rowA.image_prompt_digest));
+        ok('① 刚生成完 → 界面不显示过期标记', !(await cdp.eval(`!!document.querySelector('.prompt-stale')`)));
+
+        // ② 改画面描述 → 刷新 → **界面自己说过期**（这一轮真正要看见的那件事）
+        await jput(`/api/storyboards/${SB}`, { scene_description: '晴天的天台' });
+        await cdp.send('Page.reload', {});
+        await sleep(400);
+        await cdp.eval(`location.hash = '#/storyboards?project=${pid}&episode=5'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#table tbody tr').length >= 1`), '改描述后行还在');
+        // 核心断言：等不到就**断言不成立**，不让 waitFor 抛超时中止整轮（注意事项 14）
+        let sawStale = true;
+        try { await waitFor(() => cdp.eval(`!!document.querySelector('.prompt-stale')`), '过期标记出现', 10000); }
+        catch { sawStale = false; }
+        const staleTxt = await cdp.eval(`(document.querySelector('.prompt-stale')||{}).innerText || ''`);
+        ok('② 改了画面描述 → 提示词列自己标"过期"（不用用户记住"我改过描述"）',
+          sawStale && /过期/.test(staleTxt), JSON.stringify({ sawStale, staleTxt }));
+        const hasRedo = await cdp.eval(`!!document.querySelector('[data-redo-prompt]')`);
+        ok('② 过期标记点得动（重做入口就在标记旁边）', hasRedo);
+
+        // ③ 点重做 → 提示词按新描述重生成、标记消失
+        //    取不到按钮就只让断言不成立，**不要**在 null 上点出 TypeError（注意事项 14：红得干净）
+        const n0 = sentUsers.length;
+        let redone = true;
+        if (hasRedo) {
+          await cdp.eval(`document.querySelector('[data-redo-prompt]').click(); return true;`);
+          try { await waitFor(() => cdp.eval(`document.querySelector('[data-prompt="image_prompt"] .inline-target')?.innerText.includes('REALPROMPT ${n0 + 1}')`), '重做后的提示词落进单元格', 20000); }
+          catch { redone = false; }
+        } else redone = false;
+        ok('③ 重做真的重新调了模型、且按**新**描述（画面已变成"晴天的天台"）',
+          redone && sentUsers.length === n0 + 1 && sentUsers[n0].user.includes('晴天的天台')
+          && !sentUsers[n0].user.includes('雨夜的巷口'),
+          JSON.stringify({ redone, sent: sentUsers.length - n0, last: sentUsers[n0] && sentUsers[n0].user.slice(0, 60) }));
+        let goneStale = true;
+        try { await waitFor(() => cdp.eval(`!document.querySelector('.prompt-stale')`), '过期标记消失', 10000); }
+        catch { goneStale = false; }
+        ok('③ 重做后标记消失（体检结论跟着落库的那一份走）', goneStale);
+        const rowB = (await J(`/api/storyboards?project_id=${pid}&episode=5`))[0];
+        ok('③ 重做后指纹与之前不同（指纹确实按新输入重算了）',
+          rowB.image_prompt_digest !== rowA.image_prompt_digest,
+          `${rowA.image_prompt_digest} → ${rowB.image_prompt_digest}`);
+        ok('③ 页面控制台零错误（新链路没有靠报错兜底）', errors.length === 0, JSON.stringify(errors.slice(0, 3)));
+        await jput('/api/settings', { agnes_api_key: '' });
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      } finally { mock.close(); }
+    }
+
     const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);
     ok('异常钩子存活（自证非空跑：reload 后仍可捕获）', collected?.hookLive === true, JSON.stringify(collected));
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));
