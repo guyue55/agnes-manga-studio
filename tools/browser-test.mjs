@@ -1236,16 +1236,20 @@ try {
       const hits = after.filter((p) => p.name === '连点对照剧');
       ok('双击创建只产生 1 个项目（R6 防连点）', hits.length === 1, `before=${before} after=${after.length} 同名=${hits.length}`);
       for (const h of hits) await fetch(`http://127.0.0.1:${port}/api/projects/${h.id}?cascade=1`, { method: 'DELETE' });   // 先清首批，避免污染对照计数
-      // 灵敏度对照：两次点击**不重叠**（等第一次落库后再点）应确实产生 2 个 →
-      // 证明上面的"只 1 个"来自防连点，而非名字校验/接口去重等巧合
-      await cdp.eval(`document.querySelector('#new-project').click(); return true;`);
-      await waitFor(() => cdp.eval(`return !!document.querySelector('#f-name');`), '对照弹窗就绪');
-      await cdp.eval(`document.querySelector('#f-name').value = '连点对照剧'; return true;`);
-      await cdp.eval(`const b = document.querySelector('[data-yes]'); b.click(); await new Promise((r) => setTimeout(r, 400)); b.click(); return true;`);
-      await sleep(800);
+      // 灵敏度对照（**确定性**）：接口本身**不去重** —— 直接连发两次 POST 就产生 2 个。
+      // 所以上面"界面上双击只产生 1 个"确实来自防连点，而不是名字校验/接口去重之类的巧合。
+      //
+      // 这里刻意**不**用"点一次、等 400ms 再点第二次"来验：那依赖"第一次请求还没回来、弹窗还开着"，
+      // 而机器快的时候弹窗已经关了 —— 第二次点的是**已经从文档里摘下来的节点**（等于没点），
+      // 于是得到 1 个、报"对照不敏感"的**假红**（真机复现过：同一份代码前一次跑绿、后一次跑红）
+      const mkDup = () => fetch(`http://127.0.0.1:${port}/api/projects`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '连点对照剧' }),
+      });
+      await mkDup(); await mkDup();
       const after2 = await Jget('/api/projects');
-      ok('灵敏度对照：非重叠两次点击确实产生 2 个（钉对防护缺失敏感）', after2.filter((p) => p.name === '连点对照剧').length === 2, `同名=${after2.filter((p) => p.name === '连点对照剧').length}`);
-      await cdp.eval(`document.querySelector('.modal-close')?.click(); return true;`);
+      ok('灵敏度对照：接口本身不去重（连发两次确实产生 2 个）→ 界面上的"只 1 个"来自防连点',
+        after2.filter((p) => p.name === '连点对照剧').length === 2, `同名=${after2.filter((p) => p.name === '连点对照剧').length}`);
       for (const h of after2.filter((p) => p.name === '连点对照剧')) await fetch(`http://127.0.0.1:${port}/api/projects/${h.id}?cascade=1`, { method: 'DELETE' });
       const cleaned = (await Jget('/api/projects')).length;
       ok('连点探针已清理（项目数复原）', cleaned === before, `before=${before} cleaned=${cleaned}`);
@@ -2147,9 +2151,29 @@ try {
         ok('说明为什么只列它（只出现一次的镜头不值得准备参考图）', /只出现一次/.test(panel), JSON.stringify(panel.slice(0, 400)));
 
         // 机器修不了的问题必须给出口：点"去处理"要真的落到那张卡上
+        // 同一张卡上现在有**两个**问题（参考图缺口 / 没有可注入描述），两条都必须有自己的出口。
+        // 这一条要在**点击之前**验：点完「去处理」页面就换到卡片上了，`#nov-audit-box` 已经不在文档里
+        const exits = await cdp.eval(`
+          const rows = [...document.querySelectorAll('#nov-audit-box [data-audit-go]')];
+          const has = (kw) => rows.some((b) => {
+            const t = (b.closest('.row')||{}).innerText || '';
+            return t.includes('临江茶馆') && t.includes(kw);
+          });
+          return JSON.stringify({ ref: has('参考图'), inj: has('可注入的描述') });
+        `);
+        ok('同一张卡上的两个问题**各有**「去处理」（体检不能只有结论、没有出口）',
+          exits === JSON.stringify({ ref: true, inj: true }), exits);
+
+        // 必须**精确点到"参考图缺口"那一条**：同一张地点卡现在还会报 no_inject（也没有可注入描述），
+        // 两条都带「去处理」。只按卡片名找会点到另一条 —— 那样这条测试**验的是别的问题**，
+        // 而且照样是绿的（批 8 补 34 加完出口就真踩到了：点中了 no_inject，它的出口当时没带 card_id，
+        // 于是"跳到那张卡"直接超时；超时是对的，但它掩盖了"这条测试其实在测另一件事"）
         const clicked = await cdp.eval(`
           const rows = [...document.querySelectorAll('#nov-audit-box [data-audit-go]')];
-          const hit = rows.find((b) => (b.closest('.row')||{}).innerText?.includes('临江茶馆'));
+          const hit = rows.find((b) => {
+            const t = (b.closest('.row')||{}).innerText || '';
+            return t.includes('临江茶馆') && t.includes('参考图');
+          });
           if (!hit) return false;
           hit.click(); return true;
         `);
@@ -2163,6 +2187,7 @@ try {
           return el ? getComputedStyle(el).borderColor : '';
         `);
         ok('目标卡片被高亮（在一屏几十张卡里要能一眼看到）', !!marked && marked !== 'rgba(0, 0, 0, 0)', JSON.stringify(marked));
+
 
         // 挂上一张公网参考图 → 问题消失（证明这个体检不是只报不解）
         const img = await POST('/api/images', { project_id: pid, name: '茶馆参考', remote_url: 'https://example.com/t.png', url: 'https://example.com/t.png' });

@@ -2274,6 +2274,7 @@ group('AI 补分幕次（批 8 补 32：把"一格一格填"的活交给模型�
 group('AI 回原文补人物长相（批 8 补 33：找到的必须带原文原话）');
 {
   const mk = (id, kind, name, extra = {}) => ({ id, kind, name, aliases: [], evidence: [], ...extra });
+  const LK = story.fillSpec('char_look');
 
   // ① 判据与体检**同源**：`needsLook` 同时驱动体检的 char_no_look 与补长相的候选名单。
   //    两处手抄判据的话，某天改了一处就会各说各话（对照补 30 的教训）——所以这条钉的是"同源"本身
@@ -2282,11 +2283,12 @@ group('AI 回原文补人物长相（批 8 补 33：找到的必须带原文原�
   const hasOutfit = mk('c', 'character', '苏离', { outfit: '玄色长袍' });
   const blank = mk('d', 'character', '空壳', { appearance: '   ' });
   const notChar = mk('e', 'location', '客栈');
-  eq('只挑"既没外貌也没服装"的人物卡', story.lookFillTargets([noLook, hasApp, hasOutfit, blank, notChar]).targets.map((c) => c.id).join(','), 'a,d');
-  eq('有服装就不算缺（两项是"或"不是"且"）', story.lookFillTargets([hasOutfit]).targets.length, 0);
-  eq('空白外貌不算有（str().trim() 口径与体检一致）', story.lookFillTargets([blank]).targets.length, 1);
-  eq('非人物卡不进候选', story.lookFillTargets([notChar]).targets.length, 0);
-  eq('chars 是全部人物卡（不筛缺不缺）', story.lookFillTargets([noLook, hasApp, notChar]).chars.length, 2);
+  eq('只挑"既没外貌也没服装"的人物卡', story.fillTargets(LK, [noLook, hasApp, hasOutfit, blank, notChar]).targets.map((c) => c.id).join(','), 'a,d');
+  eq('有服装就不算缺（两项是"或"不是"且"）', story.fillTargets(LK, [hasOutfit]).targets.length, 0);
+  eq('空白外貌不算有（str().trim() 口径与体检一致）', story.fillTargets(LK, [blank]).targets.length, 1);
+  eq('非人物卡不进候选', story.fillTargets(LK, [notChar]).targets.length, 0);
+  eq('pool 是全部人物卡（不筛缺不缺）—— 界面要能分清"一张都不缺"与"压根没有这类卡"',
+    story.fillTargets(LK, [noLook, hasApp, notChar]).pool.length, 2);
   const codesOf = (c) => story.auditCards([c], {}).issues.map((i) => i.code);
   ok('缺长相的卡，体检也报 char_no_look（同一条判据的两端）', codesOf(noLook).includes('char_no_look'), codesOf(noLook).join(','));
   ok('有服装的卡，体检不报 char_no_look', !codesOf(hasOutfit).includes('char_no_look'), codesOf(hasOutfit).join(','));
@@ -2299,37 +2301,43 @@ group('AI 回原文补人物长相（批 8 补 33：找到的必须带原文原�
     { text: '第四章。' + '无关内容'.repeat(300) },
   ];
   const withEv = { ...noLook, evidence: [0, 2], aliases: ['晚儿'] };
-  const ex = story.lookFillExcerpts([withEv], chunks);
+  const ex = story.fillExcerpts(LK, [withEv], chunks);
   eq('每张候选卡一条出处记录', ex.length, 1);
   eq('编号从 1 开始（与返回的 index 对位）', ex[0].index, 1);
   eq('只取前 2 段（多了既贵又稀释重点）', ex[0].chunks.join(','), '0,2');
   ok('片段里含这个名字', /林晚/.test(ex[0].text), ex[0].text.slice(0, 40));
   ok('有出处 → has_text', ex[0].has_text === true);
-  eq('没有证据段号的卡 → 没有出处（回原文找无从谈起）', story.lookFillExcerpts([noLook], chunks)[0].has_text, false);
-  const long = story.lookFillExcerpts([{ ...noLook, evidence: [3] }], chunks, { maxChars: 300 });
+  eq('没有证据段号的卡 → 没有出处（回原文找无从谈起）', story.fillExcerpts(LK, [noLook], chunks)[0].has_text, false);
+  const long = story.fillExcerpts(LK, [{ ...noLook, evidence: [3] }], chunks, { maxChars: 300 });
   ok('超长要截断并如实标记 truncated', long[0].truncated === true && long[0].text.length <= 300, String(long[0].text.length));
-  const byAlias = story.lookFillExcerpts([{ ...mk('f', 'character', '林晚儿'), evidence: [0], aliases: ['晚儿'] }], chunks);
+  const byAlias = story.fillExcerpts(LK, [{ ...mk('f', 'character', '林晚儿'), evidence: [0], aliases: ['晚儿'] }], chunks);
   ok('别名也算命中（原文里可能只写小名）', byAlias[0].has_text === true && /林晚/.test(byAlias[0].text));
-  const plain = story.lookFillExcerpts([{ ...noLook, evidence: [0] }], ['林晚穿青衣。']);
+  const plain = story.fillExcerpts(LK, [{ ...noLook, evidence: [0] }], ['林晚穿青衣。']);
   ok('块既可以是 {text} 也可以是裸字符串（调用方不必先转换）', plain[0].has_text === true && /青衣/.test(plain[0].text));
 
-  // ③ 提示词清单：没出处要**明说**，留白会让模型开始凭名字编
-  const lines = story.lookFillLines([
-    { index: 1, name: '林晚', aliases: ['晚儿'], has_text: true, text: '原文片段甲' },
-    { index: 2, name: '顾寒', aliases: [], has_text: false, text: '' },
-  ]);
+  // ③ 提示词清单：没出处要**明说**，留白会让模型开始凭名字编。
+  //    这里走真实的 `fillExcerpts` 形状（而不是手捏一个条目）—— 手捏的条目少了 `kind`/`fields`，
+  //    会让清单看起来对、实际与运行时不同（补 34 就在这儿栽过一次：条目没带 kind，字段表被推成空的）
+  const lines = story.fillLines(story.fillExcerpts(LK, [
+    { id: 'a', kind: 'character', name: '林晚', aliases: ['晚儿'], evidence: [0] },
+    { id: 'z', kind: 'character', name: '顾寒', evidence: [] },
+  ], ['林晚推门进来。']), LK);
   ok('编号 + 人物名 + 别名', /1\. 人物：林晚（别名：晚儿）/.test(lines), lines.slice(0, 30));
-  ok('带上原文片段', /原文片段甲/.test(lines));
+  ok('带上原文片段', /林晚推门进来/.test(lines));
+  ok('把"要补哪几个字段 + 键名"写进清单（模板是共用的，模型只能从这一行知道该交哪些键）',
+    /要补的字段：外貌、服装（键名：appearance \/ outfit）/.test(lines), lines.slice(0, 90));
   ok('没出处的**明说**（不留白，否则模型会凭名字编）', /没有可定位的原文出处/.test(lines), lines.slice(-60));
 
   // ④ 核对：**引文可验证**是"抽取"与"编造"之间唯一可机械判定的分界线
   const t1 = { id: 'a', index: 1, name: '林晚' };
   const t2 = { id: 'b', index: 2, name: '顾寒' };
   const exById = { a: '林晚推门进来，一身洗得发白的青衫，长发用一根木簪松松束着。', b: '顾寒立在檐下，玄色劲装。' };
-  const q = (looks) => story.applyLookAssignments([t1, t2], { looks }, exById);
+  const q = (looks) => story.applyFillAssignments([t1, t2], { looks }, exById, LK);
   const okOne = q([{ index: 1, found: true, appearance: '清瘦，长发以木簪束起', quote: '长发用一根木簪松松束着' }]);
   eq('① 引文能在原文里找到 → 落库', okOne.patch.map((x) => x.id + ':' + x.appearance).join(','), 'a:清瘦，长发以木簪束起');
   eq('① 没提到的那张计进 missing（不能只报成功数）', okOne.missing.map((x) => x.index).join(','), '2');
+  eq('① 计划记下要写的字段清单（调用方照它写，不按 kind 再推一次）',
+    (okOne.patch[0] || {}).fields.join(','), 'appearance');
   const fake = q([{ index: 1, found: true, appearance: '绝美无双', quote: '她生得绝美无双' }]);
   eq('② 引文对不上原文 → 一条都不写（那是它编的）', fake.patch.length, 0);
   eq('② 并单独计进 ungrounded（与"原文没写"是两回事）', fake.ungrounded.map((x) => x.index).join(','), '1');
@@ -2342,24 +2350,24 @@ group('AI 回原文补人物长相（批 8 补 33：找到的必须带原文原�
   eq('⑤ 引文对但两项都空 → empty（没东西可写）', emptyOne.patch.length + '|' + emptyOne.empty.length, '0|1');
   const badIdx = q([{ index: 9, found: true, appearance: 'x', quote: 'y' }]);
   eq('⑥ 编号越界 → invalid，且**该卡计进 missing**（不能被当成"给过了"）',
-    badIdx.invalid[0].reason + '|' + badIdx.missing.map((x) => x.index).join(','), 'index_out_of_range|1,2');
+    ((badIdx.invalid[0] || {}).reason) + '|' + badIdx.missing.map((x) => x.index).join(','), 'index_out_of_range|1,2');
   const dup = q([{ index: 1, found: true, appearance: '甲', quote: '长发用一根木簪松松束着' },
     { index: 1, found: true, appearance: '乙', quote: '长发用一根木簪松松束着' }]);
-  eq('⑦ 同一个编号给两次 → 第一次为准，第二次计 duplicate', dup.patch.map((x) => x.appearance).join(',') + '|' + dup.invalid[0].reason, '甲|duplicate_index');
+  eq('⑦ 同一个编号给两次 → 第一次为准，第二次计 duplicate', dup.patch.map((x) => x.appearance).join(',') + '|' + ((dup.invalid[0] || {}).reason), '甲|duplicate_index');
   // ⑧ 关键：引文必须来自**这张卡自己**的片段。模型把 A 的引文安到 B 头上是最容易发生、也最难发现的错
-  const crossed = story.applyLookAssignments([t1, t2],
-    { looks: [{ index: 2, found: true, appearance: '青衣', quote: '长发用一根木簪松松束着' }] }, exById);
+  const crossed = story.applyFillAssignments([t1, t2],
+    { looks: [{ index: 2, found: true, appearance: '青衣', quote: '长发用一根木簪松松束着' }] }, exById, LK);
   eq('⑧ 拿**别人**的原文当引文 → 丢弃（对不上这张卡自己的片段）', crossed.patch.length + '|' + crossed.ungrounded.length, '0|1');
   // missing 与 ungrounded 是**两个不重叠的桶**：前者是"模型没给这个编号"，后者是"给了但对不上原文"。
   // 合成一个数的话，界面把 missing+invalid+empty 汇总成"另有 N 张没接住"时就会把同一张卡报两遍
   eq('⑧ 没给编号的那张计进 missing（给过的不算）', crossed.missing.map((x) => x.index).join(','), '1');
   eq('⑧ 两个桶不重叠（同一张卡只出现在一个桶里）', crossed.missing.length + crossed.ungrounded.length, 2);
-  eq('⑨ 卡片没有 id → no_id，不算 patch', story.applyLookAssignments([{ index: 1, name: '无 id' }],
-    { looks: [{ index: 1, found: true, appearance: 'x', quote: 'y' }] }, { 1: 'y' }).no_id, 1);
+  eq('⑨ 卡片没有 id → no_id，不算 patch', story.applyFillAssignments([{ index: 1, name: '无 id' }],
+    { looks: [{ index: 1, found: true, appearance: 'x', quote: 'y' }] }, { 1: 'y' }, LK).no_id, 1);
   eq('⑩ 没有 looks 数组（模型返回了别的形状）→ 全计 missing，一条不写',
-    story.applyLookAssignments([t1], {}, exById).patch.length + '|' + story.applyLookAssignments([t1], {}, exById).missing.length, '0|1');
+    story.applyFillAssignments([t1], {}, exById, LK).patch.length + '|' + story.applyFillAssignments([t1], {}, exById, LK).missing.length, '0|1');
   eq('只写模型真给了的那一项（appearance 给了、outfit 没给就只写 appearance）',
-    q([{ index: 1, found: true, appearance: '清瘦', outfit: '', quote: '长发用一根木簪松松束着' }]).patch[0].outfit, undefined);
+    (q([{ index: 1, found: true, appearance: '清瘦', outfit: '', quote: '长发用一根木簪松松束着' }]).patch[0] || {}).outfit, undefined);
 
   // ⑤ 模板：这一趟的成败全在提示词有没有把"引文会被核对"写死
   const tpl = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'char_look');
@@ -2383,6 +2391,162 @@ group('AI 回原文补人物长相（批 8 补 33：找到的必须带原文原�
   eq('出口把卡片筛选切到人物卡（按钮就在那一排）', ((lookIssue.go || {}).params || {}).kind, 'character');
   eq('仍然不是"机械可修"（补长相要调模型、要花钱）', lookIssue.fixable, false);
   ok('详情里说清"找到的必须带原文原话"', /原话/.test(lookIssue.detail || ''), lookIssue.detail);
+}
+
+group('AI 回原文补场景道具字段（批 8 补 34：同一套机制，规格驱动）');
+{
+  const INJ = story.fillSpec('card_inject');
+  const LK = story.fillSpec('char_look');
+  const mk = (id, kind, name, extra = {}) => ({ id, kind, name, aliases: [], evidence: [], ...extra });
+
+  // ① 规格表：两份规格、认识的 key、不认识的返回 null
+  ok('规格表里有补长相与补场景字段两份', !!LK && !!INJ);
+  eq('不认识的 target 返回 null（路由据此报 400，而不是静默当成补长相）', story.fillSpec('nope'), null);
+  eq('补长相只管网人物卡', LK.kinds.join(','), 'character');
+  eq('补场景字段管地点与道具（与 STORY_INJECT_KINDS 同源，不手抄）',
+    INJ.kinds.join(','), story.STORY_INJECT_KINDS.join(','));
+  eq('两份规格读不同的返回键（模板不同、schema 不同）', `${LK.payloadKey}/${INJ.payloadKey}`, 'looks/fills');
+
+  // ② **完整判据只有一个**：类别 + 字段。体检与候选名单都走它 ——
+  //    少了类别那一半，每张地点卡都会被报成"缺长相"（补 34 真犯过：四条既有断言立刻红了）
+  // 候选卡要带 `evidence`（段号）—— `fillExcerpts` 靠它才知道该去哪个块里找原文。
+  // 不带的话每张卡的"原文片段"都是空的（`has_text: false`），于是核对必然全部 ungrounded
+  const loc = mk('l', 'location', '临江茶馆', { evidence: [0] });
+  const prop = mk('p', 'prop', '青铜钥匙', { evidence: [0] });
+  const chr = mk('c', 'character', '顾寒');
+  ok('地点卡算"缺场景字段"', story.specMissing(INJ, loc) === true);
+  ok('地点卡**不**算"缺长相"（类别不归它管）', story.specMissing(LK, loc) === false);
+  ok('人物卡**不**算"缺场景字段"', story.specMissing(INJ, chr) === false);
+  ok('null 卡不炸', story.specMissing(INJ, null) === false);
+
+  // ③ 按类别给字段，而且字段表**来自 STORY_INJECT_FIELDS**（同一份真相）
+  eq('地点卡要补的字段 = 注入表里的那几项', story.fillFieldsOf(INJ, loc).join(','), story.STORY_INJECT_FIELDS.location.join(','));
+  eq('道具卡要补的字段 = 注入表里的那几项', story.fillFieldsOf(INJ, prop).join(','), story.STORY_INJECT_FIELDS.prop.join(','));
+  ok('两类要的字段确实不同（否则共用一份模板就没意义）',
+    story.fillFieldsOf(INJ, loc).join(',') !== story.fillFieldsOf(INJ, prop).join(','));
+  eq('人物卡的字段是固定的两项', story.fillFieldsOf(LK, chr).join(','), 'appearance,outfit');
+
+  // ④ 候选：有一项就不算缺（与体检"有一项就不报"一致）
+  const hasOne = mk('l2', 'location', '有氛围的桥', { atmosphere: '肃杀' });
+  const blank = mk('l3', 'location', '空壳', { atmosphere: '   ', evidence: [0] });
+  const t = story.fillTargets(INJ, [loc, hasOne, blank, prop, chr]);
+  eq('pool 只含地点卡与道具卡', t.pool.map((c) => c.id).join(','), 'l,l2,l3,p');
+  eq('targets 只挑全空的（有一项就不缺）', t.targets.map((c) => c.id).join(','), 'l,l3,p');
+  ok('空白不算填过（str().trim() 口径与体检一致）', t.targets.some((c) => c.id === 'l3'));
+
+  // ⑤ 体检与候选名单**成对同源**：该报的报、不该报的不报
+  const codes = (c) => story.auditCards([c], {}).issues.map((i) => i.code);
+  ok('全空的地点卡 → 体检报 no_inject', codes(loc).includes('no_inject'), codes(loc).join(','));
+  ok('有氛围的地点卡 → 体检不报 no_inject', !codes(hasOne).includes('no_inject'), codes(hasOne).join(','));
+  ok('全空的道具卡 → 体检报 no_inject', codes(prop).includes('no_inject'), codes(prop).join(','));
+  ok('地点卡不会被报成缺长相（类别判据必须在）', !codes(loc).includes('char_no_look'), codes(loc).join(','));
+
+  // ⑥ 清单：按类别称呼 + 把键名列出来
+  const chunks = [{ text: '临江茶馆里喧闹潮湿，已是黄昏，雕花木窗上落满灰。青铜钥匙缺了一角，林晚一直带在身上。' }];
+  const ex = story.fillExcerpts(INJ, t.targets, chunks);
+  eq('每张候选卡一条出处记录', ex.length, 3);
+  const lines = story.fillLines(ex, INJ);
+  ok('按类别称呼（地点卡/道具卡），不是一律"卡片"',
+    /1\. 地点卡：临江茶馆/.test(lines) && /3\. 道具卡：青铜钥匙/.test(lines), lines.slice(0, 60));
+  ok('地点卡的键名是地点那几项',
+    /要补的字段：氛围、地域、时段、特征（键名：atmosphere \/ region \/ time_of_day \/ features）/.test(lines));
+  ok('道具卡的键名是道具那几项',
+    /要补的字段：持有者、用途、特征（键名：owner \/ usage \/ features）/.test(lines));
+  ok('条目带 kind（少了它字段表会被推成空的 —— 补 34 第一版的真 bug）',
+    ex.every((e) => e.kind === 'location' || e.kind === 'prop'), JSON.stringify(ex.map((e) => e.kind)));
+
+  // ⑦ 核对：与补长相**同一份实现**，所以规则完全一样
+  const byId = {}; ex.forEach((e) => { byId[e.id] = e.text; });
+  const run = (fills) => story.applyFillAssignments(ex, { fills }, byId, INJ);
+  const good = run([{ index: 1, found: true, atmosphere: '喧闹潮湿', time_of_day: '黄昏', features: '雕花木窗', quote: '喧闹潮湿' }]);
+  const g0 = good.patch[0] || {};
+  eq('① 引文能在原文里找到 → 落库', `${g0.id}/${g0.atmosphere}/${g0.time_of_day}/${g0.features}`, 'l/喧闹潮湿/黄昏/雕花木窗');
+  eq('① 没给的那一项就不写（不给空值占位）', g0.region, undefined);
+  // 计划必须**记下要写哪几个字段**：调用方照它写。按 `kind` 再推一次会得到空清单
+  // （计划条目不是卡片、没有 kind）—— 那会变成"接口报 assigned=2、卡片上却一个字都没有"，
+  // 状态码/计数/提示全对，只有去看卡片才知道没写（补 34 真踩到）
+  eq('① 计划记下要写的字段清单', (g0.fields || []).join(','), 'atmosphere,time_of_day,features');
+  ok('① 清单只含模型**真给上来**的字段（region 没给就不在清单里，别照规格表整份抄）',
+    !(g0.fields || []).includes('region'), JSON.stringify(g0.fields));
+  eq('① 没提到的那两张计进 missing（不能只报成功数）', good.missing.map((x) => x.index).join(','), '2,3');
+  const fake = run([{ index: 1, found: true, atmosphere: '金碧辉煌', quote: '金碧辉煌的大堂' }]);
+  eq('② 引文对不上原文 → 一条都不写（那是它编的）', `${fake.patch.length}|${fake.ungrounded.length}`, '0|1');
+  // ③ 关键：模型可能把**别类卡**的字段也填了 —— 只收这张卡该补的键，多给的一律不写
+  const crossed = run([{ index: 1, found: true, appearance: '清瘦', quote: '喧闹潮湿' }]);
+  eq('③ 模型多给的键（appearance 填到地点卡上）一律不写', `${crossed.patch.length}|${crossed.empty.length}`, '0|1');
+  eq('③ 且计进 empty 而不是 ungrounded（引文是对的，只是没有一个该填的字段）', crossed.ungrounded.length, 0);
+  const nf = run([{ index: 1, found: false }]);
+  eq('④ found=false → not_found，不写（与补长相同一条纪律）', `${nf.patch.length}|${nf.not_found.length}`, '0|1');
+  eq('⑤ 编号越界 → invalid', ((run([{ index: 9, found: true, quote: 'x' }]).invalid[0] || {}).reason), 'index_out_of_range');
+  eq('⑥ 同一个编号给两次 → 第一次为准',
+    (run([{ index: 1, found: true, atmosphere: '甲', quote: '喧闹潮湿' },
+      { index: 1, found: true, atmosphere: '乙', quote: '喧闹潮湿' }]).patch[0] || {}).atmosphere, '甲');
+  eq('⑦ 长度**不**在这里截（由调用方过 clipField —— 本层只判定接不接住）',
+    String((run([{ index: 1, found: true, atmosphere: '长'.repeat(500), quote: '喧闹潮湿' }]).patch[0] || {}).atmosphere || '').length, 500);
+  eq('⑧ offered 如实报出模型给了几条（与接住几条是两个数）',
+    run([{ index: 1, found: true, atmosphere: '甲', quote: '喧闹潮湿' },
+      { index: 1, found: true, atmosphere: '乙', quote: '喧闹潮湿' }]).offered, 2);
+  // ⑨ 引文必须来自**这张卡自己**的片段。这里要显式给三份**互不重叠**的出处 ——
+  //    上面那个 `byId` 来自同一个短块，三张卡的窗口互相包含，于是"拿别人的引文"在数据上**真的成立**
+  //    （第一版就这么写的：断言期望 1、实际 0，才发现是 fixture 让引文合法，不是代码没查）
+  eq('⑨ 拿别人卡的原文当引文 → 丢弃（与补长相共用同一份核对实现）',
+    story.applyFillAssignments(ex, { fills: [{ index: 3, found: true, features: '雕花木窗', quote: '喧闹潮湿' }] },
+      { l: '临江茶馆里喧闹潮湿', l3: '空壳的角落', p: '青铜钥匙缺了一角' }, INJ).ungrounded.length, 1);
+  eq('⑨ 而同一句话给对的卡就收下（成对钉：否则"引文检查整个关掉"也是绿的）',
+    story.applyFillAssignments(ex, { fills: [{ index: 3, found: true, features: '缺了一角', quote: '缺了一角' }] },
+      { l: '临江茶馆里喧闹潮湿', l3: '空壳的角落', p: '青铜钥匙缺了一角' }, INJ).patch.length, 1);
+
+  // ⑧ 模板：成败全在提示词有没有把"引文会被核对"写死、有没有按类别说清字段
+  const tpl = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'card_inject');
+  ok('内置模板里有 card_inject', !!tpl);
+  ok('模板说明这是**回原文找**，不是创作', /回(到)?原文/.test(tpl.system + tpl.content) && /不创作/.test(tpl.system));
+  ok('模板要求交出原文原话（quote）', /quote/.test(tpl.content) && /原话/.test(tpl.content));
+  ok('模板写明引文会被逐字核对、对不上就丢弃', /逐字比对/.test(tpl.content) && /丢弃/.test(tpl.content));
+  ok('模板写明原文没写就 found=false（不许编）', /found=false/.test(tpl.content) && /(编|想象)/.test(tpl.content));
+  ok('模板按类别说清字段含义（地点与道具要的东西不同）',
+    /地点卡/.test(tpl.content) && /道具卡/.test(tpl.content) && /氛围/.test(tpl.content) && /持有者/.test(tpl.content));
+  ok('模板要求只填这张卡列出的键名（不许自己加字段）', /只填这张卡列出的字段键名/.test(tpl.content));
+  ok('模板的返回格式是 fills 数组且用 index 对位', /"fills":\[\{"index":1/.test(tpl.content));
+  ok('模板变量与路由传入的键一致', /\{\{卡片与原文片段\}\}/.test(tpl.content));
+
+  // ⑨ 出口：这两项以前只有结论、没有出口（补 34 一并补上）
+  const injIssue = (story.auditCards([{ id: 'l', kind: 'location', name: '茶馆', project_id: 'PRJ', source_id: 'SRC' }], {})
+    .issues.find((x) => x.code === 'no_inject')) || {};
+  eq('no_inject 出口指向原著页', (injIssue.go || {}).page, 'novel');
+  eq('no_inject 出口带上项目与原著（否则跳过去是空的）',
+    `${((injIssue.go || {}).params || {}).project_id}/${((injIssue.go || {}).params || {}).source_id}`, 'PRJ/SRC');
+  eq('no_inject 出口把卡片筛选切到**这一类**（地点卡与道具卡要补的字段不同）',
+    ((injIssue.go || {}).params || {}).kind, 'location');
+  // 只给 kind 会落到卡片列表上，几十张卡里还得自己找 —— 出口等于半个死胡同（浏览器契约测试抓到的）
+  eq('no_inject 出口落到**那张卡**上（带 card_id，落地即展开编辑态并高亮）',
+    ((injIssue.go || {}).params || {}).card_id, 'l');
+  eq('no_inject 仍然不是"机械可修"（要调模型、要花钱）', injIssue.fixable, false);
+  ok('no_inject 详情里说清"找到的必须带原文原话"', /原话/.test(injIssue.detail || ''), injIssue.detail);
+  const whenIssue = (story.auditCards([{ id: 't', kind: 'timeline', name: '三天后', project_id: 'PRJ', source_id: 'SRC' }], {})
+    .issues.find((x) => x.code === 'timeline_no_when')) || {};
+  eq('timeline_no_when 也有出口了（补 34 之前只有结论）', (whenIssue.go || {}).page, 'novel');
+  eq('出口带上项目与原著', `${((whenIssue.go || {}).params || {}).project_id}/${((whenIssue.go || {}).params || {}).source_id}`, 'PRJ/SRC');
+  eq('出口切到时间线卡', ((whenIssue.go || {}).params || {}).kind, 'timeline');
+  eq('并落到**那张**时间线卡上（不只是把列表筛一遍）', ((whenIssue.go || {}).params || {}).card_id, 't');
+  // **棘轮（跑真实体检结果，不是文本正则）**：凡是"按类别落到某张卡"的出口，都必须带 card_id。
+  // 只给 kind 的出口会落到卡片列表上、几十张里还得自己找 —— 出口等于半个死胡同。
+  // 这条同时管住将来新加的出口：新写一个只给 kind 的，这里立刻红。
+  // `plot_no_stage`/`plot_cast_unknown` 走 panel/card_id 各有去处，不受影响
+  const allGo = story.auditCards([
+    mk('l', 'location', '没有描述的地点', { evidence: [0], project_id: 'PRJ', source_id: 'SRC' }),
+    mk('c', 'character', '没有长相的人', { evidence: [0], project_id: 'PRJ', source_id: 'SRC' }),
+    mk('t', 'timeline', '没有时间点', { evidence: [0], project_id: 'PRJ', source_id: 'SRC' }),
+    mk('p', 'plot', '有幕次但人物不认识的剧情', { evidence: [0], project_id: 'PRJ', source_id: 'SRC', stage: '起', involved: '查无此人' }),
+  ], {}).issues.filter((x) => ((x.go || {}).params || {}).kind);
+  ok('棘轮有东西可管（至少三个"按类别落到某张卡"的出口）', allGo.length >= 3, String(allGo.length));
+  eq('每个"按类别落到某张卡"的出口都带 card_id',
+    allGo.filter((x) => !(((x.go || {}).params || {}).card_id)).map((x) => x.code).join(','), '');
+  eq('而且 card_id 就是它自己那张卡',
+    allGo.every((x) => (((x.go || {}).params || {}).card_id) === ((x.card_ids || [])[0] || '')), true);
+  eq('落地还带上项目与原著（否则跳过去是空工作台）',
+    allGo.every((x) => { const p = (x.go || {}).params || {}; return !!p.project_id && !!p.source_id; }), true);
+  ok('并**明说**这一项没有 AI 补值（时间点原文没写就只能人定，模型猜出来的会当正史）',
+    /没有"让模型补"的按钮/.test(whenIssue.detail || ''), whenIssue.detail);
 }
 
 // ══════════════════════════════════════════════════════════════

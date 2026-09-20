@@ -150,6 +150,9 @@ const mock = http.createServer((req, res) => {
           // 批 8 补 33：多两张"没有外貌也没有服装"的人物卡 —— 补长相要有多张候选才验得了
           // "只补缺的、已有的一个都不动"，以及"没接住的/对不上原文的分别计数"
           ...(userMsg.includes('__LOOKFILL__') ? [{ kind: 'character', name: '苏婉儿' }, { kind: 'character', name: '裴无咎' }] : []),
+          // 批 8 补 34：多一张"没有任何可注入描述"的地点卡与道具卡 —— 补场景字段要有候选才验得了。
+          // 注意默认那张「临江茶馆」**带着 atmosphere**，所以它天然是"已有的一个都不动"的对照组
+          ...(userMsg.includes('__INJECTFILL__') ? [{ kind: 'location', name: '落霞渡口' }, { kind: 'prop', name: '半枚玉佩' }] : []),
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
@@ -220,6 +223,32 @@ const mock = http.createServer((req, res) => {
         // __GARBAGE__：根本不是 JSON → 这次调用算失败，不许动任何卡片
         if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没写外貌。' } }] });
         return all(looks);
+      }
+      // 批 8 补 34：补场景/道具字段。与补长相**同一套机制**，只有返回键不同（模板 schema 不同）。
+      // mock 同样必须给真引文：从**那张卡自己**的原文片段里截一段原话，否则连顺利路径都过不去。
+      // 要填哪些键从提示词里那张卡的「键名：a / b / c」行读出来 —— 模型看的就是这一行。
+      if (/"fills"\s*:/.test(userMsg)) {
+        // 只按**卡片行**切（"1. 地点卡：…" / "2. 道具卡：…"）——
+        // 模板正文里还有 "1. **必须给出原文里的原话**" 这类**编号要求**，用 `/^\d+\. /` 会把它们也切成"条目"，
+        // 于是 mock 返回一堆越界编号（第一版就这么错的：invalid 3、ungrounded 2，看着像核对出了问题）
+        const parts = userMsg.split(/^\d+\. (?:地点卡|道具卡)：/m).slice(1);
+        const fills = parts.map((part, i) => {
+          const keys = String((/（键名：([^）]+)）/.exec(part) || [])[1] || '').split('/').map((x) => x.trim()).filter(Boolean);
+          const body = String(part.split('原文片段：')[1] || '');
+          const lines = body.split('\n').map((x) => x.trim());
+          const line = lines.find((x) => x.length >= 12 && !x.includes('__')) || lines.find((x) => x.length >= 8) || '';
+          const item = { index: i + 1, found: true, quote: line.slice(0, 12) };
+          if (keys[0]) item[keys[0]] = `模型补的${keys[0]}${i + 1}`;
+          return item;
+        });
+        const all = (rows) => send(200, { choices: [{ message: { content: JSON.stringify({ fills: rows }) } }] });
+        if (userMsg.includes('__INJNOLOOK__')) return all(parts.map((_, i) => ({ index: i + 1, found: false })));
+        if (userMsg.includes('__INJFAKE__')) return all(fills.map((x) => ({ ...x, quote: '一座金碧辉煌的宫殿' })));
+        // __INJSTRAY__：引文是真的，但只给**别类卡**的键（appearance）→ 服务端必须一条都不写并计 empty
+        if (userMsg.includes('__INJSTRAY__')) return all(fills.map((x) => ({ index: x.index, found: true, quote: x.quote, appearance: '清瘦' })));
+        if (userMsg.includes('__INJLONG__')) return all(fills.map((x) => ({ ...x, [Object.keys(x).find((k) => k !== 'index' && k !== 'found' && k !== 'quote') || 'features']: '长'.repeat(500) })));
+        if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没写这些。' } }] });
+        return all(fills);
       }
       if (cb.model === 'mock-reject-json' && cb.response_format) return send(400, { error: { message: 'response_format not supported by this gateway' } });
       if (cb.model === 'mock-deny-key' && cb.response_format) return send(401, { error: { message: 'bad key' } });
@@ -3418,7 +3447,7 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
   eq('林晚是"已经有长相"的那张（下面用它验"已有的一个都不动"）', (await byName('林晚')).appearance, '白衣');
 
   // ① 干跑：先如实告诉界面"要补几张、调几次"，此时一个字都不许写
-  const dry = await api('POST', '/api/story/look-fill', { source_id: src.id, dry_run: true });
+  const dry = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look', dry_run: true });
   eq('干跑 200', dry.status, 200);
   eq('干跑如实报出要补的张数', dry.data.targets, 3);
   eq('干跑报出调用次数（全部候选一次给完 = 1 次）', dry.data.calls, 1);
@@ -3426,7 +3455,7 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
   eq('干跑不写库', (await listChars()).filter((c) => !c.appearance && !c.outfit).length, 3);
 
   // ② 真跑：mock 给的是**从那张卡自己的原文片段里截的原话** → 必须过核对并落库
-  const run = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const run = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('真跑 200', run.status, 200);
   eq('补上了所有缺长相的人物卡', run.data.assigned, 3);
   const after = await listChars();
@@ -3441,7 +3470,7 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
   await clearLooks();
   const gu = await byName('顾寒');
   await api('PUT', `/api/story/cards/${gu.id}`, { name: '__FAKELOOK__ 顾寒' });
-  const fake = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const fake = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('引文对不上原文时 assigned = 0', fake.data.assigned, 0);
   eq('并**单独**计进 ungrounded（与"原文没写"是两回事）', (fake.data.ungrounded || []).length, 3);
   eq('那三张一个字都没落库', await filled(), 0);
@@ -3449,7 +3478,7 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
 
   // ④ 原文确实没写：模型回 found=false → 计 not_found（**诚实的结论**，不是失败），不拿编的顶上
   await api('PUT', `/api/story/cards/${gu.id}`, { name: '__NOLOOK__ 顾寒' });
-  const none = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const none = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('原文没写时 assigned = 0', none.data.assigned, 0);
   eq('计进 not_found', (none.data.not_found || []).length, 3);
   eq('**不算** ungrounded（"原著没写"和"模型在编"必须分开报）', (none.data.ungrounded || []).length, 0);
@@ -3457,7 +3486,7 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
 
   // ⑤ 超长必须过与手改**同一把尺子**（补 30：同一个字段，模型写有上限、人写也得有）
   await api('PUT', `/api/story/cards/${gu.id}`, { name: '__LONGLOOK__ 顾寒' });
-  const long = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const long = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('超长的那张照样补上（引文是真的，能过核对）', long.data.assigned, 3);
   eq('appearance 被截到上限', String((await byName('__LONGLOOK__ 顾寒')).appearance || '').length, storyLib.FIELD_MAX.appearance);
   await api('PUT', `/api/story/cards/${gu.id}`, { name: '顾寒' });
@@ -3465,16 +3494,16 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
   // ⑥ 模型返回的根本不是 JSON：这次调用算失败（500 + 原因），卡片一张都不许动
   await clearLooks();
   await api('PUT', `/api/story/cards/${gu.id}`, { name: '__GARBAGE__ 顾寒' });
-  const gar = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const gar = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('不可解析时是失败（500）而不是"成功补了 0 个"', gar.status, 500);
   ok('并说清是"没有返回可解析的 JSON"', /可解析的 JSON/.test(gar.data.error || ''), gar.data.error);
   eq('失败时卡片未被改动', await filled(), 0);
   await api('PUT', `/api/story/cards/${gu.id}`, { name: '顾寒' });
 
   // ⑦ 都有长相了：不该再调模型（calls = 0），也不该报错
-  const okRun = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const okRun = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('先补上（对照）', okRun.data.assigned, 3);
-  const done = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const done = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('没有候选时 calls = 0（不白花一次钱）', done.data.calls, 0);
   ok('并说明原因', /都已经有外貌或服装/.test(done.data.note || ''), done.data.note);
 
@@ -3485,10 +3514,10 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
   //    与其编一张不可达的卡假装测过，不如把"它不可达"钉住：将来真加了人工新建卡片的路，
   //    这条断言会红，提醒把 no_source 补上端到端。
   await clearLooks();
-  const srcDry = await api('POST', '/api/story/look-fill', { source_id: src.id, dry_run: true });
+  const srcDry = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look', dry_run: true });
   eq('解析出来的人物卡**全都**能定位到原文出处（所以 no_source 分支今天不可达）', srcDry.data.no_source, 0);
   eq('要补的张数 = 有出处的张数', srcDry.data.targets, srcDry.data.with_source);
-  const noSrc = await api('POST', '/api/story/look-fill', { source_id: src.id });
+  const noSrc = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'char_look' });
   eq('真跑也确实一张都没被跳过', noSrc.data.no_source, 0);
 
   // ⑨ 体检的 char_no_look 必须有出口（与 plot_no_stage 同一条纪律：不能只有结论、没有出口）
@@ -3502,8 +3531,158 @@ group('AI 回原文补人物长相（批 8 补 33：引文对不上原文就是�
   eq('仍然不是"机械可修"（补长相要调模型、要花钱）', (lookIssues[0] || {}).fixable, false);
 
   // ⑩ 原著不存在 → 404（而不是空成功）
-  const empty = await api('POST', '/api/story/look-fill', { source_id: 'nope' });
+  const empty = await api('POST', '/api/story/field-fill', { source_id: 'nope', target: 'char_look' });
   eq('原著不存在时 404', empty.status, 404);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 34：AI 回原文补场景/道具字段（与补长相同一套机制）
+// ══════════════════════════════════════════════════════════════
+group('AI 回原文补场景道具字段（批 8 补 34：同一套机制、规格驱动）');
+{
+  const pj = await api('POST', '/api/projects', { name: '补场景字段测试剧' });
+  const PID = pj.data.id;
+  const NOVEL = '落霞渡口风大浪急，江面上浮着一层薄雾。'.repeat(4)
+    + '半枚玉佩缺了一角，是林晚一直带在身上的。'.repeat(4)
+    + '临江茶馆里喧闹潮湿，已是黄昏。'.repeat(4)
+    + '顾寒立在檐下，玄色劲装。'.repeat(4)
+    + '__INJECTFILL__';
+  const an = await api('POST', '/api/story/analyze', { project_id: PID, title: '补场景·原著', text: NOVEL, reduce: false });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const src = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+  const listCards = async () => (await api('GET', `/api/story/cards?source_id=${src.id}`)).data;
+  const byName = async (n) => (await listCards()).find((c) => c.name === n) || {};
+  // 只清"模型补的那些"，把**临江茶馆**（解析时就带着 atmosphere）一直留作对照组 ——
+  // 让"已有的一个都不动"这条钉在每一个用例里都成立（补 33 踩过：连对照组一起清，钉就失效了）
+  const clearInj = async () => {
+    for (const c of await listCards()) {
+      if (!['location', 'prop'].includes(c.kind) || c.name === '临江茶馆') continue;
+      const patch = {};
+      for (const f of storyLib.STORY_INJECT_FIELDS[c.kind]) patch[f] = '';
+      await api('PUT', `/api/story/cards/${c.id}`, patch);
+    }
+  };
+  const filledInj = async () => (await listCards()).filter((c) => ['location', 'prop'].includes(c.kind)
+    && c.name !== '临江茶馆'
+    && storyLib.STORY_INJECT_FIELDS[c.kind].some((f) => String(c[f] || '').trim())).length;
+  const dry = () => api('POST', '/api/story/field-fill', { source_id: src.id, target: 'card_inject', dry_run: true });
+  const run = () => api('POST', '/api/story/field-fill', { source_id: src.id, target: 'card_inject' });
+
+  eq('解析出了地点卡与道具卡', (await listCards()).filter((c) => ['location', 'prop'].includes(c.kind)).length, 3);
+  eq('其中 2 张没有任何可注入描述（临江茶馆带着 atmosphere，不该被碰）',
+    (await listCards()).filter((c) => ['location', 'prop'].includes(c.kind) && !storyLib.STORY_INJECT_FIELDS[c.kind].some((f) => String(c[f] || '').trim())).length, 2);
+  eq('临江茶馆是"已经有描述"的那张', (await byName('临江茶馆')).atmosphere, '喧闹潮湿');
+
+  // ① 干跑：如实报出"要补几张、调几次"，此时一个字都不许写。pool 与 targets 都要报 ——
+  //    "一张都不缺"（pool 非空）与"压根没有这类卡"（pool 空）是两回事，界面要能分清
+  const d1 = await dry();
+  eq('干跑 200', d1.status, 200);
+  eq('干跑如实报出要补的张数', d1.data.targets, 2);
+  eq('干跑报出这类卡一共有几张', d1.data.pool, 3);
+  eq('干跑报出调用次数（全部候选一次给完 = 1 次）', d1.data.calls, 1);
+  eq('干跑报出"有几张能定位到原文"', d1.data.with_source, 2);
+  eq('干跑不写库', await filledInj(), 0);
+
+  // ② 真跑：mock 给的是**从那张卡自己的原文片段里截的原话** → 必须过核对并落库
+  const r1 = await run();
+  eq('真跑 200', r1.status, 200);
+  eq('补上了所有缺描述的地点/道具卡', r1.data.assigned, 2);
+  eq('落库的字段名按类别取（地点补 atmosphere、道具补 owner —— 两类要的东西不同）',
+    `${(await byName('落霞渡口')).atmosphere}|${(await byName('半枚玉佩')).owner}`,
+    '模型补的atmosphere1|模型补的owner2');
+  eq('**已经有描述的一个字都没动**（临江茶馆还是"喧闹潮湿"）', (await byName('临江茶馆')).atmosphere, '喧闹潮湿');
+  eq('没接住的几种原因为空', [r1.data.ungrounded, r1.data.not_found, r1.data.missing, r1.data.invalid, r1.data.empty].map((x) => (x || []).length).join(','), '0,0,0,0,0');
+  // ③ 规格之间**互不干扰**：补场景字段这一趟不该碰人物卡（顾寒还是没长相）
+  eq('补场景字段不碰人物卡（两个规格各管各的）', (await byName('顾寒')).appearance, undefined);
+
+  // ④ **核心钉**：引文对不上原文 = 模型在编 → 整条丢弃，一个字都不许落库
+  await clearInj();
+  const lu = await byName('落霞渡口');
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '__INJFAKE__ 落霞渡口' });
+  const fake = await run();
+  eq('引文对不上原文时 assigned = 0', fake.data.assigned, 0);
+  eq('并**单独**计进 ungrounded', (fake.data.ungrounded || []).length, 2);
+  eq('那两张一个字都没落库', await filledInj(), 0);
+  ok('并说清是"引文对不上原文"而不是只报 0', /没有给出可用的场景\/道具描述/.test(fake.data.note || ''), fake.data.note);
+
+  // ⑤ 原文确实没写：模型回 found=false → 计 not_found（诚实的结论，不是失败）
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '__INJNOLOOK__ 落霞渡口' });
+  const none = await run();
+  eq('原文没写时 assigned = 0', none.data.assigned, 0);
+  eq('计进 not_found', (none.data.not_found || []).length, 2);
+  eq('**不算** ungrounded（"原著没写"和"模型在编"必须分开报）', (none.data.ungrounded || []).length, 0);
+
+  // ⑥ 引文是真的、但只给了**别类卡**的键（appearance）→ 一条都不写，且计 empty 而不是 ungrounded
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '__INJSTRAY__ 落霞渡口' });
+  const stray = await run();
+  eq('多给的键一律不写', stray.data.assigned, 0);
+  eq('并计进 empty（引文对得上、只是没有一个该填的字段）', (stray.data.empty || []).length, 2);
+  eq('**不算** ungrounded（引文本身是对的）', (stray.data.ungrounded || []).length, 0);
+  eq('也没落库', await filledInj(), 0);
+
+  // ⑦ 超长必须过与手改**同一把尺子**（补 30）：地点与道具的上限还不一样
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '__INJLONG__ 落霞渡口' });
+  const long = await run();
+  eq('超长的那两张照样补上（引文是真的，能过核对）', long.data.assigned, 2);
+  eq('地点字段被截到它自己的上限', String((await byName('__INJLONG__ 落霞渡口')).atmosphere || '').length, storyLib.FIELD_MAX.atmosphere);
+  eq('道具字段被截到**它自己的**上限（两类上限不同，不能共用一把尺子）',
+    String((await byName('半枚玉佩')).owner || '').length, storyLib.FIELD_MAX.owner);
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '落霞渡口' });
+
+  // ⑧ 模型返回的根本不是 JSON：这次调用算失败（500 + 原因），卡片一张都不许动
+  await clearInj();
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '__GARBAGE__ 落霞渡口' });
+  const gar = await run();
+  eq('不可解析时是失败（500）而不是"成功补了 0 个"', gar.status, 500);
+  eq('失败时卡片未被改动', await filledInj(), 0);
+  await api('PUT', `/api/story/cards/${lu.id}`, { name: '落霞渡口' });
+
+  // ⑨ 都填好了：不该再调模型（calls = 0），也不该报错
+  const okRun = await run();
+  eq('先补上（对照）', okRun.data.assigned, 2);
+  const done = await run();
+  eq('没有候选时 calls = 0（不白花一次钱）', done.data.calls, 0);
+  ok('并说明原因（说得具体：地点卡/道具卡的可注入描述）', /可注入的描述/.test(done.data.note || ''), done.data.note);
+  eq('这时 pool 仍然非空（"一张都不缺"与"没有这类卡"是两回事）', done.data.pool, 3);
+
+  // ⑩ **静默失败的守门**：模板里丢了变量名 → 必须明确报错。
+  //    `renderPrompt` 会把"没给的 {{…}}"替换成空串，所以变量名对不上时卡片清单会**整个发不出去**，
+  //    模型只能凭名字编 —— 而链路上零报错（补 34 真踩到：统一端点时写错了变量名，三条断言同时红却看不出为什么）
+  await clearInj();
+  const tpls = (await api('GET', '/api/templates')).data;
+  const injTpl = tpls.find((t) => t.key === 'card_inject');
+  ok('模板表里有 card_inject', !!injTpl);
+  const origContent = injTpl.content;
+  await api('PUT', `/api/templates/${injTpl.id}`, { content: String(origContent).replace('{{卡片与原文片段}}', '') });
+  const broken = await run();
+  eq('模板丢了变量 → 明确报错（而不是发个空清单让模型凭名字编）', broken.status, 500);
+  ok('并说清是模板缺哪个变量', /没有 \{\{卡片与原文片段\}\} 变量/.test(broken.data.error || ''), broken.data.error);
+  eq('报错时卡片未被改动（先检查、后调用）', await filledInj(), 0);
+  await api('PUT', `/api/templates/${injTpl.id}`, { content: origContent });
+  const fixed = await dry();
+  eq('还原模板后又能正常工作（证明上面那条红确实是变量引起的）', fixed.status, 200);
+
+  // ⑪ 不认识的 target：400 并列出可用值（而不是静默当成补长相）
+  const bad = await api('POST', '/api/story/field-fill', { source_id: src.id, target: 'nope' });
+  eq('不认识的 target → 400', bad.status, 400);
+  ok('并列出可用值', /char_look/.test(bad.data.error || '') && /card_inject/.test(bad.data.error || ''), bad.data.error);
+  eq('原著不存在时 404', (await api('POST', '/api/story/field-fill', { source_id: 'nope', target: 'card_inject' })).status, 404);
+
+  // ⑫ 体检的 no_inject 必须有出口，且**切到这一类**（地点卡与道具卡要补的字段不同）
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const injIssues = (aud.data.issues || []).filter((x) => x.code === 'no_inject');
+  ok('体检报出了"没有可注入描述"的卡片', injIssues.length >= 1, String(injIssues.length));
+  eq('出口指向原著页', ((injIssues[0] || {}).go || {}).page, 'novel');
+  ok('出口的 kind 与该卡的类别一致（地点卡就去地点卡那一栏）',
+    injIssues.every((x) => ['location', 'prop'].includes(((x.go || {}).params || {}).kind)), JSON.stringify(injIssues.map((x) => (x.go || {}).params)));
+  eq('出口带上这份原著', (((injIssues[0] || {}).go || {}).params || {}).source_id, src.id);
+  ok('出口落到**那张卡**上（带 card_id；只给 kind 的话落地还得自己找）',
+    injIssues.every((x) => !!(((x.go || {}).params || {}).card_id)), JSON.stringify(injIssues.map((x) => (x.go || {}).params)));
+  ok('card_id 确实是它自己那张（不是随手带的第一张）',
+    injIssues.every((x) => ((x.card_ids || [])[0] || '') === (((x.go || {}).params || {}).card_id)),
+    JSON.stringify(injIssues.map((x) => [x.card_ids, (x.go || {}).params])));
+  eq('仍然不是"机械可修"（要调模型、要花钱）', (injIssues[0] || {}).fixable, false);
 }
 // ══════════════════════════════════════════════════════════════
 // 批 8 补 31：角色（资产库）字段的唯一漏斗

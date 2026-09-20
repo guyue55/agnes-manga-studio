@@ -180,7 +180,9 @@ export const api = {
    */
   storyStageFill: (sourceId, opts = {}) => req('POST', '/api/story/stage-fill',
     { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
-  storyLookFill: (sourceId, opts = {}) => req('POST', '/api/story/look-fill', { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
+  /** 回原文补字段（批 8 补 33 补长相 / 补 34 泛化）：target 取 'char_look' 或 'card_inject' */
+  storyFieldFill: (sourceId, target, opts = {}) => req('POST', '/api/story/field-fill',
+    { source_id: sourceId, target, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
 
   /** 单集拍表 + 前情提要（批 8 补 8）：逐集生成的本集大纲与连续性上下文，纯本地计算 */
   storyEpisodeBrief: (q = {}) => {

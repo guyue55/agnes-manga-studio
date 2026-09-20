@@ -369,23 +369,26 @@ group('B4 画风分层');
     const lookApiSrc = read(path.join(PUB, 'js', 'api.js'));
     const lookSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
     const lookStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
-    // 同样把行为钉收进 fillLooks 的函数体：`costConfirm(`/`toast.ok(` 在本页别处也出现，
+    // 同样把行为钉收进 fillFields 的函数体：`costConfirm(`/`toast.ok(` 在本页别处也出现，
     // 拿整份文件 test 就是"因错误的原因通过"（补 32 的 IW 对照正是这么抓出来的）
-    const lookBody = (novelMaxSrc.match(/async function fillLooks\(\)[\s\S]*?\n  \}/) || [''])[0];
-    ok('4.1 找得到 fillLooks 的函数体（下面几条都钉在它身上，钉不到就是空测）',
-      lookBody.length > 200, String(lookBody.length));
-    ok('4.1 前端有补长相的端点封装，且带 dry_run（干跑不花钱）',
-      /storyLookFill:/.test(lookApiSrc) && /\/api\/story\/look-fill/.test(lookApiSrc) && /dry_run/.test(lookApiSrc));
-    ok('4.1 工具栏有「AI 补长相」按钮，且点击接到了 fillLooks',
-      /id="nov-look"/.test(novelMaxSrc) && /'#nov-look'[\s\S]{0,40}fillLooks\(\)/.test(novelMaxSrc));
+    const lookBody = (novelMaxSrc.match(/async function fillFields\(target\)[\s\S]*?\n  \}/) || [''])[0];
+    ok('4.1 找得到 fillFields 的函数体（下面几条都钉在它身上，钉不到就是空测）',
+      lookBody.length > 400, String(lookBody.length));
+    ok('4.1 前端有回原文补字段的端点封装，且带 dry_run（干跑不花钱）',
+      /storyFieldFill:/.test(lookApiSrc) && /\/api\/story\/field-fill/.test(lookApiSrc) && /dry_run/.test(lookApiSrc));
+    ok('4.1 工具栏有「AI 补长相」按钮，且点击接到了 char_look 目标',
+      /id="nov-look"/.test(novelMaxSrc) && /'#nov-look'[\s\S]{0,60}fillFields\('char_look'\)/.test(novelMaxSrc));
     ok('4.1 补长相先干跑拿到"要补几张"再走计费确认（不许直接开跑）',
-      /storyLookFill\(sourceId, \{ dryRun: true \}\)/.test(lookBody) && /costConfirm\(/.test(lookBody));
+      /storyFieldFill\(sourceId, target, \{ dryRun: true \}\)/.test(lookBody) && /costConfirm\(/.test(lookBody));
     ok('4.1 干跑里就拦住"一张都不缺"的情况（不弹确认也不花钱）',
       /if \(!dry\.data\.targets\)/.test(lookBody));
     // 界面**不自己算**"有几张缺长相"：那个判据在服务端（体检也用它），前端再抄一份迟早会漂。
     // 所以"要补几张"必须来自干跑，而不是 cards.filter(...)
     ok('4.1 "要补几张"来自服务端干跑，而不是前端自己再抄一份判据',
       /dry\.data\.targets/.test(lookBody) && !/kind === 'character'[\s\S]{0,60}!c\.appearance/.test(novelMaxSrc));
+    ok('4.1 两条路（补长相/补场景字段）共用**一个**函数与一份文案表（不是抄两遍）',
+      (novelMaxSrc.match(/async function fillFields\(/g) || []).length === 1
+      && /FILL_TARGETS = \{/.test(novelMaxSrc) && /char_look:/.test(novelMaxSrc) && /card_inject:/.test(novelMaxSrc));
     ok('4.1 补完如实报出补了几张', /已补 \$\{d\.assigned\}\/\$\{d\.targets\}/.test(lookBody));
     // 三种"没写成"必须**分开**报：原文没写（结论）/ 引文对不上原文（那是它编的）/ 没接住。
     // 合成一个数，用户就分不清"原著没写"和"模型在编"—— 而后者才是真正要警惕的
@@ -401,6 +404,49 @@ group('B4 画风分层');
       /kind: 'character'/.test(lookStorySrc) && /code: 'char_no_look'/.test(lookStorySrc));
     // 补 33 的提示词模板必须真的在内置模板里（否则运行时报"缺少提示词模板"）
     ok('4.1 补长相用的提示词模板在内置模板表里', lookSeedSrc.includes("key: 'char_look'"));
+  }
+
+  // 批 8 补 34：补场景/道具字段（与补长相同一套机制 —— 界面必须是**一个**函数、两份配置）
+  {
+    const injApiSrc = read(path.join(PUB, 'js', 'api.js'));
+    const injSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    const injStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
+    const injRouteSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+    ok('4.1 工具栏有「AI 补场景字段」按钮，且点击接到了 card_inject 目标',
+      /id="nov-inject"/.test(novelMaxSrc) && /'#nov-inject'[\s\S]{0,60}fillFields\('card_inject'\)/.test(novelMaxSrc));
+    ok('4.1 两条路的文案表是**两份配置**（各自的"叫什么/缺什么"不同），而不是把函数抄两遍',
+      /FILL_TARGETS = \{[\s\S]*?char_look:[\s\S]*?card_inject:/.test(novelMaxSrc)
+      && /补人物长相/.test(novelMaxSrc) && /补场景道具字段/.test(novelMaxSrc)
+      && /所有人物卡都已经有外貌或服装了/.test(novelMaxSrc) && /可注入的描述/.test(novelMaxSrc));
+    ok('4.1 前端把 target 发给服务端（而不是发两个端点）',
+      /storyFieldFill:/.test(injApiSrc) && /target,/.test(injApiSrc) && /\/api\/story\/field-fill/.test(injApiSrc));
+    // 规格表：两份规格、各自的模板变量名
+    ok('4.1 服务端的规格表里有 char_look 与 card_inject',
+      /FILL_SPECS = \{/.test(injStorySrc) && /key: 'char_look'/.test(injStorySrc) && /key: 'card_inject'/.test(injStorySrc));
+    ok('4.1 规格表按类别取字段（地点与道具要的东西不同，字段表与注入表同源）',
+      /fieldsOf: \(c\) => STORY_INJECT_FIELDS\[c\.kind\]/.test(injStorySrc));
+    // **变量名对不上是静默失败**（renderPrompt 会把没给的 {{…}} 换成空串）：两边必须逐字对上，且路由要先检查
+    ok('4.1 规格里的变量名与模板正文逐字一致（对不上就静默发空清单）',
+      /varName: '人物与原文片段'/.test(injStorySrc) && /varName: '卡片与原文片段'/.test(injStorySrc)
+      && /\{\{人物与原文片段\}\}/.test(injSeedSrc) && /\{\{卡片与原文片段\}\}/.test(injSeedSrc));
+    ok('4.1 路由在调用前**先检查**模板里有这个变量（把静默失败变成明确报错）',
+      /includes\(`\{\{\$\{spec\.varName\}\}\}`\)/.test(injRouteSrc) && /发不出去/.test(injRouteSrc));
+    ok('4.1 路由照**计划里记的字段清单**写（按 kind 再推一次会得到空清单 → 报成功却没写）',
+      /for \(const f of \(p\.fields \|\| \[\]\)\)/.test(injRouteSrc));
+    ok('4.1 补场景字段用的提示词模板在内置模板表里',
+      injSeedSrc.includes("key: 'card_inject'") && /\{\{卡片与原文片段\}\}/.test(injSeedSrc));
+    // 体检的两个出口（补 34 之前只有结论、没有出口）
+    ok('4.1 体检的 no_inject 有出口，且切到**该卡的类别**（地点卡与道具卡要补的字段不同）',
+      /code: 'no_inject'[\s\S]{0,700}?kind: c\.kind, card_id: c\.id \}/.test(injStorySrc));
+    ok('4.1 体检的 timeline_no_when 也有出口（并明说这一项没有 AI 补值）',
+      /code: 'timeline_no_when'[\s\S]{0,900}?kind: 'timeline', card_id: c\.id \}/.test(injStorySrc)
+      && /没有"让模型补"的按钮/.test(injStorySrc));
+    // 出口一律带 card_id（落到那张卡上），别只在新加的两个上补 —— 同一张卡的两个问题点下去行为要一致。
+    // 这条是**静态**的形态检查，真正的棘轮在 selftest（对真实体检结果断言"按类别落到卡片的出口都带 card_id"）
+    ok('4.1 三个"按类别落到某张卡"的出口都带 card_id（char_no_look 也补上了）',
+      /kind: 'character', card_id: c\.id \}/.test(injStorySrc)
+      && /kind: c\.kind, card_id: c\.id \}/.test(injStorySrc)
+      && /kind: 'timeline', card_id: c\.id \}/.test(injStorySrc));
   }
 
   // 批 8 补 31：角色字段上限表的前后端镜像（角色的 appearance 会原文进每一次出图提示词）

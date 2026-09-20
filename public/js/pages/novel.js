@@ -101,6 +101,7 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs" id="nov-audit" title="查一遍同名卡、缺字段、别名撞名、没入资产库这些会毁掉一致性的问题（纯本地判定，不花钱）">${icon('check', 13)}一致性体检</button>
             <button class="btn btn-xs" id="nov-import" title="把这份原著里的人物卡批量写进角色库">${icon('users', 13)}人物入资产库</button>
             <button class="btn btn-xs" id="nov-look" title="给还没有外貌/服装的人物卡回原文找一遍（找到的必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补长相</button>
+            <button class="btn btn-xs" id="nov-inject" title="给没有任何可注入描述的地点卡/道具卡回原文找一遍（氛围/地域/时段/特征、持有者/用途/特征；同样必须带原文原话，对不上原文的一律丢弃）">${icon('sparkles', 13)}AI 补场景字段</button>
           </div>
           <div id="nov-outline-box"></div>
           <div id="nov-chap-box"></div>
@@ -1126,40 +1127,61 @@ export default async function novel(container, params = {}) {
    * 前端再抄一份迟早会漂（补 30 的教训）。所以按钮**总是**在，点下去先干跑 ——
    * 干跑是纯本地的、不要钱，它会如实告诉你"有几张"或"一张都不缺"。
    */
-  async function fillLooks() {
+  /**
+   * 回原文补字段（批 8 补 33 补长相，补 34 泛化到场景/道具）。**一个函数、按目标取配置** ——
+   * 两条路只有"叫什么、报什么"不同，机制完全一样（先干跑 → 计费确认 → 分开报三种没写成）。
+   *
+   * 刻意**不**在前端算"有几张缺"：判据在服务端（`story.FILL_SPECS[*].missing`，体检也用它），
+   * 前端再抄一份迟早会漂（补 30 的教训）。所以按钮**总是**在，点下去先干跑 ——
+   * 干跑是纯本地的、不要钱，它会如实告诉你"有几张"或"一张都不缺"。
+   */
+  const FILL_TARGETS = {
+    char_look: {
+      what: '补人物长相', label: '人物长相', unit: '张人物卡',
+      empty: '所有人物卡都已经有外貌或服装了',
+    },
+    card_inject: {
+      what: '补场景道具字段', label: '场景/道具描述', unit: '张卡片',
+      empty: '所有地点卡/道具卡都已经有可注入的描述',
+    },
+  };
+
+  async function fillFields(target) {
+    const cfg = FILL_TARGETS[target];
     if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
-    const dry = await api.storyLookFill(sourceId, { dryRun: true });
+    const dry = await api.storyFieldFill(sourceId, target, { dryRun: true });
     if (!dry.ok) { toast.err(dry.error); return; }
-    if (!dry.data.targets) { toast.ok('所有人物卡都已经有外貌或服装了'); return; }
+    if (!dry.data.targets) { toast.ok(cfg.empty); return; }
     const noSrc = dry.data.no_source || 0;
     const yes = await costConfirm({
       count: 1,
-      what: '补人物长相',
-      note: `有 ${dry.data.targets} 张人物卡还没有外貌与服装，全部一次交给模型回原文找，只调 1 次。`
+      what: cfg.what,
+      note: `有 ${dry.data.targets} ${cfg.unit}还缺${cfg.label}，全部一次交给模型回原文找，只调 1 次。`
         + '模型必须交出原文里的**原话**作为依据，与原文对不上的一律丢弃；原文确实没写的会如实报"没写"，'
         + `绝不会拿编的顶上。${noSrc ? `其中 ${noSrc} 张没有可定位的原文出处，会被跳过（回原文找无从谈起）。` : ''}`,
     });
     if (!yes) return;
     setBusy(container, true, '正在回原文找');
     try {
-      const r = await api.storyLookFill(sourceId);
+      const r = await api.storyFieldFill(sourceId, target);
       if (!r.ok) { toast.err(r.error); return; }
       const d = r.data;
-      toast.ok(`已补 ${d.assigned}/${d.targets} 张人物卡的长相`);
+      toast.ok(`已补 ${d.assigned}/${d.targets} ${cfg.unit}的${cfg.label}`);
       // 三种"没写成"分开说：原文没写 / 引文对不上原文 / 没给全 —— 合成一个数就分不清"原著没写"和"模型在编"
       const nf = (d.not_found || []).length;
       const ug = (d.ungrounded || []).length;
       const rest = (d.missing || []).length + (d.invalid || []).length + (d.empty || []).length;
-      if (nf) toast(`有 ${nf} 张原文里确实没写长相（这是结论，不是失败）：${(d.not_found || []).slice(0, 3).map((x) => x.name).join('、')}${nf > 3 ? '…' : ''}`, 'info', 7000);
-      if (ug) toast.err(`有 ${ug} 张模型的引文对不上原文，已丢弃不写（那是它编的）：${(d.ungrounded || []).slice(0, 3).map((x) => x.name).join('、')}${ug > 3 ? '…' : ''}`);
-      if (rest) toast.err(`另有 ${rest} 张没接住（模型没给全，或返回的编号越界），已保持原样`);
-      if (d.no_source) toast(`有 ${d.no_source} 张没有可定位的原文出处，已跳过`, 'info', 6000);
+      if (nf) toast(`有 ${nf} ${cfg.unit}原文里确实没写${cfg.label}（这是结论，不是失败）：${(d.not_found || []).slice(0, 3).map((x) => x.name).join('、')}${nf > 3 ? '…' : ''}`, 'info', 7000);
+      if (ug) toast.err(`有 ${ug} ${cfg.unit}模型的引文对不上原文，已丢弃不写（那是它编的）：${(d.ungrounded || []).slice(0, 3).map((x) => x.name).join('、')}${ug > 3 ? '…' : ''}`);
+      if (rest) toast.err(`另有 ${rest} ${cfg.unit}没接住（模型没给全，或返回的编号越界），已保持原样`);
+      if (d.no_source) toast(`有 ${d.no_source} ${cfg.unit}没有可定位的原文出处，已跳过`, 'info', 6000);
       if (d.aligned === false) toast.err('这份原著的重新切块与解析时不一致，补上的内容请人工核对一遍');
       await loadCards();
     } finally { setBusy(container, false); }
   }
 
-  container.querySelector('#nov-look').onclick = () => fillLooks();
+  container.querySelector('#nov-look').onclick = () => fillFields('char_look');
+  container.querySelector('#nov-inject').onclick = () => fillFields('card_inject');
 
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => {
