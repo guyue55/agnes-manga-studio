@@ -195,6 +195,78 @@ export async function parseStoryText(file) {
   return { ok: true, text, note: `${lines} 行` };
 }
 
+// ── 多文件（很多作者一章一个文件）────────────────────────────────────
+
+/**
+ * 文件名排序键：把名字切成"数字段 / 非数字段"交替的数组，数字段按**数值**比。
+ * 不引 `localeCompare({numeric:true})` 是为了**结果确定**：排序一旦依赖运行环境的 locale，
+ * 同一批文件在不同机器上顺序不同，而顺序错了原文就乱了（这种错还很难发现）。
+ */
+export function storyFileNameKey(name) {
+  const base = String(name == null ? '' : name).replace(/\.[^.]+$/, '');
+  const parts = base.match(/\d+|\D+/g) || [];
+  return parts.map((t) => (/^\d+$/.test(t) ? Number(t) : t.toLowerCase()));
+}
+
+/**
+ * 多文件排序。**只按文件名**（章号在名字里），数字段按数值比，稳定（同键保持原顺序）。
+ * 名字里**没有数字**的那些，位置其实是排不出来的（"序章"该在最前、"尾声"该在最后），
+ * 这里仍然给一个确定的顺序（好让结果可复现），但由 `unorderableNames` 如实点名，交给用户核对。
+ */
+export function sortStoryFiles(files) {
+  return (Array.isArray(files) ? files.slice() : [])
+    .map((f, i) => ({ f, i, key: storyFileNameKey((f && f.name) || '') }))
+    .sort((a, b) => {
+      const n = Math.min(a.key.length, b.key.length);
+      for (let k = 0; k < n; k++) {
+        const x = a.key[k]; const y = b.key[k];
+        if (x === y) continue;
+        if (typeof x === 'number' && typeof y === 'number') return x - y;
+        return String(x) < String(y) ? -1 : 1;
+      }
+      if (a.key.length !== b.key.length) return a.key.length - b.key.length;
+      return a.i - b.i; // 稳定：完全相同就保持用户选择的原顺序
+    })
+    .map((x) => x.f);
+}
+
+/**
+ * 哪些文件名"排不动"：名字里没有数字的那些。
+ * 中文数字（"第一章/第二章"）尤其如此 —— 一个都没有数字时，自动排序给不出正确顺序，
+ * 这时必须**如实说出来**，让用户自己核对，而不是默默按字符串排一遍就当作对的。
+ * 只报"一个数字都没有"是不够的：混着"第1章 + 序章"时，序章该在最前还是最后同样排不出来。
+ */
+export function unorderableNames(files) {
+  const names = (Array.isArray(files) ? files : []).map((f) => String((f && f.name) || ''));
+  if (names.length < 2) return [];
+  return names.filter((n) => !/\d/.test(n));
+}
+
+/** 有任何一个文件名排不出位置时，界面就该提示"顺序需要你核对"。 */
+export function orderLooksGuessed(files) {
+  return unorderableNames(files).length > 0;
+}
+
+/**
+ * 读一批文件 → `{ok, text, note, files:[{name, chars}]}`。
+ * 一个文件读失败就**整体不落**（半份原文比没有更糟：用户会以为全读进来了）。
+ */
+export async function parseStoryFiles(fileList) {
+  const files = sortStoryFiles(Array.from(fileList || []));
+  if (!files.length) return { ok: false, error: '没有选择文件' };
+  const parts = [];
+  const meta = [];
+  for (const f of files) {
+    const r = await parseStoryFile(f);
+    if (!r.ok) return { ok: false, error: `「${f.name}」读不了：${r.error}` };
+    parts.push(r.text);
+    meta.push({ name: f.name, chars: r.text.length });
+  }
+  const text = normalizeStoryText(parts.join('\n\n'));
+  if (!text) return { ok: false, error: '这些文件里没有可解析的文字' };
+  return { ok: true, text, files: meta, guessed: orderLooksGuessed(files), unorderable: unorderableNames(files) };
+}
+
 /** 按扩展名分发：.docx 走 zip 解出正文，其余当纯文本读。 */
 export async function parseStoryFile(file) {
   const chk = checkStoryFile(file || {});

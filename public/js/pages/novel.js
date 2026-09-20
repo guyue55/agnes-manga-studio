@@ -21,7 +21,7 @@ import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, data
 import { charCount, countLabel, limitState } from '../textstats.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams, navigate } from '../app.js';
-import { parseStoryFile, STORY_FILE_ACCEPT } from '../storyfile.js';
+import { parseStoryFiles, STORY_FILE_ACCEPT } from '../storyfile.js';
 
 const JOB_KEY = 'agnes.novel.job'; // 解析任务 id：刷新/切页回来能续上进度（与分镜批量的做法一致）
 const TEXT_SOFT = 60000;           // 输入框软上限：超了不拦，只提示"会分很多段、花很多次调用"
@@ -54,8 +54,8 @@ export default async function novel(container, params = {}) {
           <div class="row" style="margin-bottom:10px">
             <div class="card-title" style="margin:0">${icon('book', 15)}原著原文</div>
             <div class="spacer"></div>
-            <label class="btn btn-xs" for="nov-file" title="在浏览器本地读取，不上传服务器">${icon('upload', 13)}选择文件</label>
-            <input type="file" id="nov-file" accept="${STORY_FILE_ACCEPT.join(',')},text/plain" style="display:none" />
+            <label class="btn btn-xs" for="nov-file" title="在浏览器本地读取，不上传服务器；可一次选多个文件（一章一个文件也行）">${icon('upload', 13)}选择文件</label>
+            <input type="file" id="nov-file" accept="${STORY_FILE_ACCEPT.join(',')},text/plain" multiple style="display:none" />
           </div>
           <div class="field" style="margin-bottom:8px">
             <input class="input" id="nov-title" placeholder="给这份原著起个名字（便于在解析记录里区分）" />
@@ -65,8 +65,9 @@ export default async function novel(container, params = {}) {
           <div class="row" style="margin-top:6px">
             <span class="hint-xs" id="nov-count"></span>
             <div class="spacer"></div>
-            <span class="hint-xs">.txt / .md 在浏览器本地读取，原文只存在你本机</span>
+            <span class="hint-xs">.txt / .md / .docx 在浏览器本地读取，原文只存在你本机</span>
           </div>
+          <div id="nov-files"></div>
           <div class="divider"></div>
           <div class="row wrap">
             <button class="btn" id="nov-plan">${icon('search', 14)}先算一算</button>
@@ -127,18 +128,36 @@ export default async function novel(container, params = {}) {
     el.classList.toggle('over', st.over);
   }
 
+  // 多选：很多作者一章一个文件。**顺序必须看得见** —— 顺序错了原文就乱了，
+  // 而"乱了"这件事只有用户自己能判断（文件名里是中文数字时，自动排序排不出正确顺序）。
+  function renderFilesBox(r) {
+    const box = container.querySelector('#nov-files');
+    if (!box) return;
+    if (!r || !r.files || r.files.length < 2) { box.innerHTML = ''; return; }
+    box.innerHTML = `
+      <div class="note" style="margin-top:6px">
+        <div class="hint-xs"><b>按这个顺序拼起来了（共 ${r.files.length} 个文件，${countLabel(r.text.length)}）</b></div>
+        <div class="hint-xs" style="margin-top:3px">${r.files.map((x, i) => `${i + 1}. ${esc(x.name)}（${countLabel(x.chars)}）`).join('<br>')}</div>
+        ${r.guessed ? `<div class="hint-xs" style="margin-top:4px;color:var(--warn)">这些文件名里没有数字，位置排不出来，<b>顺序不一定对</b>：${r.unorderable.map((n) => esc(n)).join('、')}。请核对上面的顺序；不对就改成"第 1 章"这样带数字的文件名，或直接粘贴原文。</div>` : ''}
+      </div>`;
+  }
+
   container.querySelector('#nov-file').onchange = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const r = await parseStoryFile(f);
+    const picked = e.target.files;
+    if (!picked || !picked.length) return;
+    const many = picked.length > 1;
+    if (many) setBusy(e.target, true, '读取中');
+    const r = await parseStoryFiles(picked);
     e.target.value = ''; // 同一个文件改完再选一次也要能触发
-    if (!r.ok) { toast.err(r.error); return; }
+    if (many) setBusy(e.target, false);
+    if (!r.ok) { toast.err(r.error); renderFilesBox(null); return; }
     textEl.value = r.text;
-    if (!titleEl.value.trim()) titleEl.value = f.name.replace(/\.[^.]+$/, '');
+    if (!titleEl.value.trim()) titleEl.value = (r.files[0].name || '').replace(/\.[^.]+$/, '');
     plan = null;
     renderPlanBox();
     syncCount();
-    toast.ok(`已读入 ${countLabel(r.text.length)}（${r.note}）`);
+    renderFilesBox(r);
+    toast.ok(many ? `已读入 ${r.files.length} 个文件、${countLabel(r.text.length)}` : `已读入 ${countLabel(r.text.length)}`);
   };
 
   // ── 干跑：先告诉用户"要花几次调用"，再决定要不要花 ──────

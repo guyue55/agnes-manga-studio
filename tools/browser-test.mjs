@@ -1909,6 +1909,28 @@ try {
       ok('标题从文件名带上（省一步手输）', /归途/.test(title), JSON.stringify(title));
       const cnt = await cdp.eval(`return (document.querySelector('#nov-count')||{}).textContent||'';`);
       ok('字数统计跟着更新（用户要能立刻确认读进来了）', /原文/.test(cnt), JSON.stringify(cnt));
+      // 多文件（批 8 补 24）：一章一个文件是常见写法，顺序必须按章号而不是按字符串
+      const manyPaths = [];
+      for (const [n, body] of [['第10章.txt', '第十章 终局'], ['第2章.txt', '第二章 茶馆'], ['第1章.txt', '第一章 雨夜']]) {
+        const p = path.join(home, n);
+        fs.writeFileSync(p, body);
+        manyPaths.push(p);
+      }
+      const doc2 = await cdp.send('DOM.getDocument', { depth: -1 });
+      const node2 = await cdp.send('DOM.querySelector', { nodeId: doc2.root.nodeId, selector: '#nov-file' });
+      await cdp.send('DOM.setFileInputFiles', { files: manyPaths, nodeId: node2.nodeId });
+      await waitFor(() => cdp.eval(`return /第十章 终局/.test((document.querySelector('#nov-text')||{}).value||'');`), '多文件读入', 15000);
+      const multi = await cdp.eval(`return (document.querySelector('#nov-text')||{}).value||'';`);
+      ok('多文件按章号拼好（第 10 章在第 2 章之后，不是按字符串排）',
+        multi.indexOf('第一章 雨夜') < multi.indexOf('第二章 茶馆')
+        && multi.indexOf('第二章 茶馆') < multi.indexOf('第十章 终局'),
+        JSON.stringify(multi.slice(0, 160)));
+      const order = await cdp.eval(`return (document.querySelector('#nov-files')||{}).innerText||'';`);
+      ok('页面把拼起来的顺序列出来了（顺序错了用户能看见）',
+        /第1章\.txt/.test(order) && /第2章\.txt/.test(order) && /第10章\.txt/.test(order)
+        && order.indexOf('第1章.txt') < order.indexOf('第10章.txt'),
+        JSON.stringify(order.slice(0, 200)));
+      for (const p of manyPaths) { try { fs.unlinkSync(p); } catch { /* ignore */ } }
       try { fs.unlinkSync(docxPath); } catch { /* ignore */ }
     }
 

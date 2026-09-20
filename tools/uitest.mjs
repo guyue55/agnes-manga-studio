@@ -1162,7 +1162,8 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('超大文件被拒（20MB 上限）', !fileMod.checkStoryFile({ name: 'a.txt', size: fileMod.STORY_FILE_MAX + 1 }).ok);
   ok('页面用 accept 与校验同一份扩展名表（能选中的一定能读）',
     /STORY_FILE_ACCEPT/.test(fileSrc) && /STORY_FILE_ACCEPT\.join\(','\)/.test(novel) && /accept="\$\{STORY_FILE_ACCEPT/.test(novel));
-  ok('页面按扩展名分发（.docx 走解压那条路）', /parseStoryFile\(f\)/.test(novel) && typeof fileMod.parseStoryFile === 'function');
+  ok('页面按扩展名分发（.docx 走解压那条路）',
+    /parseStoryFiles/.test(novel) && typeof fileMod.parseStoryFile === 'function' && typeof fileMod.parseStoryFiles === 'function');
   ok('zip 只读实现齐全（中央目录 → 局部头 → 解压）',
     ['listZipEntries', 'readZipEntryRaw', 'inflateRawBytes', 'readZipText', 'docxXmlToText', 'decodeXmlEntities']
       .every((k) => typeof fileMod[k] === 'function'));
@@ -1170,6 +1171,18 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('源码里写明了 ZIP64 会被拒绝而不是猜着读（猜错的后果是一堆乱码，比报错难查）',
     /ZIP64/.test(fileSrc) && /暂不支持/.test(fileSrc));
   ok('不引第三方解压库（零依赖是硬约束）', !/from '(?!\.)|require\(/.test(fileSrc.replace(/\/\*[\s\S]*?\*\//g, '')));
+  // 多文件（批 8 补 24）：很多作者一章一个文件
+  ok('文件选择允许多选', /id="nov-file"[^>]*multiple/.test(novel), 'novel.js 的 #nov-file 少了 multiple');
+  ok('页面走多文件读取那条路（不是只取 files[0]）',
+    /parseStoryFiles\(picked\)/.test(novel) && !/parseStoryFile\(picked\[0\]\)/.test(novel));
+  ok('读进来的顺序**看得见**（有独立面板列出每个文件）',
+    /id="nov-files"/.test(novel) && /renderFilesBox/.test(novel) && /r\.files\.map/.test(novel));
+  ok('顺序排不出来时点名是哪些文件（不是含糊地说"可能不对"）',
+    /r\.unorderable/.test(novel) && /r\.guessed/.test(novel));
+  ok('排序与"排不动"判定都在共享模块里（不是页面里另写一套）',
+    typeof fileMod.sortStoryFiles === 'function' && typeof fileMod.unorderableNames === 'function'
+    && !/localeCompare/.test(novel + fileSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+    '排序不该依赖 locale（结果要可复现）');
 
   // ④ 端点齐全：前端调的每个 /api/story/* 后端都必须有
   // 端点路径在 api.js 里有三种写法：纯字面量、带查询参数的模板串、带 :id 的模板串。

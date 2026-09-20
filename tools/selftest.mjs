@@ -661,6 +661,89 @@ group('Word 文档读取（批 8 补 23：.docx 就是个 zip，零依赖就能�
   ok('ZIP64 明确拒绝（而不是按 32 位读出一堆乱码）', !r64.ok && /ZIP64/.test(r64.error || ''), JSON.stringify(r64));
 }
 
+group('多文件上传（批 8 补 24：很多作者一章一个文件）');
+{
+  const zlib = await import('node:zlib');
+  const sf = await import(pathToFileURL(path.join(ROOT, 'public/js/storyfile.js')).href);
+  const F = (name, text) => new File([new TextEncoder().encode(text == null ? name : text)], name);
+
+  // 排序：**按数值**比数字段，"第 10 章"必须排在"第 2 章"后面（按字符串比会排反）
+  const names = (list) => sf.sortStoryFiles(list.map((n) => F(n))).map((f) => f.name);
+  eq('章号按数值排（第 10 章在第 2 章之后）',
+    names(['第10章.docx', '第2章.docx', '第1章.docx']).join(','), '第1章.docx,第2章.docx,第10章.docx');
+  eq('文件名里的数字按数值排', names(['ch10.txt', 'ch2.txt', 'ch1.txt']).join(','), 'ch1.txt,ch2.txt,ch10.txt');
+  eq('扩展名不参与排序（.docx 与 .txt 同名视为同一章）',
+    names(['第1章.txt', '第1章.docx']).join(','), '第1章.txt,第1章.docx');
+  eq('名字里没数字时给确定的顺序（可复现，但位置本身排不出来）',
+    names(['乙.txt', '甲.txt', '丙.txt']).join(','), '丙.txt,乙.txt,甲.txt');
+  ok('空输入不炸', sf.sortStoryFiles(null).length === 0 && sf.sortStoryFiles([]).length === 0);
+
+  // 排不动就说出来：中文数字文件名自动排序排不出正确顺序，**不能默默装作排对了**
+  ok('文件名里没有数字时标记"顺序是猜的"',
+    sf.orderLooksGuessed([F('第一章.docx'), F('第二章.docx')]) === true);
+  ok('有数字时不标记（第 1 章/第 10 章排得动）',
+    sf.orderLooksGuessed([F('第1章.docx'), F('第10章.docx')]) === false);
+  ok('单个文件谈不上顺序', sf.orderLooksGuessed([F('第一章.docx')]) === false);
+  // 混着也要报：只报"一个数字都没有"是不够的 —— "序章"该在最前还是最后同样排不出来
+  ok('"第1章 + 序章"这种混合也标记（序章该在最前还是最后排不出来）',
+    sf.orderLooksGuessed([F('第1章.docx'), F('序章.docx')]) === true);
+  eq('并点名是哪个文件排不出位置（用户要能直接去改文件名）',
+    sf.unorderableNames([F('第1章.docx'), F('序章.docx'), F('尾声.docx')]).join(','), '序章.docx,尾声.docx');
+  eq('全部带数字时没有排不动的文件',
+    sf.unorderableNames([F('第1章.docx'), F('第10章.docx')]).join(','), '');
+
+  // 拼接：一个文件读不了就**整体不落**（半份原文比没有更糟）
+  const okAll = await sf.parseStoryFiles([F('第1章.txt', '第一章 甲'), F('第2章.txt', '第二章 乙')]);
+  ok('多文件按序拼成一份原文', okAll.ok && /第一章 甲[\s\S]*第二章 乙/.test(okAll.text), JSON.stringify(okAll).slice(0, 140));
+  eq('如实报出每个文件的字数（顺序看得见）', okAll.files.map((x) => x.name).join(','), '第1章.txt,第2章.txt');
+  ok('文件之间留空行（段落语义）', /\n\n/.test(okAll.text), JSON.stringify(okAll.text));
+
+  const bad = await sf.parseStoryFiles([F('第1章.txt', '甲'), F('坏的.pdf', 'x')]);
+  ok('有一个文件读不了就整体不落，并点名是哪个文件',
+    !bad.ok && /坏的\.pdf/.test(bad.error), JSON.stringify(bad));
+
+  // 混格式：.txt 与 .docx 可以一起选（docx 走解压那条路）
+  const crcTable = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  const crc32 = (buf) => { let c = 0xFFFFFFFF; for (const b of buf) c = crcTable[(c ^ b) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  const mkDocx = (text) => {
+    const enc = new TextEncoder();
+    const nameB = enc.encode('word/document.xml');
+    const xml = `<?xml version="1.0"?><w:document xmlns:w="x"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`;
+    const rawB = enc.encode(xml);
+    const body = new Uint8Array(zlib.deflateRawSync(rawB));
+    const lh = new Uint8Array(30 + nameB.length + body.length);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(8, 8, true);
+    dv.setUint32(14, crc32(rawB), true); dv.setUint32(18, body.length, true); dv.setUint32(22, rawB.length, true);
+    dv.setUint16(26, nameB.length, true);
+    lh.set(nameB, 30); lh.set(body, 30 + nameB.length);
+    const ch = new Uint8Array(46 + nameB.length);
+    const cv = new DataView(ch.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(10, 8, true);
+    cv.setUint32(16, crc32(rawB), true); cv.setUint32(20, body.length, true); cv.setUint32(24, rawB.length, true);
+    cv.setUint16(28, nameB.length, true); cv.setUint32(42, 0, true);
+    ch.set(nameB, 46);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, 1, true); ev.setUint16(10, 1, true);
+    ev.setUint32(12, ch.length, true); ev.setUint32(16, lh.length, true);
+    const out = new Uint8Array(lh.length + ch.length + 22);
+    out.set(lh, 0); out.set(ch, lh.length); out.set(eocd, lh.length + ch.length);
+    return out;
+  };
+  const mixed = await sf.parseStoryFiles([
+    new File([new TextEncoder().encode('第二章 乙')], '第2章.txt'),
+    new File([mkDocx('第一章 甲')], '第1章.docx'),
+  ]);
+  ok('.txt 与 .docx 可以一起选并按章号排好',
+    mixed.ok && mixed.text.indexOf('第一章 甲') < mixed.text.indexOf('第二章 乙'),
+    JSON.stringify(mixed.text));
+}
+
 group('章节识别与章节级溯源（批 8 补 21：段号是切块的副产物，作者想的是"第几章"）');
 {
   const story = require('./lib/story.js');

@@ -79,6 +79,13 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   `blocked`（前置没做，点进去也做不了）与 `todo`（轮到你了）**严格分开** —— 混成一个"待办"，
   用户会照着点却发现按钮是灰的；`partial`（做了一半）也是独立状态（只看"有没有"不看"够不够"会误报 done）。
   分母口径按**集**去重（同一集重生成存多条，按条数算会虚高），出图段的 need 是**镜头数**（不是"有没有分镜"）
+- 多文件上传（批 8 补 24）：很多作者**一章一个文件**，一次只能选一个就要点 30 次。现在可多选
+  （`.txt`/`.md`/`.docx` 混着也行），按**章号数值**排序后拼成一份原文（按字符串比会把"第 10 章"排到"第 2 章"前面）。
+  三条纪律：① **顺序必须看得见** —— 顺序错了原文就乱，而"乱了"只有用户能判断，所以页面列出"按这个顺序拼起来了：…（含字数）"；
+  ② **排不出来的要点名** —— 名字里没有数字时（中文数字"第一章"，或"序章/尾声"）位置**根本排不出来**，
+  只报"一个数字都没有"不够（"第1章 + 序章"里序章该在最前还是最后同样排不出来），要逐个点名；
+  ③ **一个文件读不了就整体不落** —— 半份原文比没有更糟（用户会以为全读进来了）。排序**不引 `localeCompare`**：
+  依赖运行环境 locale 就会"同批文件在不同机器上顺序不同"，而本地永远是对的、这种错极难发现
 - Word 文档读取（批 8 补 23）：上传此前只收 `.txt`/`.md`，而作者的稿件绝大多数是 `.docx`。
   **原边界"docx 是另一个数量级的依赖"对 PDF 成立、对 docx 不成立** —— .docx 就是个 zip
   （里面一份 `word/document.xml`），浏览器/Node 原生就有 `DecompressionStream('deflate-raw')`，
@@ -172,7 +179,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 702 / apitest 859 / uitest 1061 / browser-test 495），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 718 / apitest 859 / uitest 1066 / browser-test 497），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
