@@ -161,7 +161,12 @@ for (const d of [store.imagesDir(), store.videosDir(), store.exportsDir()]) {
   try { fs.mkdirSync(d, { recursive: true }); } catch { /* ignore */ }
 }
 poller.init(store);
-seedLib.seedTemplates(store);
+// 内置提示词的首装写入 + 老库更新放在**端口绑定成功之后**做（批 8 补 28），见 listening 回调。
+// 为什么不能放这里：这是会**写用户数据**的启动副作用，而端口被别人占着时本进程会走 X4 分支退出 ——
+// 那种"影子实例"绝不能动数据。X4 防的正是"两个实例互踩、静默丢数据"，而 persist 是整库快照全量写：
+// 影子实例写进去的更新会被正在跑的那个实例下一次快照**覆盖掉**，两边都不报错。
+// poller.resume() 本来就遵守这条纪律（也在 listening 里），播种没有理由例外。
+let seedResult = null;
 
 const routes = createRoutes({
   store, agnes, poller, jobs, version: VERSION,
@@ -496,6 +501,11 @@ function listen(port, attempt = 0) {
       server.removeAllListeners('error');
       server.on('error', (e) => console.error('[server] 运行期错误：', e && e.message || e));
       const url = `http://127.0.0.1:${server.address().port}`;
+      // 到这里才确定"本进程就是唯一持有这份数据的实例"，可以安全写库了。
+      // 提示词是抽取质量最大的杠杆，而 seedTemplates 原来只写"库里没有的 key" ——
+      // 改代码里的提示词对老用户完全无效且无提示。只更新能证明"没被用户改过"的那些；
+      // 改过的原样保留，但要在横幅里说出来（否则用户永远不知道有新版）。
+      seedResult = seedLib.seedTemplates(store);
       const resumed = poller.resume();
       banner(url, server.address().port, resumed);
       if (!process.env.NO_OPEN) openBrowser(url);
@@ -521,6 +531,11 @@ async function sameAppAlive(port) {
 }
 
 function banner(url, port, resumed) {
+  const tpl = seedResult || {};
+  if (tpl.updated) console.log(`  提示词更新  ${tpl.updated} 个内置模板已更新到新版（你没改过它们）`);
+  if (tpl.kept_edited && tpl.kept_edited.length) {
+    console.log(`  提示词保留  ${tpl.kept_edited.length} 个内置模板有新版，但你改过 —— 保留你的版本：${tpl.kept_edited.join('、')}`);
+  }
   const line = '─'.repeat(58);
   console.log('');
   console.log(line);

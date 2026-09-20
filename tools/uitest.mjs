@@ -1171,6 +1171,40 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('源码里写明了 ZIP64 会被拒绝而不是猜着读（猜错的后果是一堆乱码，比报错难查）',
     /ZIP64/.test(fileSrc) && /暂不支持/.test(fileSrc));
   ok('不引第三方解压库（零依赖是硬约束）', !/from '(?!\.)|require\(/.test(fileSrc.replace(/\/\*[\s\S]*?\*\//g, '')));
+  // 内置提示词同步（批 8 补 28）：提示词是抽取质量最大的杠杆，改了必须能到老用户手里，
+  // 但**绝不能覆盖用户自己改过的**；而这是唯一一处会在启动时动用户数据的逻辑，接线位置本身就是安全属性
+  {
+    const seedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    const srvSrc = read(path.join(ROOT, 'server.js'));
+    ok('有"内置模板同步"的纯函数决策（唯一会动用户数据的逻辑必须能离线验）',
+      /function planTemplateSync/.test(seedSrc) && /function seedTemplates/.test(seedSrc));
+    ok('历史内容指纹表在代码里（老库没有 digest 字段，只能靠它认出"还是官方那一版"）',
+      /const TEMPLATE_SUPERSEDED/.test(seedSrc) && /superseded/.test(seedSrc));
+    ok('两个抽取提示词都写明了 involved 只写本名（预防）',
+      ['novel_extract', 'story_bible'].every((k) => {
+        const i = seedSrc.indexOf(`key: '${k}'`);
+        return i >= 0 && /本名/.test(seedSrc.slice(i, i + 4000));
+      }));
+    // 安全属性：播种会**写库**，所以必须发生在端口绑定成功之后 ——
+    // 影子实例（端口被别人占着、走 X4 分支退出）绝不能动数据（persist 是整库快照，互踩会静默丢数据）
+    const iListen = srvSrc.indexOf("server.once('listening'");
+    const iSeed = srvSrc.indexOf('seedLib.seedTemplates(store)');
+    ok('播种发生在端口绑定成功之后（影子实例不得写用户数据）',
+      iListen > 0 && iSeed > iListen, `listening@${iListen} seed@${iSeed}`);
+    ok('启动横幅如实报出"更新了几个 / 保留了哪几个"（不能默默不更新）',
+      /提示词更新/.test(srvSrc) && /保留你的版本/.test(srvSrc));
+  }
+
+  // 剧情卡人物闭环体检（批 8 补 28）：involved 里的人是否真的存在
+  {
+    const nv = read(path.join(PUB, 'js', 'pages', 'novel.js'));
+    ok('体检面板的说明里点出了卡片侧人物闭环（用户要知道这一项在查什么）',
+      /涉及人物/.test(nv) && /人物卡与角色库/.test(nv));
+    // 面板对这类问题走通用路径：不可一键修复 + 有 go → 出「去处理」按钮（不新增分支）
+    ok('这类问题复用通用出口（fixable=false + go → "去处理"）',
+      /!it\.fixable && it\.go/.test(nv) && /data-audit-go/.test(nv));
+  }
+
   // 旧代码防护（批 8 补 27）：服务端跑的是旧代码时必须主动说 —— 前端每次从磁盘读、后端只在启动时读一次
   {
     const appSrc = read(path.join(PUB, 'js', 'app.js'));
@@ -1507,7 +1541,10 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /只动外貌\/服饰\/别名三项/.test(novel));
   ok('后端漂移体检用纯函数、并进了 issues（面板渲染的是 issues）',
     /story\.auditCharacterDrift\(cards/.test(routesSrc) && /drift_issues/.test(routesSrc)
-    && /styleIssues\.issues, drift\.issues, refGaps\.issues\)/.test(routesSrc));
+    // 批 8 补 28：又加了卡片侧人物闭环一组 —— 这行断言要跟着走，否则"新增一组却忘了并进 issues"
+    // （= 界面永远看不见）会静默通过
+    && /styleIssues\.issues, drift\.issues, refGaps\.issues, cast\.issues\)/.test(routesSrc)
+    && /cast_issues: cast\.issues/.test(routesSrc));
   ok('同步修复只写外貌/服饰/别名，不碰角色定位与性格',
     /code === 'sync_character'/.test(routesSrc) && !/patch\.(role|personality|gender|age) =/.test(routesSrc));
 

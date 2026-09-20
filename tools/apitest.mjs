@@ -14,6 +14,9 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+// CJS 模块在 ESM 里用 default 导入（批 8 补 28：要拿内置模板的原文来复原被测试改过的那一行）
+import seedLib from '../lib/seed.js';
+import storyLib from '../lib/story.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -141,6 +144,9 @@ const mock = http.createServer((req, res) => {
           ...(i === 2 ? [{ kind: 'prop', name: '青铜钥匙', owner: '林晚', usage: '开密室' }] : []),
           // 追加解析测试要有一张**全新的卡**才验得了"新卡的块号落在新增区间"
           ...(userMsg.includes('第二卷') ? [{ kind: 'prop', name: '夜访灯笼', owner: '林晚', usage: '照路' }] : []),
+          // 批 8 补 28：剧情卡的 involved 里放一个"查无此人"的名字（林晚有卡、苏婉儿没有），
+          // 只在带标记的原文上生效 —— 否则会污染其它分组的卡片集合与计数
+          ...(userMsg.includes('__PLOTCAST__') ? [{ kind: 'plot', name: '夜访对峙', stage: '起', conflict: '被拦', turn: '亮身份', outcome: '放行', involved: '林晚、苏婉儿' }] : []),
         ] }) } }] });
       }
       if (/"plots"\s*:/.test(userMsg)) {
@@ -1722,8 +1728,10 @@ group('镜头绑定自动匹配与镜头侧体检（批 8 补 5/补 6：两档�
   ok('体检报出扫描到的镜头数', audit.data.shots_scanned >= 4, String(audit.data.shots_scanned));
   ok('体检里同时有卡片侧与镜头侧两组（各自计数）',
     !!audit.data.card_counts && !!audit.data.shot_counts, JSON.stringify(Object.keys(audit.data)));
-  eq('总数 = 卡片侧 + 镜头侧 + 参考图缺口侧（不许只算一边）',
-    audit.data.counts.warn, audit.data.card_counts.warn + audit.data.shot_counts.warn + audit.data.ref_counts.warn);
+  eq('总数 = 各分组之和（不许只算一边；漏一组就会在界面上少报问题）',
+    audit.data.counts.warn,
+    audit.data.card_counts.warn + audit.data.shot_counts.warn + audit.data.ref_counts.warn
+      + audit.data.style_counts.warn + audit.data.drift_counts.warn + audit.data.cast_counts.warn);
   // 把镜头 2 的绑定清掉，制造一条确定的漏绑
   await api('PUT', `/api/storyboards/${s2.id}`, { character_ids: [] });
   const audit2 = await api('GET', `/api/story/audit?project_id=${PID}`);
@@ -3220,6 +3228,107 @@ group('原著解析（批 8：分块抽取 / 跨块合并 / 卡片 CRUD / 反向
   for (const c of (await api('GET', `/api/characters?project_id=${SPID}`)).data) if (c.story_card_id) await api('DELETE', `/api/characters/${c.id}`);
   eq('清场后无残留原著', (await api('GET', `/api/story/sources?project_id=${SPID}`)).data.length, 0);
   await api('DELETE', `/api/projects/${SPID}`);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 28：剧情卡人物闭环体检 + 内置提示词"能更新"
+// ══════════════════════════════════════════════════════════════
+group('剧情卡人物闭环体检（批 8 补 28：involved 里的人真的存在吗）');
+{
+  const pj = await api('POST', '/api/projects', { name: '剧情卡闭环测试剧' });
+  const PID = pj.data.id;
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '闭环·原著', reduce: false, max_chars: 800, max_chunks: 10,
+    text: `__PLOTCAST__\n\n${'林晚在临江茶馆见到顾寒。'.repeat(40)}`,
+  });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const src = (await api('GET', `/api/story/sources?project_id=${PID}`)).data[0];
+  const plots = (await api('GET', `/api/story/cards?source_id=${src.id}&kind=plot`)).data;
+  ok('剧情卡已抽到（带 involved）', plots.length >= 1 && plots[0].involved.includes('苏婉儿'), JSON.stringify(plots[0] && plots[0].involved));
+
+  const au = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('体检 200', au.status, 200);
+  ok('返回体里有独立的 cast 分组（面板渲染的是合并后的 issues，两组都要在）',
+    Array.isArray(au.data.cast_issues) && Array.isArray(au.data.issues), JSON.stringify(Object.keys(au.data)));
+  const cast = au.data.cast_issues.filter((x) => x.code === 'plot_cast_unknown');
+  eq('报出"剧情卡提到的人在人物卡与角色库里都找不到"', cast.length, 1);
+  eq('报的就是那个找不到的名字（有卡的林晚不该被报）', cast[0].target_name, '苏婉儿');
+  ok('合并后的 issues 里也有它（界面消费的是这个字段 —— 只在分组里等于没报）',
+    au.data.issues.some((x) => x.code === 'plot_cast_unknown' && x.target_name === '苏婉儿'));
+  eq('级别是 info（找不到 ≠ 错）', cast[0].level, 'info');
+  eq('不标可一键修复（改名还是补卡要人定）', cast[0].fixable, false);
+  ok('带出口：直达那张剧情卡（原著页要 source_id 才载卡片列表）',
+    cast[0].go && cast[0].go.page === 'novel' && cast[0].go.params.source_id === src.id && !!cast[0].go.params.card_id,
+    JSON.stringify(cast[0].go));
+  eq('counts 里也计入了（info 计数）', au.data.cast_counts.info, 1);
+
+  // 角色库里建一个同名角色 → 这条必须消失（证明"已知名字"确实包含角色库，不是只认人物卡）
+  await api('POST', '/api/characters', { project_id: PID, name: '苏婉儿', appearance: '青衣' });
+  const au2 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('角色库补上这个人之后，这一条消失（体检不是永远报同样的话）',
+    au2.data.cast_issues.filter((x) => x.code === 'plot_cast_unknown').length, 0);
+}
+
+group('内置提示词同步（批 8 补 28：改了提示词，老库也能收到；改过的绝不覆盖）');
+{
+  const list = (await api('GET', '/api/templates')).data;
+  const builtin = list.filter((t) => t.is_builtin);
+  ok('内置模板都带版本与内容指纹（下次启动才能判断"有没有被用户改过"）',
+    builtin.length > 0 && builtin.every((t) => Number.isInteger(t.builtin_version) && /^[0-9a-f]{8}$/.test(t.builtin_digest || '')),
+    JSON.stringify(builtin.slice(0, 2)));
+  const ne0 = list.find((t) => t.key === 'novel_extract');
+  eq('本次改过的抽取提示词版本已 bump 到 2', ne0.builtin_version, 2);
+  ok('提示词写明了 involved 只写本名（预防）+ 体检（验收）成对', /本名/.test(ne0.content));
+
+  // ── 端到端：拿一个**独立的库**当"老用户"，起一个独立实例，看它到底改了谁、没改谁 ──
+  // 为什么不复用上面那个实例：播种只在**端口绑定成功之后**做（批 8 补 28 的修正）——
+  // 影子实例绝不能写数据，所以"再起一个同端口的实例"根本不会走到播种（那条路另有断言，见 X4）。
+  const HOME2 = path.join(os.tmpdir(), `agnes-apitest-tpl-${process.pid}`);
+  fs.rmSync(HOME2, { recursive: true, force: true });
+  fs.mkdirSync(HOME2, { recursive: true });
+  const db = JSON.parse(fs.readFileSync(path.join(HOME, 'db.json'), 'utf8'));
+  const dg = storyLib.digestText;
+  db.projects = []; db.story_cards = []; db.story_sources = [];
+  // ① 用户改过的内置模板：内容变了、行上也没有能自证"还是官方版"的指纹 → 必须原样保留
+  const EDITED = '我自己的抽取要求：只抽主角。';
+  // ② 官方旧版：行上的指纹自证"就是官方那一版"，但与当前默认不同 → 必须被更新到新版
+  const OLD = '这是上一版官方提示词。';
+  db.prompt_templates = db.prompt_templates.map((t) => {
+    if (t.key === 'novel_extract') return { ...t, content: EDITED };
+    if (t.key === 'story_bible') return { ...t, content: OLD, builtin_digest: dg(OLD), builtin_version: 1 };
+    return t;
+  });
+  fs.writeFileSync(path.join(HOME2, 'db.json'), JSON.stringify(db));
+
+  const p2 = 21000 + Math.floor(Math.random() * 8000);
+  const srv2 = spawn(NODE, [path.join(ROOT, 'server.js')], {
+    env: { ...process.env, PORT: String(p2), NO_OPEN: '1', AGNES_STUDIO_HOME: HOME2 },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out2 = '';
+  srv2.stdout.on('data', (d) => (out2 += d));
+  srv2.stderr.on('data', (d) => (out2 += d));
+  try {
+    const up = await waitHealth(`http://127.0.0.1:${p2}`);
+    ok('老库实例起得来', up, out2.slice(0, 200));
+    // 注意：/api/templates 返回**裸数组**（本项目不做统一信封），raw fetch 拿到的就是数组本身
+    const got = await (await fetch(`http://127.0.0.1:${p2}/api/templates`)).json();
+    const after = got.find((t) => t.key === 'novel_extract');
+    const sb = got.find((t) => t.key === 'story_bible');
+    const want = seedLib.DEFAULT_TEMPLATES.find((t) => t.key === 'story_bible');
+    eq('用户改过的内置模板**原样保留**（覆盖人的劳动是不可逆的伤害）', after.content, EDITED);
+    eq('官方旧版被更新到新版（改了提示词，老库真的能收到）', sb.content, want.content);
+    eq('更新后版本号跟着走', sb.builtin_version, 2);
+    ok('启动横幅如实报出"更新了几个 / 保留了哪几个"',
+      /提示词更新\s+1 个/.test(out2) && /保留你的版本：novel_extract/.test(out2), out2.slice(0, 300));
+    ok('没被改过的其它模板不会被动（只动该动的那一个）',
+      got.filter((t) => t.key !== 'story_bible').every((t) => t.key === 'novel_extract' || t.content !== want.content),
+      JSON.stringify(got.map((t) => t.key)));
+  } finally {
+    try { srv2.kill(); } catch { /* gone */ }
+    fs.rmSync(HOME2, { recursive: true, force: true });
+  }
 }
 
 // ── 收尾 ─────────────────────────────────────────────────────

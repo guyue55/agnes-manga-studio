@@ -663,7 +663,7 @@ export default async function novel(container, params = {}) {
         <div class="row wrap" style="row-gap:6px;align-items:flex-start">
           <div style="flex:1;min-width:200px">
             <b>一致性体检：${issues.length} 项</b>（要处理 ${counts.warn} · 可优化 ${counts.info}，其中 ${counts.fixable} 项可一键修复）
-            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>的 ${total} 张卡片 + ${shots} 个镜头（同名卡常常来自不同原著，只看当前这份就看不见；镜头漏绑绑定不会有任何报错，只会在出图时少一段外貌/场景描述；提示词里写死画风会让"换画风"静默失效）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
+            <div class="hint-xs" style="margin-top:3px">范围是<b>整个项目</b>的 ${total} 张卡片 + ${shots} 个镜头（同名卡常常来自不同原著，只看当前这份就看不见；镜头漏绑绑定不会有任何报错，只会在出图时少一段外貌/场景描述；提示词里写死画风会让"换画风"静默失效）。剧情卡的「涉及人物」写了谁、人物卡与角色库里却没有，也会在这里报出来（它会被带进剧本，而外貌注入/绑定/参考图都落不到他身上）。只做机械判定，不调用模型——所以随时可以再点一次；需要你拍板的（两处描述哪个对）只如实列出，不替你决定。</div>
           </div>
           <button class="btn btn-xs" data-audit-again>重新体检</button>
           <button class="btn btn-xs" data-audit-close>收起</button>

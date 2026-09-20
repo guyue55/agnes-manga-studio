@@ -2185,6 +2185,91 @@ try {
       }
     }
 
+    group('剧情卡人物闭环体检（批 8 补 28：involved 里的人真的存在吗）');
+    {
+      // `involved` 一直被抽出来、也一直显示在分集大纲里（"涉及：…"），却从没人核对过那些名字是否存在。
+      // 于是"剧情里有这个人、却没有他的卡与档案"可以一路静默传到剧本：剧本会写到他、分镜里他会出场，
+      // 而外貌注入/绑定/参考图全落不到他身上。这里验的是**真机全链路**：mock 上游造出这种卡 →
+      // 体检端点报出来 → 面板看得见 → "去处理"能落到那张剧情卡上。
+      const mock = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+          const b = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+          if (u.pathname === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'character', name: '林晚', role: '主角', appearance: '白衣' },
+                // 关键：剧情卡的"涉及人物"里有一个**查无此人**的名字（林晚有卡、苏婉儿没有）
+                { kind: 'plot', name: '夜访对峙', stage: '起', conflict: '被拦下', turn: '亮出信物', outcome: '放行', involved: '林晚、苏婉儿' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'cast-key' }) });
+        pid = (await POST('/api/projects', { name: '剧情卡闭环验收剧' })).id;
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '闭环·原著', text: '林晚在临江茶馆见到顾寒。'.repeat(30), reduce: false });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        const plot = (await J(`/api/story/cards?project_id=${pid}&kind=plot`))[0];
+        ok('剧情卡已抽到且带 involved', !!plot && /苏婉儿/.test(plot.involved || ''), JSON.stringify(plot && plot.involved));
+
+        // 端点侧：独立分组 + 合并后的 issues 都要有（面板渲染的是后者）
+        const au = await J(`/api/story/audit?project_id=${pid}`);
+        ok('体检端点给出 cast_issues 分组', Array.isArray(au.cast_issues) && au.cast_issues.some((x) => x.target_name === '苏婉儿'),
+          JSON.stringify((au.cast_issues || []).map((x) => x.target_name)));
+        ok('合并后的 issues 里也有（只放进分组字段 = 界面看不见）',
+          (au.issues || []).some((x) => x.code === 'plot_cast_unknown' && x.target_name === '苏婉儿'));
+
+        // 界面侧：面板看得见、说清后果、给得出出口
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-audit');`), '一致性体检按钮', 15000);
+        await cdp.eval(`document.querySelector('#nov-audit').click(); return true;`);
+        await waitFor(() => cdp.eval(`return /一致性体检/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '体检面板', 15000);
+        await waitFor(() => cdp.eval(`return /苏婉儿/.test((document.querySelector('#nov-audit-box')||{}).innerText||'');`), '体检报出查无此人', 15000);
+        const panel = await cdp.eval(`return (document.querySelector('#nov-audit-box')||{}).innerText||'';`);
+        ok('面板点名"剧情卡里的这个人找不到"（原本链路上没有任何报错）',
+          /剧情卡里的「苏婉儿」/.test(panel) && /找不到/.test(panel), JSON.stringify(panel.slice(0, 400)));
+        ok('说清后果（会进剧本、分镜里会出场，而外貌注入落不到他身上）',
+          /剧本/.test(panel) && /外貌注入/.test(panel), JSON.stringify(panel.slice(0, 500)));
+        ok('如实报出是哪几张剧情卡提到的（只说"1 张"用户还得自己找）',
+          /涉及：/.test(panel) && /夜访对峙/.test(panel), JSON.stringify(panel.slice(0, 500)));
+
+        const clicked = await cdp.eval(`
+          const rows = [...document.querySelectorAll('#nov-audit-box [data-audit-go]')];
+          const hit = rows.find((b) => (b.closest('.row')||{}).innerText?.includes('苏婉儿'));
+          if (!hit) return false;
+          hit.click(); return true;
+        `);
+        ok('这一条带"去处理"按钮（体检不能只有结论、没有出口）', clicked);
+        await waitFor(() => cdp.eval(`return location.hash.includes('card_id=');`), '跳到那张剧情卡', 10000);
+        await sleep(600);
+        const opened = await cdp.eval(`return !!document.querySelector('#nov-cards [data-cancel]');`);
+        ok('"去处理"真的打开了那张剧情卡的编辑态', opened);
+
+        // 在角色库里补上这个人 → 这一条必须消失（体检结论跟着真实数据走，不是永远报同样的话）
+        await POST('/api/characters', { project_id: pid, name: '苏婉儿', appearance: '青衣' });
+        const after = await J(`/api/story/audit?project_id=${pid}`);
+        ok('角色库补上这个人之后，这一条消失（证明"已知名字"确实包含角色库）',
+          !(after.cast_issues || []).some((x) => x.code === 'plot_cast_unknown'),
+          JSON.stringify((after.cast_issues || []).map((x) => x.target_name)));
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('抽取覆盖契约（批 8 补 18：是"没信息"还是"模型没接住"）');
     {
       // 自建上游 mock：让三段原文得到三种不同结局（正常 / 明确无信息 / 条目被丢弃）

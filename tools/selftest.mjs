@@ -391,9 +391,14 @@ group('内置模板');
 {
   store._resetForTest();
   const n1 = seed.seedTemplates(store);
-  ok('首装写入默认模板', n1 > 0, `写入 ${n1} 条`);
+  ok('首装写入默认模板', n1.inserted > 0, `写入 ${n1.inserted} 条`);
   const n2 = seed.seedTemplates(store);
-  eq('重复播种不重复写', n2, 0);
+  // 批 8 补 28：返回值从"条数"变成分项结果（要能如实说出更新了几个、保留了哪几个）
+  eq('重复播种不重复写', n2.inserted, 0);
+  eq('第二次播种也不更新（内容一致）', n2.updated, 0);
+  ok('首装的模板都带上版本与内容指纹（下次才能判断"有没有被改过"）',
+    store.list('prompt_templates').every((t) => Number.isInteger(t.builtin_version) && /^[0-9a-f]{8}$/.test(t.builtin_digest || '')),
+    JSON.stringify(store.list('prompt_templates')[0]));
   ok('含故事构思模板', store.list('prompt_templates').some((t) => t.template_type === 'story_concept'));
   ok('含脚本优化模板', store.list('prompt_templates').some((t) => t.template_type === 'optimize'));
   ok('模板带变量占位', store.list('prompt_templates').some((t) => /\{\{.+\}\}/.test(t.content)));
@@ -2078,6 +2083,127 @@ group('任务收尾阶段占位项（jobs.appendItem）');
   eq('标签与 key 原样保留', `${rec.label}/${rec.key}`, '全局归并/reduce');
   rec.state = 'ok'; rec.ok = true; job.done++;
   eq('由调用方改状态后计数自洽', `${job.items.length}/${job.done}`, '4/4');
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 28：内置提示词"能更新"（版本 + 内容指纹，只更新没被用户改过的）
+// ══════════════════════════════════════════════════════════════
+// 为什么这条要有断言：这是**唯一一处会在启动时动用户已有数据**的逻辑。
+// 提示词是抽取质量最大的杠杆，而 seedTemplates 原来只写"库里没有的 key" ——
+// 改代码里的提示词对老用户完全无效，且没有任何提示（每一轮的提示词改进都被这个洞吞掉）。
+// 修法的安全性完全建立在"能不能证明这一行还是我们发的那一版"上，所以判据要逐条钉死。
+group('内置提示词更新决策（批 8 补 28）');
+{
+  const D = [{ key: 'k', content: '新版内容', system: '新 system', builtin_version: 2 }];
+  const dg = story.digestText;
+  const plan = (stored, opts) => seed.planTemplateSync(stored, D, opts || {});
+  // 同样"要红得干净"：keep[0] 取不到就给 {}（整段判定被反过来时，直接取字段会让自检崩掉）
+  const kept = (stored, opts) => plan(stored, opts).keep[0] || {};
+
+  eq('库里没有这个 key → 新增', plan([]).insert.length, 1);
+  eq('内容与新版一致 → 不更新（也算没被改过）', kept([{ key: 'k', content: '新版内容', is_builtin: true }]).reason, 'same');
+  eq('老库（没有 digest 字段）+ 历史指纹命中 → 更新',
+    plan([{ key: 'k', content: '旧版内容', is_builtin: true }], { superseded: { k: [dg('旧版内容')] } }).update.length, 1);
+  eq('行上 builtin_digest 自证没被改过 → 更新',
+    plan([{ key: 'k', content: '旧版内容', is_builtin: true, builtin_digest: dg('旧版内容') }]).update.length, 1);
+  eq('证明不了"还是官方那一版" → 保留（宁可漏更新，也不覆盖人的劳动）',
+    kept([{ key: 'k', content: '用户自己改的', is_builtin: true }]).reason, 'edited');
+  eq('用户把它改成自定义模板（is_builtin=false）→ 保留',
+    kept([{ key: 'k', content: '旧版内容', is_builtin: false }]).reason, 'custom');
+  eq('保留的项要点名（启动日志要如实说"为什么没更新"）',
+    (kept([{ key: 'k', content: '用户自己改的', is_builtin: true }]).def || {}).key, 'k');
+  // 正对照 FG 把这条判据反过来（证明不了也更新），下面这行必须变红
+  eq('指纹对不上时**绝不**更新（这条是整段逻辑的安全底线）',
+    plan([{ key: 'k', content: '用户自己改的', is_builtin: true, builtin_digest: 'deadbeef' }]).update.length, 0);
+
+  // 棘轮：版本号与历史指纹表必须自洽，否则"改了提示词但忘了 bump/登记"会让老用户永远收不到
+  ok('每个内置模板都带整数 builtin_version ≥ 1',
+    seed.DEFAULT_TEMPLATES.every((t) => Number.isInteger(t.builtin_version || 1) && (t.builtin_version || 1) >= 1));
+  ok('历史指纹表里的 key 都是真实存在的内置模板',
+    Object.keys(seed.TEMPLATE_SUPERSEDED).every((k) => seed.DEFAULT_TEMPLATES.some((t) => t.key === k)));
+  ok('历史指纹不能等于当前内容指纹（否则这条登记是废话，说明改完没更新它）',
+    Object.entries(seed.TEMPLATE_SUPERSEDED).every(([k, list]) => {
+      const t = seed.DEFAULT_TEMPLATES.find((x) => x.key === k);
+      return list.every((h) => h !== dg(t.content));
+    }));
+  ok('改了提示词的模板版本要 > 1（本次改了 novel_extract / story_bible 的 involved 写法）',
+    ['novel_extract', 'story_bible'].every((k) => (seed.DEFAULT_TEMPLATES.find((t) => t.key === k).builtin_version || 1) > 1));
+  // 补记指纹（stamped）：内容已等于官方默认、行上却没有指纹的行要顺手补记，
+  // 否则将来真改了这些提示词时，它们会被判成"用户改过"而**永不更新**（只会在下一轮才炸的陷阱）
+  {
+    // 必须用**真实的**内置 key：seedTemplates 只走 DEFAULT_TEMPLATES 里的那 16 个，
+    // 造一个虚构 key 的行它根本不会访问（第一版就这么写错了，断言直接红）
+    store._resetForTest(); // 与本文件既有的播种组同一写法（这个 block 在文件末尾，不会影响别的组）
+    const st = store;
+    const SAME = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'story_concept');
+    st.insert('prompt_templates', { key: 'story_concept', content: SAME.content, is_builtin: true }); // 内容对、无指纹
+    st.insert('prompt_templates', { key: 'novel_extract', content: '用户改过的', is_builtin: true }); // 用户改过
+    const r = seed.seedTemplates(st);
+    const k = st.list('prompt_templates').find((x) => x.key === 'story_concept');
+    const e = st.list('prompt_templates').find((x) => x.key === 'novel_extract');
+    eq('内容已等于官方默认 → 补记指纹（下次才能自证）', k.builtin_digest, story.digestText(SAME.content));
+    eq('补记数量如实返回', r.stamped, 1);
+    eq('补记**不动内容**（只是登记事实）', k.content, SAME.content);
+    eq('补记也补版本号（下次判据要一起用）', k.builtin_version, SAME.builtin_version || 1);
+    eq('用户改过的行**绝不补记**（补记 = 把用户的内容登记成官方版 → 下次就会被覆盖）', e.builtin_digest, undefined);
+    eq('其余没提到的内置模板照旧新增', st.list('prompt_templates').length, 16);
+  }
+
+  ok('两个抽取提示词都写明了 involved 只写本名、顿号分隔、不写泛称',
+    ['novel_extract', 'story_bible'].every((k) => /involved/.test(seed.DEFAULT_TEMPLATES.find((t) => t.key === k).content)
+      && /本名/.test(seed.DEFAULT_TEMPLATES.find((t) => t.key === k).content)));
+}
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 28：剧情卡人物闭环体检（involved 里的人在人物卡/角色库里找不到）
+// ══════════════════════════════════════════════════════════════
+// `involved` 一直被抽出来、也一直显示在分集大纲里（"涉及：…"），却**从来没人核对过这些名字是否存在**。
+// 于是"剧情里有这个人、却没有他的卡与档案"可以一路静默传到剧本：剧本会写到他、分镜里他会出场，
+// 而外貌注入/绑定/参考图全落不到他身上 —— 同一个角色在不同镜头里换脸，链路上没有任何报错。
+group('剧情卡人物闭环体检（批 8 补 28）');
+{
+  const chars = [{ id: 'c1', kind: 'character', name: '林晚', aliases: ['阿晚'] }];
+  const lib = [{ id: 'x1', name: '顾寒' }];
+  const plot = (involved, id = 'p1', name = '夜访') => ({ id, kind: 'plot', name, involved, project_id: 'P', source_id: 'S' });
+  const run = (cards, characters = lib) => story.auditPlotCast(cards, { characters });
+  // 取第一条问题，取不到就给 {}：**断言要红得干净**。直接写 issues[0].x 的话，
+  // 一旦体检被破坏（比如整段不查了），selftest 会以 TypeError 崩掉并中止整轮 ——
+  // 那时你看不出"是哪几条钉在管这件事"，只看到一个栈（对照 IA 真踩到）。
+  const one = (cards, characters = lib) => run(cards, characters).issues[0] || {};
+
+  eq('人物卡里的名字 → 不报', run([...chars, plot('林晚')]).issues.length, 0);
+  eq('人物卡的**别名**也认（阿晚）', run([...chars, plot('阿晚')]).issues.length, 0);
+  eq('角色库里的名字也认（人物卡还没建、但档案已有）', run([plot('顾寒')]).issues.length, 0);
+  eq('多个人名用顿号分隔 → 逐个核（林晚有卡、苏婉儿没有 → 只报后者）',
+    run([...chars, plot('林晚、苏婉儿')]).issues.length, 1);
+  eq('报出来的就是那个找不到的名字', one([...chars, plot('林晚、苏婉儿')]).target_name, '苏婉儿');
+  // 卡片侧**故意**比镜头侧宽松：involved 是模型自由写的，带修饰的写法不该被刷成假警报
+  eq('词里包含已知名字 → 视为已知（"顾寒的对峙"不报）', run([plot('顾寒的对峙')]).issues.length, 0);
+  eq('泛称不进判定（"众人""两人"）', run([...chars, plot('众人、两人、林晚')]).issues.length, 0);
+  eq('空 involved → 不报（没写不等于写错）', run([plot('')]).issues.length, 0);
+  eq('同一张卡提到两次只算一次', (one([plot('苏婉儿、苏婉儿')]).card_ids || []).length, 1);
+  // 聚合：一个不存在的名字常被好几张剧情卡提到，逐卡报会在面板里刷屏
+  const agg = run([plot('苏婉儿', 'p1', '夜访'), plot('苏婉儿', 'p2', '对峙'), plot('苏婉儿', 'p3', '和好')]);
+  eq('按**名字**聚合而不是按卡逐条报（三张卡提到 → 一条）', agg.issues.length, 1);
+  const a1 = agg.issues[0] || {};
+  eq('聚合项如实报出被几张卡提到', (a1.card_ids || []).length, 3);
+  eq('聚合项如实列出涉及的卡名', (a1.cards || []).map((c) => c.name).join(','), '夜访,对峙,和好');
+  eq('说明里带出涉及哪几张卡（只说"3 张"用户还得自己找）',
+    /涉及：「夜访」、「对峙」、「和好」/.test(a1.detail || ''), true);
+  eq('级别是 info 不是 warn（找不到 ≠ 错：可能是没抽到、可能是路人）', a1.level, 'info');
+  eq('不标可一键修复（改名还是补卡要人定）', a1.fixable, false);
+  eq('体检给出口：直达第一张涉及的剧情卡（原著页要 source_id 才载卡片）',
+    `${(a1.go || {}).page}|${((a1.go || {}).params || {}).source_id}|${((a1.go || {}).params || {}).card_id}|${((a1.go || {}).params || {}).kind}`,
+    'novel|S|p1|plot');
+  eq('计数：全按 info 计，不计入 warn', `${agg.counts.warn}/${agg.counts.info}`, '0/1');
+  eq('扫过的剧情卡数如实报出', run([plot('苏婉儿'), { id: 'c', kind: 'character', name: '林晚' }]).scanned, 1);
+  // 近似候选只在"互为子串"时给：能一眼解释清楚，不去猜拼音/编辑距离
+  const near = run([plot('苏婉')], [{ id: 'x', name: '苏婉儿' }]);
+  eq('写简称而库里有全名 → 报，并给出最接近的候选', ((near.issues[0] || {}).near_names || []).join(','), '苏婉儿');
+  eq('候选写进说明里（用户不用自己去猜是哪个角色）', /名字最接近的已有角色是：「苏婉儿」/.test((near.issues[0] || {}).detail || ''), true);
+  eq('毫无关系的名字不给候选（假建议比没建议更糟）', (one([plot('陌生名')]).near_names || []).length, 0);
+  // 与镜头侧的分工：卡片侧早一步、更便宜；这条钉住"它确实比 shot_char_unknown 更早发现"
+  eq('还没生成任何分镜时就能发现（镜头侧要等分镜生成完）', run([plot('苏婉儿')]).issues.length, 1);
 }
 
 console.log(`\n${'═'.repeat(52)}`);
