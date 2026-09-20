@@ -13,10 +13,10 @@ import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, twoClick, confirm, options, setBusy, costConfirm, imgWithFallback, notice } from '../ui.js';
 import { head, projectPicker, renderBatchBar, makeTokenStore } from './helpers.js';
 import { charCount, limitState, FIELD_SOFT_LIMIT } from '../textstats.js';
-import { state, onEvent, syncViewParams, loadCharacters } from '../app.js';
+import { state, onEvent, syncViewParams, loadCharacters, resolveProjectId, rememberProject } from '../app.js';
 
 export default async function storyboards(container, params) {
-  let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
   let episode = Number(params.episode || 1);
   const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   // R14：本项目的角色档案（bootstrap 随 state 下发，不再单独请求）
@@ -93,7 +93,7 @@ export default async function storyboards(container, params) {
   const epSel = container.querySelector('#ep');
   epSel.innerHTML = Array.from({ length: 30 }, (_, i) => i + 1)
     .map((n) => `<option value="${n}"${n === episode ? ' selected' : ''}>第 ${n} 集</option>`).join('');
-  picker.onchange = () => { projectId = picker.value; selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
+  picker.onchange = () => { projectId = rememberProject(picker.value); selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
   epSel.onchange = () => { episode = Number(epSel.value); selected.clear(); syncViewParams({ project: projectId, episode }); load(); };
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#gen-sb').onclick = genFromScript;

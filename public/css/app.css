@@ -142,6 +142,21 @@ html, body {
   margin-top: 1px;
 }
 
+/* 当前项目（UI 重构步 A）：全站**唯一**的项目选择器 —— 选一次，所有创作页都跟着走 */
+.sb-project {
+  padding: 0 10px 12px;
+}
+.sb-project-lbl {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--text-4);
+  letter-spacing: 0.04em;
+  margin-bottom: 5px;
+}
+.sb-project .select { width: 100%; }
+
 .nav { display: flex; flex-direction: column; gap: 3px; flex: 1; overflow-y: auto; }
 
 .nav-item {
@@ -1041,7 +1056,9 @@ body.sb-collapsed .sidebar { padding-left: 10px; padding-right: 10px; }
 body.sb-collapsed .brand { justify-content: center; padding-left: 0; padding-right: 0; }
 body.sb-collapsed .brand-txt,
 body.sb-collapsed .nav-item .lbl,
-body.sb-collapsed .sidebar-footer { display: none; }
+body.sb-collapsed .sidebar-footer,
+/* 折叠态放不下一个下拉框（select 没法省略号截断），整块收起；展开侧栏就在同一处 */
+body.sb-collapsed .sb-project { display: none; }
 body.sb-collapsed .nav-item { justify-content: center; padding: 0 8px; position: relative; }
 body.sb-collapsed .nav-item .badge { position: absolute; top: 5px; right: 6px; transform: scale(0.8); }
 body.sb-collapsed .sb-toggle .lbl { display: none; }

@@ -10,10 +10,10 @@ import {
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, confirm, options, prompt as promptDlg, setBusy, costConfirm, imgWithFallback, errorOutlet } from '../ui.js';
 import { head, projectPicker, makeTokenStore } from './helpers.js';
-import { state, navigate, onEvent } from '../app.js';
+import { state, navigate, onEvent, resolveProjectId, rememberProject } from '../app.js';
 
 export default async function videos(container, params) {
-  let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
   const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   const res0 = (() => { const v0 = sizeForAspect(aspectOf(), 'video'); const i = VIDEO_RESOLUTIONS.findIndex((r) => r.w === v0.w && r.h === v0.h); return i < 0 ? 0 : i; })();
   let mode = 't2v';
@@ -70,7 +70,7 @@ export default async function videos(container, params) {
   // 素材下拉的数据源是 images 数组：切项目必须重渲染表单，否则选到旧项目的图。
   // 提交进行中不重建（会移除 #submit 按钮打断回调链）
   picker.onchange = async () => {
-    projectId = picker.value;
+    projectId = rememberProject(picker.value);
     await loadImages();
     if (!submitting) renderForm();
     loadRecent();

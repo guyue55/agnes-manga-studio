@@ -4239,6 +4239,103 @@ try {
       ok('探针分镜已清理', left === 0, `left=${left}`);
     }
 
+    group('项目上下文唯一来源（UI 重构步 A：选一次，所有创作页都跟着走）');
+    {
+      // 为什么必须有真机契约：这一轮改的是**壳层与页面之间的项目上下文**（此前 6 个页面各写一套解析，
+      // 口径 5 种），而它只在"切页/换项目/深链"这些**用户动作**里才暴露 —— 文本断言全绿也说明不了
+      // "侧栏选一次、页面真的跟着换"。另外这一组刻意用**两个项目各自的角色**来验，
+      // 而不是只看下拉框的值（"只换了个下拉框、数据还是旧的"正是要防的坏形态）。
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b2) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2) });
+      const selVal = (sel) => cdp.eval(`return (document.querySelector('${sel}')||{}).value||'';`);
+      const names = () => cdp.eval(`return [...document.querySelectorAll('#grid .nm')].map((x)=>x.innerText).join('|');`);
+      const remembered = () => cdp.eval(`return localStorage.getItem('agnes.project')||'';`);
+      const prevRemembered = await remembered();
+      let pa = ''; let pb = ''; let pc = '';
+      try {
+        pa = (await POST('/api/projects', { name: '上下文甲剧' })).id;
+        pb = (await POST('/api/projects', { name: '上下文乙剧' })).id;
+        await POST('/api/characters', { project_id: pa, name: '甲角' });
+        await POST('/api/characters', { project_id: pb, name: '乙角' });
+        // 用 API 现建的项目不在壳层 state.projects 里 → 必须真的重来（注意事项 8②）
+        await cdp.eval(`location.hash = '#/characters?project=${pa}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#grid .char-card[data-id]');`), '甲剧角色卡', 12000);
+
+        // ① 壳层与页面用的是**同一个**项目
+        ok('侧栏的项目选择器跟着 URL 走（"我在哪个项目"只有一份答案）',
+          (await selVal('#sb-project')) === pa, JSON.stringify(await selVal('#sb-project')));
+        ok('页内选择器与侧栏是同一个项目（两份控件一份真相）',
+          (await selVal('#p-picker')) === pa, JSON.stringify(await selVal('#p-picker')));
+        ok('页面显示的是这个项目的角色（不是"第一个项目"的）', /甲角/.test(await names()), JSON.stringify(await names()));
+
+        // ② 从侧栏换项目：URL / 记忆 / 页面数据全部跟着走，而**旧项目的参数不许跟着走**
+        await cdp.eval(`location.hash = '#/characters?project=${pa}&q=zzz'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1000);
+        const hashBefore = await cdp.eval(`return location.hash;`);
+        ok('前置：切换前 URL 确实带着属于旧项目的参数（否则下面那条断言测的是空气）',
+          hashBefore.includes('q=zzz'), JSON.stringify(hashBefore));
+        await cdp.eval(`const s=document.querySelector('#sb-project'); s.value='${pb}'; s.dispatchEvent(new Event('change')); return true;`);
+        await waitFor(() => cdp.eval(`return /乙角/.test([...document.querySelectorAll('#grid .nm')].map((x)=>x.innerText).join('|'));`), '乙剧角色卡', 12000);
+        const hash2 = await cdp.eval(`return location.hash;`);
+        ok('换项目后 URL 跟着换（可分享、可刷新还原）', hash2.includes(`project=${pb}`), JSON.stringify(hash2));
+        ok('换项目后侧栏与本地记忆都跟着换',
+          (await selVal('#sb-project')) === pb && (await remembered()) === pb,
+          JSON.stringify({ sb: await selVal('#sb-project'), ls: await remembered() }));
+        ok('换项目后页面**数据**真的换了（不是只换了个下拉框）',
+          /乙角/.test(await names()) && !/甲角/.test(await names()), JSON.stringify(await names()));
+        ok('换项目刻意不带走旧项目的参数（q/episode/source_id 属于旧项目 —— 带着就是"看起来切了、其实指着旧数据"）',
+          !/q=zzz/.test(hash2), JSON.stringify(hash2));
+
+        // ③ 旧别名深链（project_id）必须照旧能打开，并一次性迁到规范名
+        await cdp.eval(`location.hash = '#/characters?project_id=${pb}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1000);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#sb-project');`), '侧栏', 12000);
+        const hash3 = await cdp.eval(`return location.hash;`);
+        ok('旧别名深链（project_id）照旧打开的是那个项目（用户收藏的链接不能失效）',
+          (await selVal('#sb-project')) === pb, JSON.stringify(await selVal('#sb-project')));
+        ok('旧别名被一次性迁到规范名 project（同一件事不许有两个名字）',
+          hash3.includes(`project=${pb}`) && !hash3.includes('project_id='), JSON.stringify(hash3));
+
+        // ⑤ 快照过期：用 API 现建、**不刷新页面**，深链进去必须照旧可用 ——
+        //    这正是本轮真机抓到的回归：`state.projects` 是启动快照，拿它当"项目存不存在"的权威，
+        //    会把刚建好的项目判成死链、切到别的项目去（页面于是显示错的项目的空数据）
+        pc = (await POST('/api/projects', { name: '上下文丙剧' })).id;
+        await POST('/api/characters', { project_id: pc, name: '丙角' });
+        await cdp.eval(`location.hash = '#/characters?project=${pc}'; return true;`);
+        await waitFor(() => cdp.eval(`return /丙角/.test([...document.querySelectorAll('#grid .nm')].map((x)=>x.innerText).join('|'));`), '丙剧角色卡（快照过期也要能用）', 12000);
+        ok('深链到"快照里还没有"的项目照旧可用（快照不是权威，别把新项目判成死链）', true);
+        await waitFor(() => cdp.eval(`return [...document.querySelectorAll('#sb-project option')].some((o)=>o.value==='${pc}');`), '侧栏补齐新项目', 8000).catch(() => null);
+        ok('核对之后侧栏那个选择器也补上了新项目（过期快照顺手修好）',
+          await cdp.eval(`return [...document.querySelectorAll('#sb-project option')].some((o)=>o.value==='${pc}');`));
+
+        // ⑥ 死链（项目真的已删除）：**冷启动深链**（全新导航）也要说清楚 + 切到现有项目，不白屏也不静默。
+        // 这里必须用 Page.navigate 而不是"先设 hash 再 reload"——后者会让页面先渲染一次、
+        // 自己把地址纠正掉，reload 拿到的已经是纠正后的地址，于是那条提示**根本没机会被看到**
+        // （第一版就是这么写的，测出来"没提示"，其实是测法把证据冲掉了）。
+        await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/#/characters?project=__gone__` });
+        await sleep(1600);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#sb-project');`), '侧栏', 12000);
+        let warned = '';
+        for (let i = 0; i < 40; i++) {   // 核对是**异步**的（刻意不拿启动快照下结论）→ 等那条提示出现
+          warned = await cdp.eval(`return [...document.querySelectorAll('.toast')].map((x)=>x.innerText).join(' | ');`);
+          if (/不存在/.test(warned)) break;
+          await sleep(200);
+        }
+        ok('死链给的是"为什么换了项目"的结论（静默换一个等于骗人）', /不存在/.test(warned), JSON.stringify(String(warned).slice(0, 160)));
+        const hash4 = await cdp.eval(`return location.hash;`);
+        ok('死链会切到现有项目并写回 URL（不是白屏、也不是把不存在的项目留在地址栏）',
+          !hash4.includes('__gone__') && (await selVal('#sb-project')) !== '', JSON.stringify(hash4));
+        const rej = await cdp.eval(`return JSON.stringify((window.__uiRejects||[]).slice(0,3));`);
+        ok('项目上下文切换没有留下未处理的拒绝（"成功但页面已经变哑"最难发现）', rej === '[]', rej);
+      } finally {
+        await cdp.eval(`localStorage.setItem('agnes.project', ${JSON.stringify(prevRemembered)}); return true;`).catch(() => null);
+        await J(`/api/projects/${pa}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await J(`/api/projects/${pb}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await J(`/api/projects/${pc}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+      }
+    }
+
     group('页面挂载矩阵（10 页真机冒烟）');
     {
       // 覆盖空洞：browser-test 历史上只走 7 条路由，#/images 与 #/videos 从未真机挂载

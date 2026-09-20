@@ -43,6 +43,8 @@ export const state = {
   home: '',
   version: '',
   current: 'dashboard',
+  // UI 重构步 A：**壳层持有**的当前项目 —— 所有创作页只读它，不再各写一套解析（见 resolveProjectId）
+  projectId: '',
 };
 
 let cleanup = null;
@@ -53,13 +55,105 @@ function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
   const [path, qs] = raw.split('?');
   const params = Object.fromEntries(new URLSearchParams(qs || '').entries());
+  // UI 重构步 A：项目参数的**唯一规范名**是 `project`，但历史上原著页写的是 `project_id` ——
+  // 旧链接（含用户收藏的深链）必须照旧能打开，所以在这里补一个别名，页面只认 `project`。
+  if (!params.project && params.project_id) params.project = params.project_id;
   return { id: path || 'dashboard', params };
+}
+
+// ── 项目上下文（UI 重构步 A）─────────────────────────────────
+/**
+ * 为什么要有这一段：此前 8 个页面各写一套"当前项目是哪個"的解析，口径有 5 种
+ * （`params.project` / `params.project_id` / `state.projects[0]` 兜底 / `agnes.assets.project` /
+ * 硬编码 `''`）。表现是"在这一页选好项目、切到另一页又变回第一个项目"，而同一个链接在不同页面上
+ * 指向不同的项目 —— 这就是"UI 与创作流程关联不强"的根。现在解析只有这一处。
+ */
+const PROJECT_KEY = 'agnes.project';
+// 2.12 的老键。注意它与 `agnes.project` **不是同一个事实**：那个是素材库那个页面的**筛选器记忆**
+// （`''` = 全部项目），这个是"我在哪个项目"。这里只把它当**一次性的默认值来源**读一下，
+// 读不到就当没有偏好 —— 素材库自己的筛选语义本轮不动（它是跨项目素材库，不是创作上下文）。
+const LEGACY_PROJECT_KEY = 'agnes.assets.project';
+
+function readRememberedProject() {
+  try {
+    const v = localStorage.getItem(PROJECT_KEY);
+    if (v) return v;
+    const old = localStorage.getItem(LEGACY_PROJECT_KEY);
+    if (old) { localStorage.setItem(PROJECT_KEY, old); return old; }
+  } catch { /* 隐私模式/配额满：读不到偏好不能拖垮页面，当没有偏好 */ }
+  return '';
+}
+
+/**
+ * 记住"当前项目"：状态 + 本地记忆 + 侧栏那个唯一选择器，三处一次改完。
+ * **不写 URL** —— URL 由 `resolveProjectId` 在挂载时统一规范化（一处写、一处读）。
+ */
+export function rememberProject(id) {
+  const v = String(id || '');
+  const changed = state.projectId !== v;
+  state.projectId = v;
+  try {
+    if (v) localStorage.setItem(PROJECT_KEY, v); else localStorage.removeItem(PROJECT_KEY);
+  } catch { /* 记不住就当没记住 */ }
+  // 侧栏那一个是"我在哪个项目"的**显式声明**，它必须跟着变（否则壳层显示的项目与页面用的不是一回事）
+  if (changed) renderSidebar();
+  return v;
+}
+
+/**
+ * 项目上下文的**唯一解析入口**。顺序（先具体后兜底）：
+ * ① URL（`project`，兼容旧别名 `project_id`）→ ② 壳层当前项目 → ③ 上次记住的 → ④ 第一个项目 → ⑤ 空串。
+ * 解析结果**立刻写回**壳层与 URL，于是"我在哪个项目"永远只有一份答案；空串是**诚实的结论**（还没有项目），
+ * 不是失败。`opts.allowAll` 给素材库那种"跨项目筛选器"用（`__all__` 是显式选择，不改创作上下文）。
+ */
+export const ALL_PROJECTS = '__all__';
+export function resolveProjectId(params = {}, opts = {}) {
+  const asked = String(params.project || '');
+  if (opts.allowAll && asked === ALL_PROJECTS) return '';
+  const known = (id) => !!id && state.projects.some((p) => p.id === id);
+  // URL 里写了的项目**直接用**。为什么不做 `known(asked)` 判断：`state.projects` 是**启动那一刻的快照**，
+  // 它**不是"项目存不存在"的权威** —— 刚用接口建好的项目还不在快照里，拿快照当权威会把它判成死链
+  // （真机上就栽在这里：XSS 探针组用 API 现建的项目深链进分镜页，被判"不存在"而切走）。
+  // 所以：URL 优先，快照只用来**兜底**；"这个项目是不是真的没了"交给下面的异步核对。
+  const id = asked || [state.projectId, readRememberedProject(),
+    state.projects[0] && state.projects[0].id].find(known) || '';
+  if (asked && !known(asked)) verifyProjectLater(asked);
+  rememberProject(id);
+  // URL 也是真相的一部分：把解析结果写回 hash，刷新/分享/后退都还原到同一个项目。
+  // 出现旧别名时**总是**重写一次 —— 否则 `project_id` 会一直留在链接里，同一件事就有两个名字
+  if (asked !== id || params.project_id) syncViewParams({ project: id });
+  return id;
+}
+
+/**
+ * 链接里的项目不在快照里时，**用一份新数据**核对一次（不是拿旧快照下结论）。
+ * 三种结局分得很清：① 项目其实在（快照过期）→ 什么都不说，顺手把快照与侧栏刷新；
+ * ② 真的没了 → 说清楚"为什么换了项目"再切到现有项目（静默换一个等于骗人）；
+ * ③ 核对不了（接口失败）→ **一个字都不说**（宁可不说，也不假警报）。
+ */
+async function verifyProjectLater(id) {
+  let list = null;
+  try {
+    const r = await api.projects();
+    if (r.ok) list = r.data || [];
+  } catch { /* 核对不了就不说 */ }
+  if (!list) return;
+  state.projects = list;            // 顺手修掉过期快照（侧栏那个选择器也就准了）
+  if (list.some((p) => p.id === id)) { renderSidebar(); return; }
+  // "用户已经走开了"要按**地址栏**判，不能按 `state.projectId` 判：壳层在刷新快照时会把这个
+  // 不存在的 id 自己换成一个真项目（那是它该做的），拿它当判据会把这条提示吞掉（真机上就吞了）
+  if ((parseHash().params.project || '') !== id) return;
+  toast.warn('链接指向的项目不存在（可能已删除），已切到现有项目。', 6000);
+  const next = (list[0] && list[0].id) || '';
+  rememberProject(next);
+  navigate(state.current, next ? { project: next } : {});
 }
 
 /** 2.9：静默同步视图状态进 hash（replaceState 不触发 hashchange/不重挂载），刷新与分享链接可还原 */
 export function syncViewParams(patch) {
   const { id, params } = parseHash();
   const next = { ...params, ...patch };
+  delete next.project_id;   // 规范名是 `project`；旧别名由 parseHash 读入、在这里一次性迁走
   for (const k of Object.keys(next)) if (next[k] == null || next[k] === '') delete next[k];
   const qs = new URLSearchParams(next).toString();
   history.replaceState(null, '', '#/' + id + (qs ? '?' + qs : ''));
@@ -120,6 +214,13 @@ function renderSidebar() {
         <div class="brand-sub">本地版 · 数据不出本机</div>
       </div>
     </div>
+    ${state.projects.length ? `
+    <div class="sb-project">
+      <label class="sb-project-lbl" for="sb-project">${icon('folder', 12)} 当前项目</label>
+      <select class="select select-sm" id="sb-project" title="在这里选一次，所有创作页都跟着走">
+        ${state.projects.map((p) => `<option value="${esc(p.id)}"${p.id === state.projectId ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
+      </select>
+    </div>` : ''}
     <nav class="nav">
       ${NAV.map((n) => `
         <button class="nav-item ${n.id === state.current ? 'active' : ''}" data-nav="${n.id}" title="${esc(n.label)}"${n.id === state.current ? ' aria-current="page"' : ''}>
@@ -139,6 +240,13 @@ function renderSidebar() {
   el.querySelectorAll('[data-nav]').forEach((b) => {
     b.onclick = () => navigate(b.getAttribute('data-nav'));
   });
+  const sp = el.querySelector('#sb-project');
+  if (sp) sp.onchange = () => {
+    // 换项目 = 换上下文：**只带 project 重新进入当前页**。刻意不保留 episode / source_id 等参数 ——
+    // 它们属于旧项目，"带着旧参数切项目"正是"看起来切了、其实还指着旧数据"的来源。
+    rememberProject(sp.value);
+    navigate(state.current, { project: sp.value });
+  };
   const tgl = el.querySelector('#sb-toggle');
   if (tgl) tgl.onclick = () => {
     sbCollapsed = !sbCollapsed;
@@ -158,6 +266,13 @@ export async function refreshState() {
     state.templates = r.data.templates || [];
     state.characters = r.data.characters || [];
     state.models = r.data.models || state.models;
+    // 项目上下文要有初始值，侧栏那个选择器才显示得出来；URL 里的项目优先（深链不能被记忆盖掉）
+    if (!state.projects.some((p) => p.id === state.projectId)) {
+      const remembered = readRememberedProject();
+      state.projectId = state.projects.some((p) => p.id === remembered)
+        ? remembered
+        : ((state.projects[0] && state.projects[0].id) || '');
+    }
     renderSidebar();
   }
 }

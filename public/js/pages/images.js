@@ -6,10 +6,10 @@ import { icon, esc, copyText, IMAGE_SIZES, IMAGE_USAGES, modelChoices, sizeForAs
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, confirm, options, setBusy, costConfirm, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, navigate, syncViewParams } from '../app.js';
+import { state, navigate, syncViewParams, resolveProjectId, rememberProject } from '../app.js';
 
 export default async function images(container, params) {
-  let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
   const aspectOf = () => (state.projects.find((p) => p.id === projectId) || {}).aspect_ratio; // T-1：画幅单源
   let storyboardId = params.storyboard || '';
   let mode = params.mode === 'i2i' ? 'i2i' : 't2i';   // 2.9/R11：可分享、可刷新还原
@@ -104,7 +104,8 @@ export default async function images(container, params) {
     });
   })();
   const picker = container.querySelector('#p-picker');
-  picker.onchange = () => { projectId = picker.value; loadStoryboards(); load(); };
+  // 这里以前连 URL 都没写（切了项目刷新就回去），现在统一走 rememberProject
+  picker.onchange = () => { projectId = rememberProject(picker.value); loadStoryboards(); load(); };
   container.querySelector('#reload').onclick = () => { loadStoryboards(); load(); };
   container.querySelector('#gen').onclick = generate;
   container.querySelectorAll('#mode [data-mode]').forEach((b) => {

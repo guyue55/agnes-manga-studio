@@ -1628,6 +1628,56 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
       /!it\.fixable && it\.go/.test(nv) && /data-audit-go/.test(nv));
   }
 
+  // 项目上下文唯一来源（UI 重构步 A）
+  // 为什么钉它：此前 6 个创作页各写一套解析（口径 5 种），表现是"这一页选好项目、切到另一页又变回第一个"。
+  // 钉法只钉**形状**（不许再有第二份解析），不钉具体某一行 —— 换写法不该红，多一份解析才该红。
+  {
+    const appSrc = read(path.join(PUB, 'js', 'app.js'));
+    ok('壳层持有当前项目，并提供唯一解析入口（resolveProjectId / rememberProject）',
+      /projectId: ''/.test(appSrc)
+      && /export function resolveProjectId\(/.test(appSrc)
+      && /export function rememberProject\(/.test(appSrc));
+    ok('旧别名 project_id 只在一处归一（parseHash），页面只认 project',
+      /if \(!params\.project && params\.project_id\) params\.project = params\.project_id;/.test(appSrc)
+      && /delete next\.project_id;/.test(appSrc));
+    ok('解析顺序是"先具体后兜底"：URL → 壳层 → 记忆 → 第一个项目',
+      /asked \|\| \[state\.projectId, readRememberedProject\(\)/.test(appSrc));
+    // 本轮真机抓到的回归：`state.projects` 是**启动快照**，拿它当"项目存不存在"的权威，
+    // 会把刚用接口建好的项目判成死链、切到别的项目去（页面于是显示错项目的空数据）
+    ok('URL 里写的项目**直接用**，不拿启动快照当权威（快照会过期）',
+      !/find\(known\) \|\| '';\s*\n[^\n]*if \(asked && !known\(asked\)\) \{[^}]*warn/s.test(appSrc)
+      && /asked \|\| \[/.test(appSrc));
+    ok('"项目是不是真的没了"用**一份新数据**核对（异步），而且三种结局分开：在 / 真没了 / 核对不了',
+      /async function verifyProjectLater\(/.test(appSrc)
+      && /if \(list\.some\(\(p\) => p\.id === id\)\) \{ renderSidebar\(\); return; \}/.test(appSrc)
+      && /if \(!list\) return;/.test(appSrc));
+    // "用户走开了"按**地址栏**判，不按 state.projectId 判 —— 壳层刷新快照时会自己把这个不存在的 id
+    // 换成一个真项目，拿它当判据会把这条提示吞掉（真机吞过一次）
+    ok('死链提示的"用户已走开"判据是地址栏，不是壳层状态',
+      /\(parseHash\(\)\.params\.project \|\| ''\) !== id/.test(appSrc));
+    // 钉**调用**而不是那句话：注释里也会出现同样的措辞，钉短语会把注释算成第二份实现
+    ok('死链拦截只有一处实现（6 个页面同享，不再各写一句 toast）',
+      (appSrc.match(/toast\.warn\('链接指向的项目不存在/g) || []).length === 1);
+    ok('侧栏渲染全站唯一的项目选择器，并在切换时只带 project 重进当前页',
+      /id="sb-project"/.test(appSrc)
+      && /#sb-project/.test(appSrc)
+      && /navigate\(state\.current, \{ project: sp\.value \}\)/.test(appSrc));
+    // 反向：6 个创作页**不许**再自己解析项目
+    const creators = ['scripts', 'novel', 'storyboards', 'characters', 'images', 'videos'];
+    const ownResolve = creators.filter((f) => {
+      const src = read(path.join(PUB, 'js', 'pages', `${f}.js`));
+      return /params\.project(?!_id)/.test(src) || /params\.project_id/.test(src);
+    });
+    ok('6 个创作页都不再自己解析项目（第二份解析＝同一件事有两个来源）',
+      ownResolve.length === 0, ownResolve.join(','));
+    const notUsing = creators.filter((f) => !/resolveProjectId\(params\)/.test(read(path.join(PUB, 'js', 'pages', `${f}.js`))));
+    ok('6 个创作页都走同一个入口', notUsing.length === 0, notUsing.join(','));
+    ok('页内换项目也写回壳层与记忆（否则壳层显示的项目与页面用的不是一回事）',
+      creators.every((f) => !/projectId = picker\.value/.test(read(path.join(PUB, 'js', 'pages', `${f}.js`)))));
+    ok('素材库的项目控件是**跨项目筛选器**，不是创作上下文（本轮有意不动它）',
+      /agnes\.assets\.project/.test(read(path.join(PUB, 'js', 'pages', 'assets.js'))));
+  }
+
   // 旧代码防护（批 8 补 27）：服务端跑的是旧代码时必须主动说 —— 前端每次从磁盘读、后端只在启动时读一次
   {
     const appSrc = read(path.join(PUB, 'js', 'app.js'));

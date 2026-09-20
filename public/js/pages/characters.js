@@ -13,10 +13,10 @@ import { icon, esc, relTime, CHARACTER_ROLES, IMAGE_USAGES, CHARACTER_FIELD_MAX 
 import { api } from '../api.js';
 import { modal, toast, empty, skeleton, twoClick, options, setBusy, errBox, imgWithFallback } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, softRefresh, syncViewParams } from '../app.js';
+import { state, softRefresh, syncViewParams, resolveProjectId, rememberProject } from '../app.js';
 
 export default async function characters(container, params) {
-  let projectId = params.project || (state.projects[0] && state.projects[0].id) || '';
+  let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口
   let search = (params.q || '').trim().toLowerCase();
   const focusCharId = params.char_id || ''; // 从一致性体检"去处理"跳进来时要定位的角色
   let list = [];
@@ -48,7 +48,7 @@ export default async function characters(container, params) {
 
   const picker = container.querySelector('#p-picker');
   const qInput = container.querySelector('#q');
-  picker.onchange = () => { projectId = picker.value; syncViewParams({ project: projectId }); load(); };
+  picker.onchange = () => { projectId = rememberProject(picker.value); syncViewParams({ project: projectId }); load(); };
   container.querySelector('#reload').onclick = () => load();
   container.querySelector('#new-char').onclick = () => openForm(null);
   // 搜索防抖 + 写回 URL（R11 同款）：刷新/分享链接要能还原筛选

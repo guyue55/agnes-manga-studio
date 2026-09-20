@@ -13,7 +13,7 @@ import {
 import { api } from '../api.js';
 import { modal, toast, empty, spinner, skeleton, options, confirm, setBusy, notice } from '../ui.js';
 import { head, projectPicker } from './helpers.js';
-import { state, softRefresh, syncViewParams } from '../app.js';
+import { state, softRefresh, syncViewParams, resolveProjectId, rememberProject } from '../app.js';
 
 const TAB_TPL = {
   story_concept: 'story_concept',
@@ -25,10 +25,8 @@ const TAB_TPL = {
 
 export default async function scripts(container, params) {
   let tab = params.tab && TAB_TPL[params.tab] ? params.tab : 'story_concept';
-  let projectId = params.project && state.projects.some((p) => p.id === params.project)
-    ? params.project
-    : (state.projects[0] && state.projects[0].id) || '';
-  if (params.project && projectId !== params.project) toast.warn('链接指向的项目不存在（可能已删除），已切到现有项目。', 6000); // E4 死链拦截
+  // UI 重构步 A：项目上下文走**唯一入口**（死链拦截也在那里，一处实现 6 个页面同享）
+  let projectId = resolveProjectId(params);
   let templates = [];
   let result = '';
   let resultCtx = null; // E4：结果诞生时的项目/页签上下文，跨语境保存前必须过问
@@ -114,7 +112,7 @@ export default async function scripts(container, params) {
 
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => {
-    projectId = picker.value; results.clear(); clearResult(); loadSaved();
+    projectId = rememberProject(picker.value); results.clear(); clearResult(); loadSaved();
     epNo = 1; loadEpisodes();
   };
   container.querySelector('#reload').onclick = () => { loadTemplates(); loadSaved(); loadEpisodes(); };

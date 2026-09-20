@@ -21,14 +21,14 @@ import {
 import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, dataOf, options, imgWithFallback } from '../ui.js';
 import { charCount, countLabel, limitState } from '../textstats.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
-import { state, onEvent, syncViewParams, navigate } from '../app.js';
+import { state, onEvent, syncViewParams, navigate, resolveProjectId, rememberProject } from '../app.js';
 import { parseStoryFiles, STORY_FILE_ACCEPT } from '../storyfile.js';
 
 const JOB_KEY = 'agnes.novel.job'; // 解析任务 id：刷新/切页回来能续上进度（与分镜批量的做法一致）
 const TEXT_SOFT = 60000;           // 输入框软上限：超了不拦，只提示"会分很多段、花很多次调用"
 
 export default async function novel(container, params = {}) {
-  let projectId = params.project_id || state.projects[0]?.id || '';
+  let projectId = resolveProjectId(params);   // UI 重构步 A：唯一入口（`project_id` 是旧别名，parseHash 已归一）
   let sourceId = params.source_id || '';   // 当前工作台对着哪一份原著
   let kindFilter = params.kind || '';      // 卡片分组筛选（'' = 全部）
   let sources = [];
@@ -1529,12 +1529,12 @@ export default async function novel(container, params = {}) {
 
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => {
-    projectId = picker.value;
+    projectId = rememberProject(picker.value);
     sourceId = '';
     kindFilter = '';
     plan = null;
     editingId = null;
-    syncViewParams({ project_id: projectId, source_id: '', kind: '' });
+    syncViewParams({ project: projectId, source_id: '', kind: '' });
     renderPlanBox();
     loadSources();
     cards = [];
