@@ -55,6 +55,7 @@ let storyChatCalls = 0; // 批 8：/api/story/plan 必须**一次模型都不调
 // 批 8 补 39：记下服务端**真正发出去**的提示词 messages（断言"合成在服务端"不能只看落库结果 ——
 // 落库是产物，发出去的是输入，两者可以不一致，而这里要验的正是"发出去的那一份进了指纹"）
 let lastPromptChat = null;
+let lastPolishChat = null; // 批 8 补 40：润色链发出去的 messages
 let badJsonUpstream = false; // R10：让上游回 200 + 非 JSON（真实世界里的"网关返回 HTML 错误页"） // T4：记录每次 chat 是否带 response_format（验证"首发带→4xx→降级不带"两跳）
 let lastVideoQueryUrl = null; // v2.0 查询
 let last25QueryUrl = null;    // 2.5 系查询（对照组会覆盖全局，单独记）
@@ -142,6 +143,13 @@ const mock = http.createServer((req, res) => {
         if (userMsg.includes('__EMPTYPROMPT__')) return send(200, { choices: [{ message: { content: '' } }] });
         // 把收到的 user **原样回显**进产物：这样"落库的提示词"能证明它确实由这份输入生成
         return send(200, { choices: [{ message: { content: `MOCKPROMPT:${userMsg.includes('视频') ? 'video' : 'image'}:${userMsg}` } }] });
+      }
+      // 批 8 补 40：润色链（服务端合成）。判据用**来源文本里的标记**而不是模板措辞 ——
+      // 测试会改模板，钉模板措辞会让换了模板的请求掉进别的分支（那样测的就不是这条链了）
+      if (userMsg.includes('__POLISH_SRC__')) {
+        lastPolishChat = cb.messages;
+        if (userMsg.includes('__EMPTYPOLISH__')) return send(200, { choices: [{ message: { content: '' } }] });
+        return send(200, { choices: [{ message: { content: `MOCKPOLISH:${userMsg}` } }] });
       }
       if (/"cards"\s*:/.test(userMsg)) {
         if (userMsg.includes('__BADCHUNK__')) return send(200, { choices: [{ message: { content: '抱歉，这一段我读不懂。' } }] });
@@ -4523,6 +4531,154 @@ group('分镜输入指纹覆盖名册（批 8 补 38：写入点与复算点必�
   // ⑨ 不存在的分镜 → 404（不是静默成功）
   const nf = await api('POST', '/api/storyboards/nope/prompt', { kind: 'image' });
   eq('给不存在的分镜生成 → 404', nf.status, 404);
+
+  await api('DELETE', `/api/projects/${PID}?cascade=1`);
+}
+
+
+group('润色产物的派生过期（批 8 补 40：清单上的第 ② 条）');
+{
+  // 润色是**另存一条**：它的病不是"这一行过期了"，而是"这条派生记录的来源变了"。
+  // 而它带着 plan_digest（本集上下文）报到"没过期" —— 改了来源剧本/优化模板/角色外貌，
+  // 润色稿静默过期，**假 ok 比不检查更糟**。
+  const pj = await api('POST', '/api/projects', { name: '润色派生剧' });
+  const PID = pj.data.id;
+  const SRC = '雨夜的巷口，林晚回头。__POLISH_SRC__';
+  const SID = (await api('POST', '/api/scripts', {
+    project_id: PID, title: '第 1 集', episode_number: 1, content: SRC,
+  })).data.id;
+  const CID = (await api('POST', '/api/characters', { project_id: PID, name: '林晚', appearance: '黑色长直发' })).data.id;
+  const tpls = (await api('GET', '/api/templates?template_type=optimize')).data;
+  const TPL = tpls.find((t) => t.template_type === 'optimize');
+  ok('库里有可用的优化模板', !!TPL, String(tpls.length));
+  const otherTpl = (await api('GET', '/api/templates')).data.find((t) => t.template_type !== 'optimize');
+
+  // ① 润色：合成 / 调用 / 回传指纹全在服务端
+  lastPolishChat = null;
+  const p1 = await api('POST', '/api/scripts/polish', {
+    project_id: PID, template_id: TPL.id, source_text: SRC, source_script_id: SID,
+  });
+  eq('润色返回 ok', p1.data && p1.data.ok, true);
+  ok('产物就是模型给的那一份（mock 把收到的 user 原样回显）',
+    String(p1.data.content).startsWith('MOCKPOLISH:') && String(p1.data.content).includes('雨夜的巷口'));
+  ok('服务端真的把 messages 发出去了（不是前端拼的）',
+    Array.isArray(lastPolishChat) && lastPolishChat.length === 2 && lastPolishChat[0].role === 'system',
+    JSON.stringify(lastPolishChat && lastPolishChat.map((m) => m.role)));
+  ok('发出去的 system 来自**服务端读的模板**', lastPolishChat[0].content === TPL.system);
+  ok('发出去的 user 里有来源文本、模板正文与角色名册',
+    lastPolishChat[1].content.includes('__POLISH_SRC__')
+    && lastPolishChat[1].content.includes(String(TPL.content).slice(0, 8))
+    && lastPolishChat[1].content.includes('林晚'));
+  ok('回传 8 位十六进制指纹', /^[0-9a-f]{8}$/.test(String(p1.data.digest)), String(p1.data.digest));
+  eq('来源正文逐字等于那一行 → 认这个来源', p1.data.source_script_id, SID);
+  eq('来源对得上时如实回报', p1.data.source_matches_row, true);
+  eq('如实回报名册人数（带没带在界面上长得一样就白带了）', p1.data.roster_count, 1);
+
+  // ② 落库：指纹**服务端算**，前端传的假指纹一律不认
+  const created = await api('POST', '/api/scripts', {
+    project_id: PID, title: '润色稿', episode_number: 1, content: p1.data.content,
+    source_script_id: p1.data.source_script_id, source_template_id: p1.data.template_id,
+    source_digest: 'deadbeef', // 前端说"我的指纹是这个" —— 必须被覆盖
+  });
+  const PID2 = created.data.id;
+  const rowOf = async (id) => (await api('GET', `/api/scripts?project_id=${PID}`)).data.find((r) => r.id === id);
+  // 取不到就给空壳：被测行为一被关掉，直接取 `iss[0].go` 会抛 TypeError **中止整轮**
+  // （注意事项 14：对照要"红得干净"，让人看清是哪几条钉在管这件事）
+  const oneOf = (a) => ((a && a.data && a.data.polish_issues && a.data.polish_issues[0]) || { go: { params: {} } });
+  const row2 = await rowOf(PID2);
+  eq('落库记下了来源剧本', row2.source_script_id, SID);
+  eq('落库记下了来源模板', row2.source_template_id, TPL.id);
+  eq('指纹由**服务端**算（前端传的假指纹被覆盖）', row2.source_digest, p1.data.digest);
+  eq('刚润完 → 逐行状态 ok', row2.polish_state, 'ok');
+  const rowSrc = await rowOf(SID);
+  eq('生成稿（来源那一条）不是润色稿：没有 source_script_id', rowSrc.source_script_id, '');
+  eq('生成稿也拿不到润色状态（界面据此不显示任何标记）', rowSrc.polish_state, '');
+
+  // ③ 改来源正文 → 界面逐行说过期、体检也报，且**带出口**
+  await api('PUT', `/api/scripts/${SID}`, { content: '晴天的天台，林晚抬头。__POLISH_SRC__' });
+  eq('改了来源正文 → 润色稿逐行状态 stale', (await rowOf(PID2)).polish_state, 'stale');
+  const aud = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const iss = aud.data.polish_issues || [];
+  ok('体检真的返回了润色分组', iss.length > 0, String(iss.length));
+  eq('体检报出 script_polish_stale', oneOf(aud).code, 'script_polish_stale');
+  eq('过期项并进 issues（面板渲染的是 issues，只在分组字段里等于没显示）',
+    aud.data.issues.some((x) => x.code === 'script_polish_stale'), true);
+  eq('总数 = 各分组之和（新增一组必须同时进总数）',
+    aud.data.counts.warn,
+    aud.data.card_counts.warn + aud.data.shot_counts.warn + aud.data.style_counts.warn
+      + aud.data.ref_counts.warn + aud.data.cast_counts.warn + aud.data.prompt_counts.warn
+      + aud.data.polish_counts.warn);
+  eq('体检报出"有几条润色稿"（分母要看得见）', aud.data.polish_derived, 1);
+  eq('过期项带出口：剧本页', oneOf(aud).go.page, 'scripts');
+  eq('出口点名具体那一条（否则"只有结论没有出口"）', oneOf(aud).go.params.script, PID2);
+  eq('过期项点名来源是哪一条（人要能自己核对）', oneOf(aud).source_script_id, SID);
+  ok('标题说清是"来源已变"而不是"来源没了"', /不再一致/.test(oneOf(aud).title), oneOf(aud).title);
+
+  // ④ 精确性：改**不进名册**的字段不许报过期（报了就是假警报）
+  await api('PUT', `/api/scripts/${SID}`, { content: SRC });
+  eq('来源改回来 → 回到 ok', (await rowOf(PID2)).polish_state, 'ok');
+  await api('PUT', `/api/characters/${CID}`, { personality: '冷淡' });
+  eq('只改 personality（不进名册）→ 仍然 ok', (await rowOf(PID2)).polish_state, 'ok');
+  await api('PUT', `/api/characters/${CID}`, { appearance: '白色短发' });
+  eq('改外貌（进名册）→ stale', (await rowOf(PID2)).polish_state, 'stale');
+  await api('PUT', `/api/characters/${CID}`, { appearance: '黑色长直发' });
+
+  // ⑤ 改模板 → stale（模板也是输入）
+  await api('PUT', `/api/templates/${TPL.id}`, { content: '换个写法：\n\n{{脚本内容}}' });
+  eq('改了优化模板 → stale（模板换了，旧产物确实是按另一套要求写的）',
+    (await rowOf(PID2)).polish_state, 'stale');
+  await api('PUT', `/api/templates/${TPL.id}`, { content: TPL.content });
+  eq('模板改回来 → 回到 ok', (await rowOf(PID2)).polish_state, 'ok');
+
+  // ⑥ 重润：**就地更新**那一条（不再另存），指纹跟着重算
+  const p2 = await api('POST', '/api/scripts/polish', {
+    project_id: PID, template_id: TPL.id, source_text: SRC, source_script_id: SID,
+  });
+  eq('重润拿到新指纹', p2.data.digest, p1.data.digest);
+  const up = await api('PUT', `/api/scripts/${PID2}`, {
+    content: p2.data.content, source_script_id: p2.data.source_script_id, source_template_id: p2.data.template_id,
+  });
+  eq('就地更新成功', up.status, 200);
+  eq('就地重润后回到 ok', (await rowOf(PID2)).polish_state, 'ok');
+  const listNow = (await api('GET', `/api/scripts?project_id=${PID}`)).data;
+  eq('重润没有另存一条（还是那两条剧本）', listNow.length, 2);
+
+  // ⑦ 编辑过的草稿**不冒充**来源（否则判定时复算出来的指纹永远对不上 = 永久假警报）
+  const p3 = await api('POST', '/api/scripts/polish', {
+    project_id: PID, template_id: TPL.id, source_text: '我手改过的内容', source_script_id: SID,
+  });
+  eq('来源正文对不上 → 不认这个来源', p3.data.source_script_id, null);
+  eq('如实回报"来源是编辑过的草稿"', p3.data.source_matches_row, false);
+  const hand = await api('POST', '/api/scripts', {
+    project_id: PID, title: '草稿润色', episode_number: 1, content: p3.data.content,
+    source_script_id: p3.data.source_script_id, source_template_id: p3.data.template_id,
+  });
+  const handRow = await rowOf(hand.data.id);
+  eq('草稿润色稿没有来源（服务端不认）', handRow.source_script_id, '');
+  eq('没有来源的行拿不到状态（界面据此不显示任何标记）', handRow.polish_state, '');
+  eq('它也不进体检的润色分组', (await api('GET', `/api/story/audit?project_id=${PID}`)).data.polish_derived, 1);
+
+  // ⑧ 空输出 → 502 且**不写**（把失败变成静默清空是最难发现的一类失败）
+  const empty = await api('POST', '/api/scripts/polish', {
+    project_id: PID, template_id: TPL.id, source_text: '__POLISH_SRC__ __EMPTYPOLISH__',
+  });
+  eq('模型返回空 → 502（不是静默成功）', empty.status, 502);
+
+  // ⑨ 用错模板 / 不存在的模板 → 404（润色链只该用优化模板）
+  const wrong = await api('POST', '/api/scripts/polish', { project_id: PID, template_id: otherTpl.id, source_text: SRC });
+  eq('拿非优化模板去润色 → 404（入口就挡掉）', wrong.status, 404);
+  const nf = await api('POST', '/api/scripts/polish', { project_id: PID, template_id: 'nope', source_text: SRC });
+  eq('模板不存在 → 404', nf.status, 404);
+  const blank = await api('POST', '/api/scripts/polish', { project_id: PID, template_id: TPL.id, source_text: '   ' });
+  eq('没有可润色的内容 → 400', blank.status, 400);
+
+  // ⑩ 来源剧本被删 → stale 且说清是"失去了来源"
+  await api('DELETE', `/api/scripts/${SID}`);
+  const rowGone = await rowOf(PID2);
+  eq('来源剧本被删 → stale（这份稿已无从追溯）', rowGone.polish_state, 'stale');
+  const aud2 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  ok('标题说清是"失去了来源"而不是"来源已变"',
+    /失去了来源/.test((aud2.data.polish_issues[0] || {}).title || ''), JSON.stringify((aud2.data.polish_issues[0] || {}).title));
 
   await api('DELETE', `/api/projects/${PID}?cascade=1`);
 }

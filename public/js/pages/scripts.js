@@ -37,6 +37,11 @@ export default async function scripts(container, params) {
   // R17：模型刚产出/刚载入的原文。结果区可编辑后必须有"回到原样"的退路，
   // 否则用户改坏了就只能重新烧一次配额。
   let pristine = '';
+  // 批 8 补 40：这份结果区的内容是从**哪一条剧本**载入/派生的、用**哪个模板**润色的。
+  // 保存时如实带上，服务端据此记下"这份稿是从哪儿来的"并算指纹（指纹一律服务端算）。
+  // 用户手改过之后这两个值就"不作数了" —— 由服务端比对正文后说了算（见 optimize）。
+  let resultSourceId = null;
+  let resultTemplateId = null;
   // R17：每个页签各自保留自己的结果。切页签不再丢弃中间产物——"抽取出来的东西"必须回得去，
   // 否则两段式里的"确认"环节没有对象可确认（旧行为：切走即清空，模型产出只能靠手动保存留住）。
   const results = new Map(); // tab -> { text, pristine }
@@ -394,7 +399,9 @@ export default async function scripts(container, params) {
         });
         if (!savedR.ok) { done.push({ ep, ok: false, error: savedR.error }); continue; }
         // 结果区停在最后一集，用户可以直接看/改（逐集产物都已经存好了）
-        result = content; pristine = content; resultCtx = { projectId, tab }; stashResult(); renderResult();
+        result = content; pristine = content; resultCtx = { projectId, tab };
+        resultSourceId = null; resultTemplateId = null; // 刚生成的是"本集上下文"的产物，不是派生稿
+        stashResult(); renderResult();
         done.push({ ep, ok: true });
       } catch (e) {
         done.push({ ep, ok: false, error: (e && e.message) || String(e) });
@@ -619,6 +626,7 @@ export default async function scripts(container, params) {
   }
   function clearResult() {
     result = ''; resultCtx = null; pristine = '';
+    resultSourceId = null; resultTemplateId = null; // 结果没了，派生关系一并作废
     const w = container.querySelector('#result-wrap');
     if (w) w.innerHTML = '';
   }
@@ -770,6 +778,12 @@ export default async function scripts(container, params) {
         model_name: container.querySelector('#model')?.value || '',
         generation_prompt: '',
         plan_digest: epDigest,
+        // 批 8 补 40：这份内容是从哪一条、用哪个优化模板派生的。指纹由**服务端**按它自己库里
+        // 那份来源正文算（前端说了不算）—— 这样判定时用同一个函数复算，两边必然同源。
+        // **有模板才算派生稿**：单纯"载入某一条再保存"只是它的副本，不是润色产物，
+        // 声称派生却记不出模板，只会让体检多一条"未验"的噪音。
+        source_script_id: resultTemplateId ? (resultSourceId || null) : null,
+        source_template_id: resultTemplateId || null,
       });
       setBusy(saveBtn, false);
       if (r.ok) { toast.ok('已保存到项目'); loadSaved(); }
@@ -823,35 +837,48 @@ export default async function scripts(container, params) {
     toast.ok(`已带入「${target}」，确认无误后点生成`);
   }
 
+  /**
+   * 润色（批 8 补 40）：**合成在服务端**，这里只负责发起与落结果。
+   *
+   * 从前是页面自己拼 prompt 再走 `/api/agnes/text` —— 那个端点把 messages 原样转发，
+   * 服务端看不到发出去的那一份，于是"来源文本 + 模板 + 名册"三样输入**一样都进不了指纹**：
+   * 改了来源剧本、或改了优化模板、或改了角色外貌，润色稿静默过期，而它带着本集上下文的
+   * 指纹报到"没过期"。合成搬到服务端之后，"发出去的"与"记指纹的"由构造保证是同一份。
+   */
   async function optimize(tpl) {
     if (!tpl || !result || generating) return;
     generating = true;
     const st = container.querySelector('#gen-status');
     st.innerHTML = `<div class="row" style="margin-top:12px;color:var(--gold-light)"><div class="spinner sm"></div><span style="font-size:12.5px">正在${esc(tpl.name)}…</span></div>`;
-    const base = (tpl.content || '').replace(/\{\{[^}]+\}\}/g, result);
-    const prompt = roster.text ? `${roster.text}\n\n${base}` : base;
     let r;
     try {
-      r = await api.genText({
-        messages: [
-          { role: 'system', content: tpl.system || '你是专业的AI短视频漫剧编剧。' },
-          { role: 'user', content: prompt },
-        ],
-        model: container.querySelector('#model')?.value,
+      r = await api.polishScript({
         project_id: projectId || null,
-        note: tpl.name,
+        template_id: tpl.id,
+        source_text: result,
+        // 只有在"这份文本就是从某条剧本载入的、且没被改过"时才说得出源 —— 改过的话服务端
+        // 比对正文后会把 source_script_id 判成 null（它不冒充是那一条的派生物）
+        source_script_id: resultSourceId || null,
       });
     } finally {
       generating = false;
       st.innerHTML = '';
     }
-    if (!r.ok) { toast.err(r.error); return; }
+    if (!r.ok) { toast.err(r.error); return null; }
     result = r.data.content || result;
     pristine = result; // 润色产出的也是一份"原样"，撤销改动回到这里而不是更早的版本
     resultCtx = { projectId, tab }; // 润色后同样盖上下文戳
+    // 服务端说了算：来源正文对得上才记来源；对不上就记 null（保存时留空 = 体检说"不知道"，
+    // 而不是按那一条复算出永远对不上的指纹 → 天天喊狼来了）
+    resultSourceId = r.data.source_script_id || null;
+    resultTemplateId = r.data.template_id || null;
     stashResult();
     renderResult();
-    toast.ok(`已${tpl.name}`);
+    const how = r.data.source_matches_row
+      ? `来源：${r.data.source_chars} 字的那一条`
+      : '来源是编辑过的草稿（不记来源，过期体检只能说"不知道"）';
+    toast.ok(`已${tpl.name} · ${how} · 角色名册 ${r.data.roster_count} 人`, 6000);
+    return r.data;
   }
 
   /** 把分镜脚本 JSON 一次性写入分镜表 */
@@ -927,7 +954,7 @@ export default async function scripts(container, params) {
       <div class="card" style="margin-bottom:10px;padding:14px">
         <div class="row" style="align-items:flex-start">
           <div style="flex:1;min-width:0">
-            <div style="font-size:12.5px;font-weight:550">${s.episode_number ? `<span class="chip" style="margin-right:6px">第 ${s.episode_number} 集</span>` : ''}${esc(s.title)}</div>
+            <div style="font-size:12.5px;font-weight:550">${s.episode_number ? `<span class="chip" style="margin-right:6px">第 ${s.episode_number} 集</span>` : ''}${esc(s.title)}${s.source_script_id ? '<span class="chip" style="margin-left:6px" title="这是从另一条剧本润色出来的稿子，不是本集直接生成的">润色稿</span>' : ''}${s.polish_state === 'stale' ? `<button type="button" class="prompt-tag prompt-stale" data-repolish="${esc(s.id)}" title="来源剧本/优化模板/角色名册改过了，这份稿还是按改动之前的来源润色的" style="margin-left:6px;cursor:pointer">来源已变·点此重润</button>` : ''}${s.polish_state === 'unknown' ? '<span class="prompt-tag" style="margin-left:6px" title="这份润色稿没有记下来源指纹（本轮之前润色的，或来源是编辑过的草稿）">未验</span>' : ''}</div>
             <div style="font-size:11px;color:var(--text-4);margin-top:3px">${esc(relTime(s.created_at))}${s.model_name ? ` · ${esc(s.model_name)}` : ''}</div>
           </div>
           <button class="icon-btn" data-use="${esc(s.id)}" title="载入到结果区" style="background:rgba(255,255,255,0.07);color:var(--text-2)">${icon('edit', 13)}</button>
@@ -939,7 +966,41 @@ export default async function scripts(container, params) {
     el.querySelectorAll('[data-use]').forEach((b) => {
       b.onclick = () => {
         const s = saved.find((x) => x.id === b.getAttribute('data-use'));
-        if (s) { result = s.content; pristine = s.content; resultCtx = { projectId, tab: s.script_type || tab }; stashResult(); renderResult(); toast.ok('已载入'); }
+        if (s) {
+          result = s.content; pristine = s.content; resultCtx = { projectId, tab: s.script_type || tab };
+          resultSourceId = s.id; resultTemplateId = null; // 载入的是"某一条"本身：它没有模板来源
+          stashResult(); renderResult(); toast.ok('已载入');
+        }
+      };
+    });
+    // 批 8 补 40：「来源已变」的出口**就在标记旁边**。重润要用**它自己记下的那个模板**，
+    // 不是让用户去猜当初用的是哪一个（猜错就是另一份东西）。
+    el.querySelectorAll('[data-repolish]').forEach((b) => {
+      b.onclick = async () => {
+        const s = saved.find((x) => x.id === b.getAttribute('data-repolish'));
+        if (!s) return;
+        const tpl = templates.find((t) => t.id === s.source_template_id);
+        if (!tpl) { toast.err('当初用的优化模板已经删了——请从下面的优化按钮里挑一个重做'); return; }
+        if (s.content !== result) {
+          if (!(await confirm({ text: `重润要用「${tpl.name}」重跑一次模型，会覆盖当前结果区（未保存的改动会丢）。继续？`, okText: '重润' }))) return;
+        }
+        // 重润的**来源是那一条来源剧本**（不是这份已经过期的润色稿）：这样重跑出来的
+        // 才是"按当前来源"的那一份，而不是"在旧产物上再润一遍"
+        const src = saved.find((x) => x.id === s.source_script_id);
+        if (!src) { toast.err('来源剧本已经不在了——这份稿只能删掉或改成手写'); return; }
+        result = src.content; pristine = src.content; resultSourceId = src.id; resultTemplateId = null;
+        stashResult(); renderResult();
+        const data = await optimize(tpl);
+        if (!data) return;
+        // **就地更新这一条**，不再另存一条：重润是"把这份派生稿刷新到当前来源"，
+        // 另存会让每重润一次就多一份，而那份旧的过期稿永远挂在那儿继续报过期
+        const up = await api.updateScript(s.id, {
+          content: data.content,
+          source_script_id: data.source_script_id,
+          source_template_id: data.template_id,
+        });
+        if (up.ok) { toast.ok('已就地重润（更新原记录，没有另存一条）'); loadSaved(); }
+        else toast.err(up.error);
       };
     });
     el.querySelectorAll('[data-del]').forEach((b) => {

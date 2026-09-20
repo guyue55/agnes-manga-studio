@@ -3222,6 +3222,100 @@ group('图片/视频提示词：合成唯一一份 + 输入指纹（批 8 补 39
   }
 }
 
+group('润色产物的派生过期（批 8 补 40：清单上的第 ② 条）');
+{
+  // 润色是**另存一条**（不是原地写回）：它的病不是"这一行过期了"，而是"这条派生记录的来源变了"。
+  // 纯函数层要钉住三件事：① 指纹覆盖了**全部三样输入**（来源文本/模板 system+content/名册）；
+  // ② 判定分得清"过期"与"不知道"；③ 不是润色稿的行**不许**被报（那是补 12 的过期体检在管）。
+  const storyLib = require('./lib/story.js');
+  const tpl = { id: 't1', name: '强化冲突', system: 'SYS-A', content: '请优化脚本，强化冲突：\n\n{{脚本内容}}' };
+  const chars = [{ name: '林晚', appearance: '黑色长直发', alias: [] }];
+  const SRC = '雨夜的巷口，林晚回头。';
+
+  // ① 合成的形状与既有那条链一致（同样的 messages 形状 → 代理端点原样转发）
+  const a = storyLib.polishInput(SRC, tpl, chars);
+  eq('润色的 messages 是 system + user 两条', a.messages.length, 2);
+  eq('system 就是模板的 system', a.messages[0].content, 'SYS-A');
+  ok('来源文本真的进了 user', a.messages[1].content.includes(SRC));
+  ok('模板正文也进了 user（模板换了就该重润）', a.messages[1].content.includes('请优化脚本，强化冲突'));
+  ok('名册也进了 user（角色外貌改了就该重润）', a.messages[1].content.includes('林晚'));
+  ok('回传名册人数（界面要如实说带了几个角色）', a.roster_count === 1, String(a.roster_count));
+  eq('input_chars 数的是真的发出去的那一份', a.input_chars, a.messages[1].content.length);
+  // 模板里所有 {{...}} 都换成来源文本（optimize 模板的变量名由模板作者定，不按名字取）
+  const two = storyLib.polishInput(SRC, { system: 's', content: '{{A}} 与 {{B}}' }, []);
+  eq('模板里多个变量都换成来源文本', two.messages[1].content, `${SRC} 与 ${SRC}`);
+  // 模板没有 system 时有兜底（与前端从前的兜底逐字一致）
+  ok('模板没有 system 时用兜底人设', storyLib.polishInput(SRC, { content: 'x' }, []).messages[0].content.includes('编剧'));
+
+  // ② 指纹覆盖"真的发出去的那一份"：逐样输入各改一次，都必须变
+  const d0 = a.digest;
+  ok('同一份输入 → 同一个指纹（可复算）', storyLib.polishInput(SRC, tpl, chars).digest === d0);
+  ok('来源文本变了 → 指纹变', storyLib.polishInput('晴天的天台。', tpl, chars).digest !== d0);
+  ok('模板正文变了 → 指纹变', storyLib.polishInput(SRC, { ...tpl, content: '换个写法：{{脚本内容}}' }, chars).digest !== d0);
+  ok('模板 system 变了 → 指纹变（模板也是输入）', storyLib.polishInput(SRC, { ...tpl, system: 'SYS-B' }, chars).digest !== d0);
+  ok('角色外貌变了 → 指纹变（名册是输入）', storyLib.polishInput(SRC, tpl, [{ name: '林晚', appearance: '白色短发', alias: [] }]).digest !== d0);
+  ok('没有来源文本 → 空串（"不知道来源"要与"内容一致"分开）', storyLib.polishInputDigest('', tpl, chars) === '');
+  ok('指纹是 8 位十六进制', /^[0-9a-f]{8}$/.test(d0), d0);
+
+  // ③ 判定：ok / stale / unknown 三态，且**两种"不知道"分得清**
+  const mk = (over) => ({
+    id: 'p1', title: '润色稿', project_id: 'pj', episode_number: 1,
+    content: 'POLISHED', source_script_id: 's1', source_template_id: 't1',
+    source_digest: d0, ...over,
+  });
+  const srcRow = { id: 's1', title: '第1集', content: SRC, episode_number: 1 };
+  const audit = (scripts, tpls = [tpl], cs = chars) => storyLib.auditPolishStaleness(scripts, { characters: cs, templates: tpls });
+  // 取不到就给个空壳：被测行为一被关掉，直接取 `issues[0].x` 会抛 TypeError **中止整轮**，
+  // 让人看不出到底哪几条钉在管这件事（注意事项 14）
+  const one = (x) => (x.issues && x.issues[0]) || { go: { params: {} } };
+
+  let r = audit([srcRow, mk({})]);
+  eq('来源与模板都没变 → ok', r.states.p1, 'ok');
+  eq('没有过期项时 issues 为空', r.issues.length, 0);
+  eq('derived 数出"有几条润色稿"', r.derived, 1);
+
+  r = audit([srcRow, mk({})], [{ ...tpl, content: '改了：{{脚本内容}}' }]);
+  eq('模板改了 → stale', r.states.p1, 'stale');
+  eq('过期项带 code', one(r).code, 'script_polish_stale');
+  eq('过期项是 warn（不是错，是"该重做"）', one(r).level, 'warn');
+  eq('过期项不可一键修复（要花钱调模型）', one(r).fixable, false);
+  eq('过期项点名来源是哪一条（人要能自己核对）', one(r).source_script_id, 's1');
+  eq('过期项带出口：剧本页 + 具体那一条', one(r).go.page, 'scripts');
+  eq('出口参数带 script（否则"只有结论没有出口"）', one(r).go.params.script, 'p1');
+  ok('过期项说清是"来源已变"而不是"来源没了"', /不再一致/.test(one(r).title), one(r).title);
+
+  r = audit([srcRow, mk({ source_digest: 'deadbeef' })]);
+  eq('指纹对不上 → stale', r.states.p1, 'stale');
+
+  r = audit([srcRow, mk({ source_digest: '' })]);
+  eq('没有指纹 → unknown（不是 stale：不知道 ≠ 过期）', r.states.p1, 'unknown');
+  eq('unknown 不报 issue（宁可说不知道，也不喊狼来了）', r.issues.length, 0);
+  eq('unknown 也不计入 warn', r.counts.warn, 0);
+
+  r = audit([srcRow, mk({ source_template_id: '' })]);
+  eq('没记模板 → unknown', r.states.p1, 'unknown');
+  r = audit([srcRow, mk({})], []); // 模板被删了
+  eq('模板被删 → unknown（不猜）', r.states.p1, 'unknown');
+
+  r = audit([mk({})]); // 来源剧本不在了
+  eq('来源剧本被删 → stale（这份稿已无从追溯）', r.states.p1, 'stale');
+  ok('来源被删时标题说清是"失去了来源"', /失去了来源/.test(one(r).title), one(r).title);
+  eq('来源被删也算 warn', r.counts.warn, 1);
+
+  // ④ 不是润色稿的行**一条都不许报**（那是补 12 的过期体检在管，两处都报 = 假警报）
+  const genRow = { id: 'g1', title: '生成稿', project_id: 'pj', episode_number: 1, content: 'X', plan_digest: 'abc' };
+  r = audit([genRow, srcRow, mk({})]);
+  eq('生成稿（没有 source_script_id）不被本条报', r.states.g1, undefined);
+  eq('derived 只数润色稿', r.derived, 1);
+  eq('生成稿不产生 issue', r.issues.length, 0);
+  r = audit([genRow, srcRow, mk({ source_digest: 'deadbeef' })]);
+  eq('只有润色稿那一条报', r.issues.length, 1);
+  eq('报的是润色稿', one(r).target_id, 'p1');
+
+  // ⑤ 两个方向都要钉：把"判定"关掉，上面的绿必须变红（写成反事实断言）
+  ok('反事实：把指纹换掉必须变 stale（证明上面那条 ok 不是恒真）',
+    audit([srcRow, mk({ source_digest: 'deadbeef' })]).states.p1 === 'stale');
+}
 console.log(`\n${'═'.repeat(52)}`);
 console.log(`  自检结果：${pass} 通过 / ${fail} 失败`);
 if (failures.length) {

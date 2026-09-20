@@ -4353,6 +4353,113 @@ try {
       } finally { mock.close(); }
     }
 
+    group('润色稿的来源可见、过期可重润（批 8 补 40）');
+    {
+      // 服务端合成有 selftest、端到端有 apitest，但"**页面上真的看得见来源变了、点得动重润**"
+      // 只有真机看得见 —— 而这一轮要治的正是"改了来源剧本、润色稿还是旧的，界面上两条都正常"。
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const jpost = (u, b) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      const jput = (u, b) => J(u, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      const polishUsers = [];
+      const mock = http.createServer((req, res) => {
+        const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+        let body = ''; req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          if (req.url.startsWith('/v1/chat/completions')) {
+            let cb = {}; try { cb = JSON.parse(body); } catch { /* 原样通过 */ }
+            const user = String(((cb.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            // 判据用来源文本里的标记，不用模板措辞（模板是可编辑的，钉措辞会在换模板时掉进兜底分支）
+            if (user.includes('__POLISH_SRC__')) {
+              polishUsers.push({ user, sys: String(((cb.messages || []).find((m) => m.role === 'system') || {}).content || '') });
+              return send(200, { choices: [{ message: { content: `REALPOLISH ${polishUsers.length}` } }] });
+            }
+            return send(200, { choices: [{ message: { content: '{}' } }] });
+          }
+          send(200, {});
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mPort = mock.address().port;
+      try {
+        await jput('/api/settings', { agnes_api_base_url: `http://127.0.0.1:${mPort}/v1`, agnes_api_key: 'p40-mock-key' });
+        const pid = (await jpost('/api/projects', { name: '润色真机剧' })).id;
+        const SRC = '雨夜的巷口，林晚回头。__POLISH_SRC__';
+        const SID = (await jpost('/api/scripts', { project_id: pid, title: '第 3 集', episode_number: 3, content: SRC })).id;
+        await jpost('/api/characters', { project_id: pid, name: '林晚', appearance: '黑色长直发' });
+        // 新建项目要走 Page.reload（注意事项 8：API 现建的项目不在壳层 state.projects 里）
+        await cdp.send('Page.reload', {});
+        await sleep(400);
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}'; return true;`);
+        // 等"已保存列表里的数据行"，不是等静态按钮
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#saved [data-use]').length >= 1`), '剧本列表数据行');
+
+        // ① 载入来源 → 点一个优化模板 → 服务端合成并调模型
+        await cdp.eval(`document.querySelector('#saved [data-use]').click(); return true;`);
+        await waitFor(() => cdp.eval(`!!document.querySelector('#opt-chips [data-tpl]')`), '优化模板按钮');
+        await cdp.eval(`document.querySelector('#opt-chips [data-tpl]').click(); return true;`);
+        let polished = true;
+        try { await waitFor(() => cdp.eval(`(document.querySelector('#r-out')||{}).innerText?.includes('REALPOLISH')`), '润色产物落进结果区', 25000); }
+        catch { polished = false; }
+        ok('① 点优化模板走通：产物出现在结果区', polished);
+        ok('① 模型收到的是**服务端合成的** messages（含来源文本与角色名册）',
+          polishUsers.length === 1 && polishUsers[0].user.includes('__POLISH_SRC__')
+          && polishUsers[0].user.includes('林晚'),
+          JSON.stringify(polishUsers.map((x) => x.user.slice(0, 60))));
+
+        // ② 保存 → 列表出现「润色稿」标记，且刚润完**不**显示过期
+        await cdp.eval(`document.querySelector('#r-save').click(); return true;`);
+        let savedOk = true;
+        try { await waitFor(() => cdp.eval(`document.querySelectorAll('#saved [data-use]').length >= 2`), '润色稿入列表', 20000); }
+        catch { savedOk = false; }
+        ok('② 保存后列表里出现第二条（润色是"另存一条"）', savedOk);
+        ok('② 润色稿标出「润色稿」（来源是可见的事实，不是隐藏状态）',
+          await cdp.eval(`document.querySelector('#saved').innerText.includes('润色稿')`));
+        ok('② 刚润完不显示"来源已变"', !(await cdp.eval(`!!document.querySelector('[data-repolish]')`)));
+
+        // ③ 改来源剧本 → 刷新 → **界面自己说"来源已变"**（这一轮真正要看见的那件事）
+        await jput(`/api/scripts/${SID}`, { content: '晴天的天台，林晚抬头。__POLISH_SRC__' });
+        await cdp.send('Page.reload', {});
+        await sleep(400);
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}'; return true;`);
+        await waitFor(() => cdp.eval(`document.querySelectorAll('#saved [data-use]').length >= 2`), '刷新后列表还在');
+        // 核心断言：等不到就**断言不成立**，不让 waitFor 抛超时中止整轮（注意事项 14）
+        let sawStale = true;
+        try { await waitFor(() => cdp.eval(`!!document.querySelector('[data-repolish]')`), '来源已变标记', 10000); }
+        catch { sawStale = false; }
+        const staleTxt = await cdp.eval(`(document.querySelector('[data-repolish]')||{}).innerText || ''`);
+        ok('③ 改了来源剧本 → 润色稿自己标"来源已变"（不用用户记住"我改过来源"）',
+          sawStale && /来源已变/.test(staleTxt), JSON.stringify({ sawStale, staleTxt }));
+
+        // ④ 点重润 → 确认 → **就地更新**，标记消失且不另存一条
+        const n0 = polishUsers.length;
+        const rowsBefore = (await J(`/api/scripts?project_id=${pid}`)).length;
+        let repolished = true;
+        if (sawStale) {
+          await cdp.eval(`document.querySelector('[data-repolish]').click(); return true;`);
+          // 重润要花钱，页面会先问一次（取不到按钮就只让断言不成立，不在 null 上点出 TypeError）
+          let asked = true;
+          try { await waitFor(() => cdp.eval(`!!document.querySelector('.modal-foot [data-yes]')`), '重润确认弹窗', 8000); }
+          catch { asked = false; }
+          if (asked) {
+            await cdp.eval(`document.querySelector('.modal-foot [data-yes]').click(); return true;`);
+            try { await waitFor(() => cdp.eval(`!document.querySelector('[data-repolish]')`), '重润后标记消失', 30000); }
+            catch { repolished = false; }
+          } else repolished = false;
+        } else repolished = false;
+        ok('④ 重润真的重新调了模型、且按**当前**来源（内容已变成"晴天的天台"）',
+          repolished && polishUsers.length === n0 + 1 && polishUsers[n0].user.includes('晴天的天台')
+          && !polishUsers[n0].user.includes('雨夜的巷口'),
+          JSON.stringify({ repolished, sent: polishUsers.length - n0, last: polishUsers[n0] && polishUsers[n0].user.slice(0, 60) }));
+        ok('④ 重润后"来源已变"标记消失（结论跟着真的落库那一份走）', repolished);
+        const rowsAfter = (await J(`/api/scripts?project_id=${pid}`)).length;
+        ok('④ 重润是**就地更新**、没有另存一条（否则每重润一次就多一份过期的旧稿）',
+          rowsAfter === rowsBefore, `${rowsBefore} → ${rowsAfter}`);
+        ok('④ 页面控制台零错误（新链路没有靠报错兜底）', errors.length === 0, JSON.stringify(errors.slice(0, 3)));
+        await jput('/api/settings', { agnes_api_key: '' });
+        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
+      } finally { mock.close(); }
+    }
+
     const collected = await cdp.eval(`({hookLive: Array.isArray(window.__uiErrors), errors: window.__uiErrors || [], rejects: window.__uiRejects || []})`);
     ok('异常钩子存活（自证非空跑：reload 后仍可捕获）', collected?.hookLive === true, JSON.stringify(collected));
     ok('无 window error', collected?.errors?.length === 0, JSON.stringify(collected?.errors || []));

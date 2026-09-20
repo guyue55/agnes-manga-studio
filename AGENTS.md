@@ -197,26 +197,25 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   （不是静默 ok）—— 按真实失败模式改断言，没按预想去改代码。顺带补上**从没被钉过的前提**：
   `shotsFromText` 少传第三个参数不报错、但整批分镜指纹变空串 → 体检**永远只能说 `unknown`**，现在真机钉住。
   清单上还剩两条：图片/视频提示词（原地写回，"派生字段过期"）与剧本润色（另存一条）——**第 ① 条已由补 39 做掉**。
-- **图片/视频提示词：合成搬家 + 输入指纹（批 8 补 39）："派生字段"是"输入变了产物没变"的第三种形态**：
-  `image_prompt`/`video_prompt` 由"这一镜的内容 + 提示词模板"生成后**原地写回同一行** —— 改了画面描述/动作/出场人物，
-  提示词一个字都不变，出图照着**旧描述**出，而界面两条都"看起来正常"、体检也照不到（它答的是"该不该重生成分镜"）。
-  **病根是合成在前端**：`batchPrompts` 把 system 与 user 硬编码在页面里再走 `/api/agnes/text`，而该端点把
-  `messages` **原样转发** → 服务端**看不到**真正发出去的那一份，**不可能**给它算指纹（补 36/37/38 同一条理由）。
-  修法：`story.promptInput(shot, kind, tpl, chars)` **唯一一份**合成（指纹覆盖 **system + user 逐字**），
-  `POST /api/storyboards/:id/prompt` 把**合成 → 调模型 → 落库 → 记指纹**一次做完，前端只逐条推进度 ——
-  **"发出去的"与"进指纹的"由构造保证同一份**。**顺手抓到一个整分区级别的假承诺**：`seed.js` 一直有
-  `image_prompt`/`video_prompt` 两个内置模板（设置页能编辑 system 与正文变量），而**没有任何一行代码读过它们**
-  （补 25 同类）；现在模板真正生效，补 7 的**三条禁令**搬进模板 `system`，正文变量**对齐"服务端真的填得出"的那几个**
-  （删 `{{镜头运动}}`＝使用点注入；删 `{{情绪目标}}`＝**分镜行上没这个字段**，填不出会被 `renderPrompt` 换成空串）。
-  精确性：**不进提示词的字段改了不许报**（`camera_move`/`negative_prompt`/`duration_seconds` 等），四态分明
-  `ok`/`stale`/`unknown`/**`missing`（还没生成，不报）**，模板读不到一律 `unknown`；**手写提示词也记指纹**
-  （否则手写过的行永远报过期）；**模型返回空不写库并报错**。出口：分镜列表**逐行**下发 `image_prompt_state`，
-  提示词列自标「提示词过期·点此重做」—— **重做入口必须就在标记旁边**（批量补提示词默认跳过已有提示词，
-  在批量入口里点不到；补 15 的同一形状）。**教训**：① **"派生字段"要单独想一遍**，与"该重生成"混着想会得出
-  "已经有体检了"；② **调研要顺手问"这东西真的被读过吗"**（一次"谁读了这个 key"的检索比读十遍代码便宜）；
-  ③ **搬家的理由是"指纹需要看到它"**；④ **出口要放在用户动作发生的那一页**；⑤ **"模板也是输入"**；
-  ⑥ 注释里引用旧变量名会让"整段匹配"的断言打在注释上 —— 断言要落在**真正发出去的那一行**。
-  对照 MA–MF、还剩的一条（`builtin_digest` 只覆盖 `content` 不覆盖 `system`）见 §6.39 与 `docs/issues.md` B102。
+- **图片/视频提示词（批 8 补 39）+ 剧本润色（批 8 补 40）：派生字段与派生记录是"输入变了产物没变"的第三、四种形态**：
+  补 39 治**原地写回**（`image_prompt`/`video_prompt` 由"这一镜内容 + 提示词模板"生成后写回同一行 ——
+  改了描述，提示词一个字不变，出图照**旧描述**出，而体检答的是"该不该重生成分镜"、照不到它）；
+  补 40 治**另存一条**（润色稿由"来源正文 + optimize 模板 + 角色名册"派生，改了来源它一个字不变，
+  却带着 `plan_digest`（本集上下文）报到 `ok` —— **一个与真实来源无关的 ok**）。两者**病根同一条**：
+  **合成在前端**（`batchPrompts` 硬编码 system/user、`optimize()` 自己 `replace` 模板变量），
+  而 `POST /api/agnes/text` 把 `messages` **原样转发** → 服务端**看不到**真正发出去的那一份，
+  **不可能**给它算指纹（补 36/37/38 同一条理由）。修法都是**搬家**：`story.promptInput` /
+  `story.polishInput` 各是**唯一一份**合成（指纹覆盖 **system + user 逐字**；润色的名册按**被润色的那份文本**算
+  —— 页面上的生成表单字段服务端**复算不到**，而**复算不到的输入进不了指纹**），
+  `POST /api/storyboards/:id/prompt` / `POST /api/scripts/polish` 把**合成 → 调模型 → 落库/回传 → 记指纹**一次做完。
+  剧本行新增 `source_script_id`/`source_template_id`/`source_digest`，**指纹一律服务端算**（前端说了不算）；
+  **编辑过的草稿不冒充来源**（比对正文逐字相同才认，否则留空 → `unknown`）—— 照记会让复算的指纹**永远对不上**
+  ＝永久假警报（对照 NG 实测）。精确性：`ok`/`stale`（变了）/`stale`（来源被删，文案不同）/`unknown` 四态分明，
+  **不是派生稿的行一条都不报**；**不进指纹的字段改了不许报**（`camera_move`/`personality` 等）。
+  出口都在用户动作发生的那一页：分镜列表逐行 `image_prompt_state`、剧本列表逐行 `polish_state`，
+  标记旁边就是重做入口（润色重润**就地更新**那一条，不另存）。顺手抓到**整分区级别的假承诺**：`seed.js` 的
+  `image_prompt`/`video_prompt` 模板**没有任何一行代码读过**（补 25 同类），现已生效并把补 7 的三条禁令搬进 `system`。
+  对照 MA–MF / NA–NG、残留的 `builtin_digest` 只覆盖 `content` 不覆盖 `system` 见 §6.39/§6.40 与 `docs/issues.md` B102/B103。
 
 - **AI 补分幕次（批 8 补 32）：把"该由模型干的分类"和"不该由模型编的事实"分开**：补 31 之后回头数一遍体检里
   **所有 `fixable: false`** 的项（那就是"必须用户自己动手"的清单）：`no_inject`/`char_no_look` 要**写内容**（创作），
@@ -353,7 +352,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 1132 / apitest 1230 / uitest 1188 / browser-test 553），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，弹窗与内联面板两类动作钩子都有"声明了动作就必须有产出"的自检）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 1174 / apitest 1276 / uitest 1202 / browser-test 563），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，弹窗与内联面板两类动作钩子都有"声明了动作就必须有产出"的自检）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 

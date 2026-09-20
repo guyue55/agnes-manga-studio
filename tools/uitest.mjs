@@ -1788,10 +1788,13 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /story\.auditCharacterDrift\(cards/.test(routesSrc) && /drift_issues/.test(routesSrc)
     // 批 8 补 28：又加了卡片侧人物闭环一组 —— 这行断言要跟着走，否则"新增一组却忘了并进 issues"
     // （= 界面永远看不见）会静默通过
-    && /styleIssues\.issues, drift\.issues, refGaps\.issues, cast\.issues, promptStale\.issues\)/.test(routesSrc)
+    && /styleIssues\.issues, drift\.issues, refGaps\.issues, cast\.issues, promptStale\.issues/.test(routesSrc)
     && /cast_issues: cast\.issues/.test(routesSrc)
     // 批 8 补 39：又加一组（提示词过期）—— 同上，"新增一组却忘了并进 issues"必须红
-    && /prompt_issues: promptStale\.issues/.test(routesSrc));
+    && /prompt_issues: promptStale\.issues/.test(routesSrc)
+    // 批 8 补 40：再加一组（润色派生过期）—— 同一条棘轮，新增一组必须同时进 issues
+    && /polishStale\.issues\)/.test(routesSrc)
+    && /polish_issues: polishStale\.issues/.test(routesSrc));
   ok('同步修复只写外貌/服饰/别名，不碰角色定位与性格',
     /code === 'sync_character'/.test(routesSrc) && !/patch\.(role|personality|gender|age) =/.test(routesSrc));
 
@@ -1906,6 +1909,51 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
       && /character_ids/.test(storySrc));
   }
 
+  // ── 润色产物的派生过期（批 8 补 40）──
+  // 与补 39 同一条病根：润色真正的输入（来源文本 / 优化模板 / 角色名册）**前端全都有**，
+  // 但合成留在页面上，服务端就看不到真正发出去的那一份，也就不可能给它算指纹。
+  // 所以这里钉的不是"算得对不对"（那是 selftest/apitest 的事），而是**合成与指纹只在服务端**。
+  {
+    const scriptsSrc = read(path.join(PUB, 'js/pages/scripts.js'));
+    ok('前端不再自己拼润色提示词（合成只有服务端一份）',
+      !/tpl\.content \|\| ''\)\.replace\(\/\\{\\{/.test(scriptsSrc)
+      && !/roster\.text \? `\$\{roster\.text\}/.test(scriptsSrc)
+      && /api\.polishScript\(/.test(scriptsSrc));
+    ok('润色改走服务端端点（不再直接打 /api/agnes/text）',
+      /polishScript: \(p\) => req\('POST', '\/api\/scripts\/polish'/.test(apiSrc)
+      // 合成搬走之后，润色这条路上不该再出现"自己拼 messages 再调模型"
+      && !/api\.genText\(/.test(scriptsSrc.split('async function optimize')[1].split('\n  }')[0] || 'x'));
+    ok('保存时如实带上"从哪一条、用哪个模板派生的"',
+      /source_script_id: resultTemplateId \? \(resultSourceId \|\| null\) : null/.test(scriptsSrc)
+      && /source_template_id: resultTemplateId \|\| null/.test(scriptsSrc));
+    // 前端只搬运服务端算好的 `plan_digest`（本集上下文），**从不**自己算润色指纹 ——
+    // 算一遍传上来，来源一改两边的口径就会分叉（补 37 的病根）。所以这里钉"页面里根本没有它"
+    ok('前端**不**自己算润色指纹（算一遍传上来就会与复算口径分叉）',
+      !/source_digest/.test(scriptsSrc) && !/\.digest\b/.test(scriptsSrc));
+    ok('服务端有唯一的合成与指纹实现（写入点与复算点共用）',
+      /function polishInput\(sourceText, tpl, chars, opts = \{\}\)/.test(storySrc)
+      && /function polishInputDigest\(sourceText, tpl, chars, opts = \{\}\)/.test(storySrc)
+      && /story\.polishInputDigest\(src\.content, tpl, projectCharacters\(src\.project_id\)\)/.test(routesSrc)
+      && /polishInputDigest\(src\.content, tpl, chars\)/.test(storySrc));
+    ok('指纹一律服务端算（前端传的 source_digest 不许被采信）',
+      /patch\.source_digest = \(src && tpl\) \?/.test(routesSrc)
+      && !/body\.source_digest/.test(routesSrc));
+    ok('润色端点只认 optimize 模板（拿错模板会把整份剧本塞进去，产物看着像模像样）',
+      /function tryPolishTemplate\(id\)/.test(routesSrc)
+      && /t\.template_type === 'optimize' \? t : null/.test(routesSrc)
+      && /优化模板不存在（或它不是优化类模板）/.test(routesSrc));
+    ok('模型返回空**不写**（把"这次没成功"变成静默清空是最难发现的一类失败）',
+      /模型返回了空内容（结果区保持原样，可重跑）/.test(routesSrc));
+    ok('过期标记与它的出口在同一行上（重做入口就在标记旁边）',
+      /data-repolish=/.test(scriptsSrc) && /来源已变·点此重润/.test(scriptsSrc)
+      && /el\.querySelectorAll\('\[data-repolish\]'\)/.test(scriptsSrc));
+    ok('重润**就地更新**那一条（另存会让每重润一次就多一份过期的旧稿）',
+      /api\.updateScript\(s\.id, \{[\s\S]{0,160}source_template_id: data\.template_id/.test(scriptsSrc));
+    ok('逐行下发润色状态（界面标记读的是服务端结论，不是前端猜的）',
+      /polish_state: audit\.states\[r\.id\] \|\| ''/.test(routesSrc)
+      && /s\.polish_state === 'stale'/.test(scriptsSrc));
+  }
+
   // ── 角色名册（批 8 补 6）──
   // 批 8 补 37：名册是喂给模型的输入之一，而"输入变了要报过期"靠服务端算的指纹 ——
   // 所以渲染只许有**一处**（前端那份已删）。这里钉两件事：服务端有唯一实现，
@@ -1945,8 +1993,13 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     /if \(r\.data\.roster_text !== undefined\)/.test(scriptsSrc)
     && /roster_count/.test(scriptsSrc)
     && /if \(!epDigest\) await refreshRoster\(\)/.test(scriptsSrc));
+  // 批 8 补 40：这条钉**跟着搬家**（不是删掉）—— 润色的合成搬到服务端之后，
+  // "润色也带名册"这句话仍然必须成立，只是兑现它的地方从页面变成了 `story.polishInput`
+  // （而且名册按**被润色的那份文本**算，服务端复算得到，判定时才能用同一个函数重算）。
   ok('润色也带名册（润色会重写全文，改名 = 下游全部失配）',
-    /const prompt = roster\.text \? `\$\{roster\.text\}\\n\\n\$\{base\}` : base/.test(scriptsSrc));
+    /const roster = characterRoster\(chars, \{ text: src, limit: opts\.rosterLimit \}\)/.test(storySrc)
+    && /const user = polishUser\(tpl, src, roster\.text\)/.test(storySrc)
+    && !/const prompt = roster\.text \? `\$\{roster\.text\}/.test(scriptsSrc));
   ok('体检把"名字在角色库里找不到"单独报一类（名册的验收环）',
     /shot_char_unknown/.test(storySrc) && /UNKNOWN_NAME_STOP/.test(storySrc) && /splitShotCharacters/.test(storySrc));
 

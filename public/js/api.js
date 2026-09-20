@@ -78,6 +78,8 @@ export const api = {
 
   scripts: (projectId) => req('GET', `/api/scripts${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   createScript: (s) => req('POST', '/api/scripts', s),
+  // 批 8 补 40：润色的合成在服务端（只有服务端看得到发出去的那一份，才能给它算指纹）
+  polishScript: (p) => req('POST', '/api/scripts/polish', p, { timeoutMs: TIMEOUT.gen }),
   updateScript: (id, s) => req('PUT', `/api/scripts/${id}`, s),
   deleteScript: (id) => req('DELETE', `/api/scripts/${id}`),
 
