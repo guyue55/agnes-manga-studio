@@ -2004,8 +2004,11 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   }
   // B5.6：项目级"上次停在哪一段"（参考项目把 stage 持久化 + "继续创作 →"）。
   // 这条功能的**唯一**难点是"哪些页在链上"这个判据从哪儿来 —— 手抄一份页面清单就会在加/删步骤时分叉。
+  // 注意：必须把判据**限定在 rememberStage 的函数体里**再找 isChainNav —— 直接对整个文件匹配
+  // 会命中 `export function isChainNav(navId)` 那个**定义**，于是把关被删掉、断言照样绿（对照实测抓到）。
+  const rememberBody = (pipeSrc.match(/export function rememberStage[\s\S]*?\n\}/) || [''])[0];
   ok('"上次停在哪一段"只记链上的页，且"在不在链上"取自**服务端**的 steps[].nav（不手抄页面清单）',
-    /export function rememberStage/.test(pipeSrc) && /isChainNav\(navId\)/.test(pipeSrc)
+    /isChainNav\(navId\)/.test(rememberBody)
     && /chainNavs = new Set\(r\.data\.steps\.map\(\(x\) => x\.nav\)/.test(pipeSrc));
   // 反事实：手抄一份 ['novel','scripts',...] 就等于给"链上有哪几步"添第二份口径
   ok('pipeline.js 里没有手抄的链页面清单（链上有哪几步是服务端的事实）',
