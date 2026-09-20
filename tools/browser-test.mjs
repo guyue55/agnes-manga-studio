@@ -1845,6 +1845,73 @@ try {
       }
     }
 
+    group('Word 文档读取契约（批 8 补 23：.docx 就是个 zip，零依赖就能读）');
+    {
+      // 真机走**真实文件选择**这条路：把一份真的 .docx 写到磁盘，用 CDP 塞进 file input，
+      // 再看页面有没有把正文读进文本框。模块函数单测在 selftest，这里要验的是
+      // "浏览器里 DecompressionStream 真的能用、onchange 真的接上了"。
+      const zlib = await import('node:zlib');
+      const enc = new TextEncoder();
+      const crcTable = (() => {
+        const t = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+        return t;
+      })();
+      const crc32 = (buf) => { let c = 0xFFFFFFFF; for (const b of buf) c = crcTable[(c ^ b) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+      const zipOne = (name, text) => {
+        const nameB = enc.encode(name);
+        const rawB = enc.encode(text);
+        const body = new Uint8Array(zlib.deflateRawSync(rawB));
+        const lh = new Uint8Array(30 + nameB.length + body.length);
+        const dv = new DataView(lh.buffer);
+        dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(8, 8, true);
+        dv.setUint32(14, crc32(rawB), true); dv.setUint32(18, body.length, true); dv.setUint32(22, rawB.length, true);
+        dv.setUint16(26, nameB.length, true);
+        lh.set(nameB, 30); lh.set(body, 30 + nameB.length);
+        const ch = new Uint8Array(46 + nameB.length);
+        const cv = new DataView(ch.buffer);
+        cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(10, 8, true);
+        cv.setUint32(16, crc32(rawB), true); cv.setUint32(20, body.length, true); cv.setUint32(24, rawB.length, true);
+        cv.setUint16(28, nameB.length, true); cv.setUint32(42, 0, true);
+        ch.set(nameB, 46);
+        const eocd = new Uint8Array(22);
+        const ev = new DataView(eocd.buffer);
+        ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, 1, true); ev.setUint16(10, 1, true);
+        ev.setUint32(12, ch.length, true); ev.setUint32(16, lh.length, true);
+        const out = new Uint8Array(lh.length + ch.length + 22);
+        out.set(lh, 0); out.set(ch, lh.length); out.set(eocd, lh.length + ch.length);
+        return out;
+      };
+      const DOC = '<?xml version="1.0"?><w:document xmlns:w="x"><w:body>'
+        + '<w:p><w:r><w:t>第十二章 归途</w:t></w:r></w:p>'
+        + '<w:p><w:r><w:t>雪停了，他沿着河走回镇上。</w:t></w:r></w:p>'
+        + '</w:body></w:document>';
+      const docxPath = path.join(home, '归途.docx');
+      fs.writeFileSync(docxPath, zipOne('word/document.xml', DOC));
+
+      await cdp.eval(`location.hash = '#/novel'; return true;`);
+      await sleep(900);
+      await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-file');`), '原著页文件入口', 15000);
+      const accept = await cdp.eval(`return (document.querySelector('#nov-file')||{}).getAttribute?document.querySelector('#nov-file').getAttribute('accept'):'';`);
+      ok('.docx 在选择器里可选（能选中却读不了最气人）', /\.docx/.test(accept || ''), JSON.stringify(accept));
+
+      const doc = await cdp.send('DOM.getDocument', { depth: -1 });
+      const node = await cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '#nov-file' });
+      await cdp.send('DOM.setFileInputFiles', { files: [docxPath], nodeId: node.nodeId });
+
+      await waitFor(() => cdp.eval(`return /第十二章 归途/.test((document.querySelector('#nov-text')||{}).value||'');`), 'Word 正文读入文本框', 15000);
+      const filled = await cdp.eval(`return (document.querySelector('#nov-text')||{}).value||'';`);
+      ok('浏览器里真的把 .docx 正文解出来了（DecompressionStream 可用、onchange 接上了）',
+        /第十二章 归途/.test(filled) && /雪停了/.test(filled), JSON.stringify(filled.slice(0, 120)));
+      ok('段落之间保留了空行（Word 的段落就是原文的自然段）', /\n\n/.test(filled), JSON.stringify(filled.slice(0, 80)));
+      ok('没有把 XML 标签混进正文', !/w:document|w:p>/.test(filled), JSON.stringify(filled.slice(0, 120)));
+      const title = await cdp.eval(`return (document.querySelector('#nov-title')||{}).value||'';`);
+      ok('标题从文件名带上（省一步手输）', /归途/.test(title), JSON.stringify(title));
+      const cnt = await cdp.eval(`return (document.querySelector('#nov-count')||{}).textContent||'';`);
+      ok('字数统计跟着更新（用户要能立刻确认读进来了）', /原文/.test(cnt), JSON.stringify(cnt));
+      try { fs.unlinkSync(docxPath); } catch { /* ignore */ }
+    }
+
     group('章节目录契约（批 8 补 21：段号是切块的副产物，作者想的是"第几章"）');
     {
       const mock = http.createServer((req, res) => {

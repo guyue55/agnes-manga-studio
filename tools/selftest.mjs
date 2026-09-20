@@ -551,6 +551,116 @@ group('轮询预算（R12/R13）');
   store.remove('video_assets', zombie.id);
 }
 
+group('Word 文档读取（批 8 补 23：.docx 就是个 zip，零依赖就能读）');
+{
+  const zlib = await import('node:zlib');
+  const sf = await import(pathToFileURL(path.join(ROOT, 'public/js/storyfile.js')).href);
+
+  // 手搓一个最小 zip：条目用**存储(0)**与**deflate(8)**两种方式各来一份，
+  // 两种都要能读出来 —— 真实的 .docx 几乎都是 deflate，只测存储等于没测解压那条路。
+  const crcTable = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  const crc32 = (buf) => { let c = 0xFFFFFFFF; for (const b of buf) c = crcTable[(c ^ b) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  function makeZip(entries) {
+    const enc = new TextEncoder();
+    const locals = []; const central = []; let off = 0;
+    for (const e of entries) {
+      const nameB = enc.encode(e.name);
+      const rawB = enc.encode(e.text);
+      const body = e.stored ? rawB : new Uint8Array(zlib.deflateRawSync(rawB));
+      const lExtra = new Uint8Array(e.localExtra || 0);   // 局部头扩展域（真实 .docx 里常见）
+      const lh = new Uint8Array(30 + nameB.length + lExtra.length + body.length);
+      const dv = new DataView(lh.buffer);
+      dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(8, e.stored ? 0 : 8, true);
+      dv.setUint32(14, crc32(rawB), true); dv.setUint32(18, body.length, true); dv.setUint32(22, rawB.length, true);
+      dv.setUint16(26, nameB.length, true); dv.setUint16(28, lExtra.length, true);
+      lh.set(nameB, 30); lh.set(lExtra, 30 + nameB.length); lh.set(body, 30 + nameB.length + lExtra.length);
+      locals.push(lh);
+      const ch = new Uint8Array(46 + nameB.length);
+      const cv = new DataView(ch.buffer);
+      cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+      cv.setUint16(10, e.stored ? 0 : 8, true);
+      cv.setUint32(16, crc32(rawB), true); cv.setUint32(20, body.length, true); cv.setUint32(24, rawB.length, true);
+      cv.setUint16(28, nameB.length, true); cv.setUint32(42, off, true);
+      ch.set(nameB, 46);
+      central.push(ch);
+      off += lh.length;
+    }
+    const cenSize = central.reduce((n, c) => n + c.length, 0);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, entries.length, true); ev.setUint16(10, entries.length, true);
+    ev.setUint32(12, cenSize, true); ev.setUint32(16, off, true);
+    const parts = [...locals, ...central, eocd];
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let p = 0; for (const x of parts) { out.set(x, p); p += x.length; }
+    return out;
+  }
+
+  const DOC = '<?xml version="1.0"?><w:document xmlns:w="x"><w:body>'
+    + '<w:p><w:r><w:t>第一章 雨夜</w:t></w:r></w:p>'
+    + '<w:p><w:r><w:t>顾寒推门而入，</w:t></w:r><w:r><w:t>林晚抬头看雨。</w:t></w:r><w:br/><w:t>他坐下了。</w:t></w:r></w:p>'
+    + '<w:p><w:r><w:t>a &amp;lt; b &amp; 3 &lt; 5 &#65;&#x42;</w:t></w:r></w:p>'
+    + '</w:body></w:document>';
+
+  const plain = sf.docxXmlToText(DOC);
+  ok('段落之间落成空行（Word 的段落就是原文的自然段）', /第一章 雨夜\n\n顾寒推门而入，林晚抬头看雨。/.test(plain), JSON.stringify(plain.slice(0, 80)));
+  ok('同一段里的多个 run 正确拼接（不粘成两段）', /顾寒推门而入，林晚抬头看雨。/.test(plain), JSON.stringify(plain));
+  ok('软换行 <w:br/> 落成换行', /他坐下了。/.test(plain) && /雨。\n他坐下了。/.test(plain), JSON.stringify(plain));
+  eq('实体解码且 &amp;lt; 不会被二次解码（顺序错了就会变成 <）',
+    plain.split('\n').filter((l) => l.includes('b & 3')).join(''), 'a &lt; b & 3 < 5 AB');
+  ok('XML 声明与命名空间等标签不会混进正文', !/w:document|xmlns/.test(plain), JSON.stringify(plain.slice(0, 60)));
+
+  const zipDeflated = makeZip([{ name: 'word/document.xml', text: DOC, stored: false }]);
+  const zipStored = makeZip([{ name: 'word/document.xml', text: DOC, stored: true }]);
+  const gotD = await sf.readZipText(zipDeflated, 'word/document.xml');
+  const gotS = await sf.readZipText(zipStored, 'word/document.xml');
+  ok('deflate 压缩的 docx 正文能读出来（真实的 .docx 几乎都是这种）', gotD.ok && gotD.text === DOC, JSON.stringify(gotD).slice(0, 120));
+  ok('"存储"方式的 zip 也能读（两种压缩方式都要覆盖）', gotS.ok && gotS.text === DOC, JSON.stringify(gotS).slice(0, 120));
+  eq('列条目能认出正文这一项', sf.listZipEntries(zipDeflated).entries.map((e) => e.name).join(','), 'word/document.xml');
+  // 局部头的扩展域长度与中央目录里的**可以不一样**（真实 .docx 常见：局部头带 UT 时间戳）。
+  // 拿中央目录的 extraLen 去算数据起点，读出来的就是一段垃圾 —— 这是 zip 的经典坑。
+  const zipExtra = makeZip([{ name: 'word/document.xml', text: DOC, stored: false, localExtra: 8 }]);
+  const gotE = await sf.readZipText(zipExtra, 'word/document.xml');
+  ok('局部头带扩展域时仍能正确读出正文（两个 extraLen 可以不一样）',
+    gotE.ok && gotE.text === DOC, JSON.stringify(gotE).slice(0, 120));
+  ok('文件里没有正文时如实报错（不静默给空文本）',
+    !(await sf.readZipText(makeZip([{ name: 'word/styles.xml', text: '<x/>', stored: true }]), 'word/document.xml')).ok);
+
+  // 端到端：File 对象 → 纯文本
+  const f = new File([zipDeflated], '雨夜.docx');
+  const parsed = await sf.parseStoryFile(f);
+  ok('.docx 端到端读成纯文本（含标题行）', parsed.ok && /第一章 雨夜/.test(parsed.text), JSON.stringify(parsed).slice(0, 140));
+  ok('提示里说明来自 Word 文档（用户要知道自己选的是哪种）', /Word 文档/.test(parsed.note || ''), parsed.note);
+  ok('文本经过规范化（与后端同源）', parsed.text === sf.normalizeStoryText(parsed.text), JSON.stringify(parsed.text.slice(0, 40)));
+
+  // 准入判断：.docx 收下了，PDF 仍然明确拒绝且理由准确
+  ok('.docx 现在被接受（"请先另存为 txt"这一步可以省掉了）', sf.checkStoryFile({ name: 'a.docx', size: 100 }).ok);
+  const pdf = sf.checkStoryFile({ name: 'a.pdf', size: 100 });
+  ok('.pdf 仍被拒绝', !pdf.ok);
+  ok('拒绝理由指向真实原因（字体编码），不是含糊的"不支持"', /字体编码/.test(pdf.error || ''), pdf.error);
+  ok('accept 表里含 .docx（能选中，不会"选得中却被拒"）', sf.STORY_FILE_ACCEPT.includes('.docx'), JSON.stringify(sf.STORY_FILE_ACCEPT));
+
+  // 损坏文件不能把页面搞崩，要给出人话
+  const junk = new Uint8Array([1, 2, 3, 4, 5]);
+  const bad = await sf.parseStoryFile(new File([junk], '坏的.docx'));
+  ok('损坏的 docx 报人话而不是抛异常', !bad.ok && /Word 正文/.test(bad.error || ''), JSON.stringify(bad));
+  ok('不是 zip 的文件被识别出来（而不是当文本读出一堆乱码）', !sf.listZipEntries(junk).ok);
+
+  // ZIP64：构造一个"目录结尾前面紧跟 ZIP64 定位器"的缓冲，必须明确拒绝。
+  // 只对源码做正则等于没测行为 —— ZIP64 的文件按 32 位读出来是**看似成功的一堆乱码**，
+  // 那比直接报错难查得多，所以这条要有真的行为断言。
+  const z64 = new Uint8Array(42);
+  const zv = new DataView(z64.buffer);
+  zv.setUint32(0, 0x07064b50, true);          // ZIP64 定位器签名
+  zv.setUint32(20, 0x06054b50, true);         // EOCD 签名（位置 20 = eocd-20）
+  const r64 = sf.listZipEntries(z64);
+  ok('ZIP64 明确拒绝（而不是按 32 位读出一堆乱码）', !r64.ok && /ZIP64/.test(r64.error || ''), JSON.stringify(r64));
+}
+
 group('章节识别与章节级溯源（批 8 补 21：段号是切块的副产物，作者想的是"第几章"）');
 {
   const story = require('./lib/story.js');

@@ -21,7 +21,7 @@ import { toast, confirm, costConfirm, empty, skeleton, setBusy, errBox, on, data
 import { charCount, countLabel, limitState } from '../textstats.js';
 import { head, projectPicker, renderBatchBar } from './helpers.js';
 import { state, onEvent, syncViewParams, navigate } from '../app.js';
-import { parseStoryText } from '../storyfile.js';
+import { parseStoryFile, STORY_FILE_ACCEPT } from '../storyfile.js';
 
 const JOB_KEY = 'agnes.novel.job'; // 解析任务 id：刷新/切页回来能续上进度（与分镜批量的做法一致）
 const TEXT_SOFT = 60000;           // 输入框软上限：超了不拦，只提示"会分很多段、花很多次调用"
@@ -55,7 +55,7 @@ export default async function novel(container, params = {}) {
             <div class="card-title" style="margin:0">${icon('book', 15)}原著原文</div>
             <div class="spacer"></div>
             <label class="btn btn-xs" for="nov-file" title="在浏览器本地读取，不上传服务器">${icon('upload', 13)}选择文件</label>
-            <input type="file" id="nov-file" accept=".txt,.md,.markdown,text/plain" style="display:none" />
+            <input type="file" id="nov-file" accept="${STORY_FILE_ACCEPT.join(',')},text/plain" style="display:none" />
           </div>
           <div class="field" style="margin-bottom:8px">
             <input class="input" id="nov-title" placeholder="给这份原著起个名字（便于在解析记录里区分）" />
@@ -130,7 +130,7 @@ export default async function novel(container, params = {}) {
   container.querySelector('#nov-file').onchange = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const r = await parseStoryText(f);
+    const r = await parseStoryFile(f);
     e.target.value = ''; // 同一个文件改完再选一次也要能触发
     if (!r.ok) { toast.err(r.error); return; }
     textEl.value = r.text;

@@ -1149,14 +1149,27 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
   ok('灵敏度对照：两套规范化确实会不同（不是恒等的空断言）',
     fileMod.normalizeStoryText('\uFEFFa\r\n\r\n\r\nb') !== '\uFEFFa\r\n\r\n\r\nb');
 
-  // ③ 文件读取：纯文本才收，超限/空文件给可读理由
-  ok('只收纯文本（Word/PDF 明确拒绝并给替代路径）',
-    !fileMod.checkStoryFile({ name: 'a.docx', size: 100 }).ok
-    && /另存为 txt/.test(fileMod.checkStoryFile({ name: 'a.docx', size: 100 }).error));
+  // ③ 文件读取：纯文本与 .docx 都收，超限/空文件给可读理由
+  // 批 8 补 23 把"docx 明确拒绝"这条**有意反转**了：原来写"docx 是另一个数量级的依赖"，
+  // 对 PDF 成立、对 docx 不成立（docx 就是个 zip，浏览器原生能解压）。断言跟着事实改，不是删掉。
+  ok('接受 .docx（作者稿件绝大多数是 Word，不该逼人先另存为 txt）',
+    fileMod.checkStoryFile({ name: 'a.docx', size: 100 }).ok);
+  ok('.pdf 仍然拒绝，且理由指向真实原因（字体编码），不是含糊的"不支持"',
+    !fileMod.checkStoryFile({ name: 'a.pdf', size: 100 }).ok
+    && /字体编码/.test(fileMod.checkStoryFile({ name: 'a.pdf', size: 100 }).error));
   ok('接受 .txt/.md/.markdown', ['.txt', '.md', '.markdown'].every((e) => fileMod.checkStoryFile({ name: `a${e}`, size: 10 }).ok));
   ok('空文件被拒', !fileMod.checkStoryFile({ name: 'a.txt', size: 0 }).ok);
   ok('超大文件被拒（20MB 上限）', !fileMod.checkStoryFile({ name: 'a.txt', size: fileMod.STORY_FILE_MAX + 1 }).ok);
-  ok('页面用 accept 与校验同一份扩展名表', /STORY_FILE_ACCEPT/.test(fileSrc) && /\.txt,\.md,\.markdown/.test(novel));
+  ok('页面用 accept 与校验同一份扩展名表（能选中的一定能读）',
+    /STORY_FILE_ACCEPT/.test(fileSrc) && /STORY_FILE_ACCEPT\.join\(','\)/.test(novel) && /accept="\$\{STORY_FILE_ACCEPT/.test(novel));
+  ok('页面按扩展名分发（.docx 走解压那条路）', /parseStoryFile\(f\)/.test(novel) && typeof fileMod.parseStoryFile === 'function');
+  ok('zip 只读实现齐全（中央目录 → 局部头 → 解压）',
+    ['listZipEntries', 'readZipEntryRaw', 'inflateRawBytes', 'readZipText', 'docxXmlToText', 'decodeXmlEntities']
+      .every((k) => typeof fileMod[k] === 'function'));
+  // 真正构造一个带 ZIP64 定位器的缓冲来验（只对源码做正则等于没测行为）—— 细节断言在 selftest 里
+  ok('源码里写明了 ZIP64 会被拒绝而不是猜着读（猜错的后果是一堆乱码，比报错难查）',
+    /ZIP64/.test(fileSrc) && /暂不支持/.test(fileSrc));
+  ok('不引第三方解压库（零依赖是硬约束）', !/from '(?!\.)|require\(/.test(fileSrc.replace(/\/\*[\s\S]*?\*\//g, '')));
 
   // ④ 端点齐全：前端调的每个 /api/story/* 后端都必须有
   // 端点路径在 api.js 里有三种写法：纯字面量、带查询参数的模板串、带 :id 的模板串。

@@ -79,6 +79,15 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
   `blocked`（前置没做，点进去也做不了）与 `todo`（轮到你了）**严格分开** —— 混成一个"待办"，
   用户会照着点却发现按钮是灰的；`partial`（做了一半）也是独立状态（只看"有没有"不看"够不够"会误报 done）。
   分母口径按**集**去重（同一集重生成存多条，按条数算会虚高），出图段的 need 是**镜头数**（不是"有没有分镜"）
+- Word 文档读取（批 8 补 23）：上传此前只收 `.txt`/`.md`，而作者的稿件绝大多数是 `.docx`。
+  **原边界"docx 是另一个数量级的依赖"对 PDF 成立、对 docx 不成立** —— .docx 就是个 zip
+  （里面一份 `word/document.xml`），浏览器/Node 原生就有 `DecompressionStream('deflate-raw')`，
+  于是 `public/js/storyfile.js` **零依赖**读 docx：自己读 zip 中央目录 → 局部头 → 原生解压 → 剥 XML 成纯文本。
+  三个 zip 坑都钉住了：① **局部头的扩展域长度与中央目录里的可以不一样**（真实 .docx 常见，拿错就读出垃圾）；
+  ② **ZIP64 明确拒绝**（按 32 位读会"成功"返回一堆乱码，比报错难查得多）；③ 存储/deflate 两种方式都覆盖。
+  XML 侧：段落/软换行/制表符先落成真分隔符，其余标签一律删掉；**`&amp;` 必须最后解**（否则 `&amp;lt;` 变 `<`）。
+  **`.pdf` 仍不做**，理由改成准确的"字体编码/子集/CID 映射"。真机契约用 CDP 把真 `.docx` 塞进 file input。
+  **教训**：边界文档里一条已经不准的理由，下次会拿它挡住一件其实很便宜的事 —— 反转时断言跟着改，别删
 - 章节复核（批 8 补 22）：补 21 把出处翻译成"第几章"，但章节目录只给一个**张数** ——
   "第二章 3 张卡"判断不了抽得对不对。现在点开一章就地列出**这一章抽到的卡片**
   （按 `evidence` 落在哪一章判定），每张卡一键跳到它的原文依据（复用补 20 的 `openSource`，**只有一份实现**）。
@@ -163,7 +172,7 @@ Node.js ≥ 20.6 **原生模块实现、零 npm 依赖**；入口 `node server.j
 - 使用点注入链（`lib/routes.js` 的 `finalPrompt`）：内容 → **原著场景道具**（地点卡/道具卡）→ 角色 → 运镜 → 画风 → 变体；
   前端的 `storyCardPhrase` / `characterPhrase` 是**逐字同构**的镜像（uitest 去空白比对钉），分镜页的"实际发出"预览靠它算
 - 前端链路：`public/index.html` → `public/js/app.js`（壳层/hash 路由）→ `public/js/pages/*`（11 个页面模块，含批 8 新增的 `novel.js` 原著解析工作台）；共享设施 `api.js` / `ui.js` / `consts.js` / `textstats.js`（纯函数：长文本计数与生成门禁判据） / `pages/helpers.js`
-- 测试：`tools/` 下四套断言脚本（selftest 682 / apitest 859 / uitest 1055 / browser-test 489），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
+- 测试：`tools/` 下四套断言脚本（selftest 702 / apitest 859 / uitest 1061 / browser-test 495），`node tools/run-all.mjs` 全量跑；另有 `node tools/ui-audit.mjs`（真机布局/对比度/截断提示度量报表；4 视口 × 12 页，其中 7 页带**弹窗动作钩子**、2 页带**内联面板动作**，两者都有"声明了动作就必须有产出"的自检，内联钩子用 `box` 指定看哪个容器）与 `node tools/port-check.mjs`（端口撞车防护三场景 6 断言真机验证：含预检环境冲突与收尾无残留自检；exit 0 全过 / 1 违例 / 2 环境冲突），均按需跑、非门禁。
   **页面模块的签名约定**：必须 `export default async function xxx(container, params)` —— 首参是 router 已挂进文档的容器（`app.js` 调 `nav.page(page, params)`）。自己 `createElement` 一个容器再往里写，DOM 不在文档里，表现为**切页白屏且控制台零报错**（批 8 的 `novel.js` 就这么白过一次，uitest 已加棘轮钉死签名形状）
 - 竞品研读与升级路线：`docs/research/08-src-00-synthesis.md`（5 个 Vibex AI 创作源码包的逐包研读报告 01–05 + R1–R30 借鉴项总表 + 分批升级路线 + 10 条明确不借鉴边界）
 
