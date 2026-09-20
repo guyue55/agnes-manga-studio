@@ -1417,10 +1417,23 @@ group('批 6：分镜工作台体验（R22 产出三状态点 / R23 提示词就
 
   // ② R22 前端：产出列 + 状态链
   ok('R22 分镜表新增「产出」列（提示词/图片/视频三道关）',
-    /<th style="width:64px" title="提示词 \/ 分镜图 \/ 视频 三道关的状态">产出<\/th>/.test(sbs) && /function outputCell/.test(sbs));
+    /<th style="width:\d+px" title="提示词 \/ 分镜图 \/ 视频 三道关的状态[^"]*">产出<\/th>/.test(sbs) && /function outputCell/.test(sbs));
   ok('R22 三个点各自带文字化的状态（不靠颜色单一维度）',
     /function dot\(state, title\)/.test(sbs) && /role="img" aria-label=/.test(sbs)
-    && /dot\(promptState, promptTitle\)/.test(sbs) && /dot\(imgState, '分镜图'\)/.test(sbs) && /dot\(vidState, '视频'\)/.test(sbs));
+    // 钉"三个点由 rowSteps **一份**推导"，**不钉变量名** —— 变量名是形状，重构一次就变成测空气
+    && /rowSteps\(s\)\.map\(\(x\) => dot\(x\.state, x\.title\)\)/.test(sbs));
+  // B5.11：行内"下一步"与三个产出点必须**同源** —— 各算一份必然分叉（点还灰着、文案却说下一步是别的关）
+  {
+    const stepsBody = (sbs.match(/function rowSteps[\s\S]*?\n  \}/) || [''])[0];
+    ok('行内"下一步"与产出点同源（第一个没做完的关就是它，三道关只推一份）',
+      /key: 'prompt'/.test(stepsBody) && /key: 'image'/.test(stepsBody) && /key: 'video'/.test(stepsBody)
+      && /return rowSteps\(s\)\.find\(\(x\) => x\.state !== 'ok'\) \|\| null;/.test(sbs)
+      && /esc\(nextText\(s\)\)/.test(sbs));
+    // 反向：三道关都齐了不许硬凑一个"下一步"（假的下一步比没有更糟）
+    ok('三道关都齐时不硬凑"下一步"', /if \(!n\) return '三道关都齐了'/.test(sbs));
+    // 在跑/失败要说清是哪一关（说"下一步：出分镜图"会让用户以为该再点一次，其实正在跑）
+    ok('在跑/失败的那一关不会被说成"下一步"', /进行中：/.test(sbs) && /失败待重试：/.test(sbs));
+  }
   ok('R22 图片点吃批量任务的在跑/失败态（不只吃持久字段）',
     /jobState === 'running' \? 'running'/.test(sbs) && /jobState === 'fail' \? 'fail'/.test(sbs) && /rowInflight\.has\(s\.id\)/.test(sbs));
   ok('R22 任务进行中也要重绘表格（只在结束时重绘 → "正在跑"永远看不到）',

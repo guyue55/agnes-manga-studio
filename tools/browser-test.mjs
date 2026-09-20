@@ -1301,6 +1301,23 @@ try {
       ok('灵敏度对照：缺视频提示词 → 提示词点降级为"排队中"、图片点回到未开始',
         dot3[0] === 'pending' && dot3[1] === 'idle', JSON.stringify(dot3));
 
+      // ── B5.11 行内"下一步"：必须与三个产出点**说同一件事**（第一个没做完的关）。
+      // 这条断言的价值在于"同源"：只要两处各算一份，迟早出现"点还灰着、文案却说下一步是别的关"。
+      const nx = await cdp.eval(`
+        const tr = document.querySelector('#table tbody tr');
+        const ds = Array.from(tr.querySelectorAll('.dots .dot'));
+        const i = ds.findIndex((d) => !d.className.includes('ok'));
+        return { txt: (tr.querySelector('.row-next') || {}).innerText || '',
+          i, states: ds.map((d) => d.className.replace('dot', '').trim()) };`);
+      const NX_LABEL = ['提示词', '分镜图', '视频'];
+      ok('每行给出"下一步"，且指的就是**第一个没做完的关**（与三个点同源）',
+        nx.i < 0
+          ? /都齐了/.test(nx.txt)
+          : (nx.txt.includes('下一步：') || /进行中：|失败待重试：/.test(nx.txt)) && nx.txt.includes(NX_LABEL[nx.i]),
+        JSON.stringify(nx));
+      ok('这一行此刻确实是"缺视频提示词"（所以下一步该是提示词，不是出图/出视频）',
+        nx.states[0] === 'pending' && nx.txt.includes('提示词'), JSON.stringify(nx));
+
       // ── R23 就地编辑：点击 → textarea → blur 保存，且**不整表重渲染**
       const rowId = first.id;
       await cdp.eval(`document.querySelector('[data-edit="${rowId}"]')?.click(); return true;`); // 先确保行存在

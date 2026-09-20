@@ -207,7 +207,7 @@ export default async function storyboards(container, params) {
         <th style="width:54px">时长</th>
         <th style="min-width:200px">图片提示词</th>
         <th style="min-width:200px">视频提示词</th>
-        <th style="width:64px" title="提示词 / 分镜图 / 视频 三道关的状态">产出</th>
+        <th style="width:104px" title="提示词 / 分镜图 / 视频 三道关的状态 + 这一行的下一步">产出</th>
         <th style="width:80px">状态</th>
         <th style="width:150px">操作</th>
       </tr></thead>
@@ -408,21 +408,39 @@ export default async function storyboards(container, params) {
     return `<span class="dot ${esc(state)}" title="${esc(title)}：${esc(zh)}" role="img" aria-label="${esc(title)}${esc(zh)}"></span>`;
   }
 
-  function outputCell(s) {
+  // 一行镜头的三道关：提示词 → 分镜图 → 视频（B5.11）。
+  // **产出点与"下一步"必须是同一份推导** —— 分开算就会出现"点还灰着、文案却说下一步是别的关"，
+  // 而两处各自看都对（B5 的教训③：同一个事实有两份口径，分叉没人看得出来）。
+  function rowSteps(s) {
     const jobState = jobRowState.get(s.id);
     // 提示词：两条都有才算齐（缺哪条就生成不了对应产物）
     const hasIp = !!String(s.image_prompt || '').trim();
     const hasVp = !!String(s.video_prompt || '').trim();
-    const promptState = hasIp && hasVp ? 'ok' : (hasIp || hasVp ? 'pending' : 'idle');
-    const promptTitle = `提示词（图片${hasIp ? '有' : '无'}／视频${hasVp ? '有' : '无'}）`;
     // 图片：持久字段优先；没有就吃批量任务的在跑/失败态
     const imgState = s.linked_image_id ? 'ok'
       : (jobState === 'running' ? 'running' : (jobState === 'fail' ? 'fail' : (rowInflight.has(s.id) ? 'running' : 'idle')));
-    const vidState = s.linked_video_id ? 'ok' : 'idle';
-    return `<div class="dots">${
-      dot(promptState, promptTitle)}${
-      dot(imgState, '分镜图')}${
-      dot(vidState, '视频')}</div>`;
+    return [
+      { key: 'prompt', label: '提示词', cta: '补提示词', title: `提示词（图片${hasIp ? '有' : '无'}／视频${hasVp ? '有' : '无'}）`,
+        state: hasIp && hasVp ? 'ok' : (hasIp || hasVp ? 'pending' : 'idle') },
+      { key: 'image', label: '分镜图', cta: '出分镜图', title: '分镜图', state: imgState },
+      { key: 'video', label: '视频', cta: '出视频', title: '视频', state: s.linked_video_id ? 'ok' : 'idle' },
+    ];
+  }
+  // 第一个没做完的关就是这一行的"下一步"；三道关都齐了**不硬凑**一个下一步
+  function rowNext(s) {
+    return rowSteps(s).find((x) => x.state !== 'ok') || null;
+  }
+  // 在跑的/失败的要说清是哪一关，否则"下一步：出分镜图"会让用户以为该再点一次（其实正在跑）
+  function nextText(s) {
+    const n = rowNext(s);
+    if (!n) return '三道关都齐了';
+    if (n.state === 'running') return `进行中：${n.label}`;
+    if (n.state === 'fail') return `失败待重试：${n.label}`;
+    return `下一步：${n.cta}`;
+  }
+  function outputCell(s) {
+    return `<div class="dots">${rowSteps(s).map((x) => dot(x.state, x.title)).join('')}</div>
+      <div class="row-next${rowNext(s) && rowNext(s).state === 'fail' ? ' fail' : ''}">${esc(nextText(s))}</div>`;
   }
 
   function promptCell(s, field) {
