@@ -103,6 +103,7 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs" id="nov-look" title="给还没有外貌/服装的人物卡回原文找一遍（找到的必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补长相</button>
             <button class="btn btn-xs" id="nov-inject" title="给没有任何可注入描述的地点卡/道具卡回原文找一遍（氛围/地域/时段/特征、持有者/用途/特征；同样必须带原文原话，对不上原文的一律丢弃）">${icon('sparkles', 13)}AI 补场景字段</button>
             <button class="btn btn-xs" id="nov-when" title="给没有时间点的时间线卡回原文找一遍（只照原文的说法写，不换算、不推算；必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补时间点</button>
+            <button class="btn btn-xs btn-primary" id="nov-fillall" title="把「回原文找」这一族一次做完：分幕次 → 补人物卡 → 补长相 → 补场景道具字段 → 补时间点。先免费干跑算出每一类各有多少候选，一次确认后按顺序跑，每一步分开报告（某一步失败不影响其余）">${icon('sparkles', 13)}AI 一键补齐</button>
             <button class="btn btn-xs" id="nov-cast" title="剧情卡的「涉及人物」里有些名字没有人物卡与角色库档案 —— 回原文确认他是谁并直接建卡（必须带原文原话，对不上原文的一张都不建；原文里找不到这个人就如实说没找到，同样不建）">${icon('sparkles', 13)}AI 补人物卡</button>
           </div>
           <div id="nov-fill-box"></div>
@@ -1180,9 +1181,15 @@ export default async function novel(container, params = {}) {
    * 只有把原话摆在写进去的值旁边，人才能一眼看出来 —— 这也是本轮先做"引文可见"、再做时间点的原因。
    * 值取的是**实际落库**的那一份（服务端截断之后），不是模型的提议：报告与卡片必须是同一份数据。
    */
-  function renderFillReport(d, cfg) {
-    const box = container.querySelector('#nov-fill-box');
-    const items = d.assigned_items || [];
+  /**
+   * 报告的**正文**（逐条"值 ← 原文原话" + 四种分桶）。**单个补与一键补齐共用这一份** ——
+   * 批量那边要是另写一份，"报告里少了一列"这种分叉没人会发现（补 43 刚在服务端踩过同一个坑：
+   * 给它单开了 `created`/`created_names`，那是同一个事实的第二份形状）。
+   *
+   * 幕次那一类**没有引文**（它是分类，不是"回原文找事实"），所以它的行从 `assigned_names` 来，
+   * 分桶也换成"没接住 / 顺序倒退"。差异**只在数据形状上**，用 `cfg.stage` 一处开关。
+   */
+  function fillReportBody(d, cfg) {
     const rowOf = (x) => `
       <div class="row" style="gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)">
         <span class="chip green" style="flex:none">已写入</span>
@@ -1196,24 +1203,102 @@ export default async function novel(container, params = {}) {
     const bucket = (title, arr, cls) => ((arr || []).length
       ? `<div class="hint-xs" style="margin-top:6px"><span class="chip ${cls}">${esc(title)}</span> ${(arr || []).map((x) => esc(x.name)).join('、')}</div>`
       : '');
-    box.innerHTML = `
-      <div class="card" style="margin-bottom:10px;padding:12px">
-        <div class="row wrap" style="gap:6px;align-items:center">
-          <b>${esc(cfg.what)}：${esc(cfg.verb || '写入')} ${d.assigned}/${d.targets} ${esc(cfg.unit)}</b>
-          <div class="spacer"></div>
-          <button class="btn btn-xs" id="nov-fill-close">收起</button>
-        </div>
-        <div class="hint-xs" style="margin-top:4px">下面每一${cfg.cast ? '张新卡' : '张'}都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。</div>
+    if (cfg.stage) {
+      const names = d.assigned_names || [];
+      const bad = (d.invalid || []).length + (d.missing || []).length;
+      return `
+        <div class="hint-xs" style="margin-top:4px">幕次是**分类**、不是事实，所以这里没有引文可核对；下面列出真的落库的每一拍。</div>
         ${d.note ? `<div class="hint-xs" style="margin-top:6px">${esc(d.note)}</div>` : ''}
-        ${items.length ? items.map(rowOf).join('') : ''}
-        ${bucket(`原文确实没写（${(d.not_found || []).length} ${cfg.unit}）—— 这是结论，不是失败`, d.not_found, 'gray')}
-        ${bucket(`引文对不上原文，已丢弃${cfg.cast ? '、一张卡都没建' : '不写'}（${(d.ungrounded || []).length} ${cfg.unit}）—— 那是它编的`, d.ungrounded, 'red')}
-        ${bucket(`没接住，${cfg.cast ? '没有建卡' : '已保持原样'}（模型没给全或编号越界）`, (d.missing || []).concat(d.invalid || [], d.empty || []), 'gold')}
-        ${d.no_source ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">没有原文出处，已跳过</span> ${d.no_source} ${esc(cfg.unit)}（人工新建或来自全局归并、没有段号，回原文找无从谈起）</div>` : ''}
-        ${d.aligned === false ? '<div class="hint-xs" style="margin-top:6px;color:var(--warn)">这份原著的重新切块与解析时不一致，补上的内容请人工核对一遍。</div>' : ''}
-      </div>`;
+        ${names.length ? `<div class="row" style="gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)">
+          <span class="chip green" style="flex:none">已写入</span>
+          <div style="flex:1;min-width:0">${names.map((x) => `<div class="hint-xs"><b>${esc(x)}</b></div>`).join('')}</div>
+        </div>` : ''}
+        ${bad ? `<div class="hint-xs" style="margin-top:6px"><span class="chip gold">没接住，已保持原样</span> ${bad} 拍（模型返回的幕次不在 起/承/转/合 之内，或没给全）</div>` : ''}
+        ${(d.back_steps || []).length ? `<div class="hint-xs" style="margin-top:6px"><span class="chip red">幕次顺序倒退</span> ${(d.back_steps || []).length} 处 —— 模型没按"幕次不能倒退"来，建议人工看一眼</div>` : ''}
+        ${d.basis_before && d.basis_after && d.basis_before !== d.basis_after
+          ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">分集依据真的变好了</span> ${esc(d.basis_before)} → ${esc(d.basis_after)}</div>` : ''}`;
+    }
+    const items = d.assigned_items || [];
+    return `
+      <div class="hint-xs" style="margin-top:4px">下面每一${cfg.cast ? '张新卡' : '张'}都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。</div>
+      ${d.note ? `<div class="hint-xs" style="margin-top:6px">${esc(d.note)}</div>` : ''}
+      ${items.length ? items.map(rowOf).join('') : ''}
+      ${bucket(`原文确实没写（${(d.not_found || []).length} ${cfg.unit}）—— 这是结论，不是失败`, d.not_found, 'gray')}
+      ${bucket(`引文对不上原文，已丢弃${cfg.cast ? '、一张卡都没建' : '不写'}（${(d.ungrounded || []).length} ${cfg.unit}）—— 那是它编的`, d.ungrounded, 'red')}
+      ${bucket(`没接住，${cfg.cast ? '没有建卡' : '已保持原样'}（模型没给全或编号越界）`, (d.missing || []).concat(d.invalid || [], d.empty || []), 'gold')}
+      ${d.no_source ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">没有原文出处，已跳过</span> ${d.no_source} ${esc(cfg.unit)}（人工新建或来自全局归并、没有段号，回原文找无从谈起）</div>` : ''}
+      ${d.aligned === false ? '<div class="hint-xs" style="margin-top:6px;color:var(--warn)">这份原著的重新切块与解析时不一致，补上的内容请人工核对一遍。</div>' : ''}`;
+  }
+
+  /**
+   * 「AI 一键补齐」的步骤表（批 8 补 44）。**顺序是有讲究的**：
+   * 分幕次（决定分集）→ **补人物卡** → **补长相** → 补场景道具字段 → 补时间点。
+   * 补人物卡排在补长相**前面**，因为新建的卡也可能缺长相，同一次一键补齐就顺手补上了。
+   *
+   * 这里只有"界面上有哪几个按钮、各叫什么"，**一个判据都没有** —— "有几张缺"全部来自服务端干跑
+   * （与逐个按钮走的是**同一个**端点），前端再抄一份迟早会漂（补 30 的教训）。
+   */
+  // 幕次那一类的"叫什么/报什么单位"（与上面四类一样放在**配置**里，步骤表只留接线）
+  const STAGE_FILL = { what: '补分幕次', label: '剧情拍点的幕次', unit: '拍', verb: '已补', stage: true };
+
+  const FILL_ALL_STEPS = [
+    { key: 'plot_stage', cfg: STAGE_FILL, call: (s, o) => api.storyStageFill(s, o) },
+    { key: 'cast_card', cfg: FILL_TARGETS.cast_card, call: (s, o) => api.storyCastFill(s, o) },
+    { key: 'char_look', cfg: FILL_TARGETS.char_look, call: (s, o) => api.storyFieldFill(s, 'char_look', o) },
+    { key: 'card_inject', cfg: FILL_TARGETS.card_inject, call: (s, o) => api.storyFieldFill(s, 'card_inject', o) },
+    { key: 'timeline_when', cfg: FILL_TARGETS.timeline_when, call: (s, o) => api.storyFieldFill(s, 'timeline_when', o) },
+  ];
+
+  /** 报告面板的外壳（收起按钮只有一份实现） */
+  function mountReport(inner) {
+    const box = container.querySelector('#nov-fill-box');
+    box.innerHTML = `<div class="card" style="margin-bottom:10px;padding:12px">${inner}</div>`;
     const close = box.querySelector('#nov-fill-close');
     if (close) close.onclick = () => { box.innerHTML = ''; };
+  }
+
+  function renderFillReport(d, cfg) {
+    mountReport(`
+      <div class="row wrap" style="gap:6px;align-items:center">
+        <b>${esc(cfg.what)}：${esc(cfg.verb || '写入')} ${d.assigned}/${d.targets} ${esc(cfg.unit)}</b>
+        <div class="spacer"></div>
+        <button class="btn btn-xs" id="nov-fill-close">收起</button>
+      </div>
+      ${fillReportBody(d, cfg)}`);
+  }
+
+  /**
+   * 一键补齐的合并报告（批 8 补 44）：**每一步分开报**，因为"哪一步没做成、为什么"是完全不同的事。
+   * 失败与跳过也各占一段 —— 把 5 步压成"共补上 N 处"，用户就分不清"原文确实没写"和"模型在编"、
+   * 也看不出"这一步压根没跑"（补 33 立的规矩：三种"没写成"必须分开报）。
+   */
+  function renderBatchReport(steps) {
+    const sum = steps.reduce((a, s) => a + ((s.data && s.data.assigned) || 0), 0);
+    const okN = steps.filter((s) => s.status === 'ok').length;
+    const sec = (s) => {
+      const name = esc(s.cfg.label);
+      if (s.status === 'skipped') {
+        return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px">
+          <div class="hint-xs"><span class="chip gray">跳过</span> <b>${name}</b>：${esc(s.reason)}</div></div>`;
+      }
+      if (s.status === 'failed') {
+        return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px">
+          <div class="hint-xs"><span class="chip red">这一步没做成</span> <b>${name}</b>：${esc(s.reason)}</div>
+          <div class="hint-xs" style="opacity:.75">其余步骤照常做了 —— 可以单独再点一次那一类的按钮重试。</div></div>`;
+      }
+      const d = s.data || {};
+      return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px">
+        <div class="hint-xs"><span class="chip green">${esc(s.cfg.verb || '写入')}</span> <b>${name}</b>：${d.assigned}/${d.targets} ${esc(s.cfg.unit)}</div>
+        ${fillReportBody(d, s.cfg)}</div>`;
+    };
+    mountReport(`
+      <div class="row wrap" style="gap:6px;align-items:center">
+        <b>AI 一键回原文补齐：${okN}/${steps.length} 步生效，共补上 ${sum} 处</b>
+        <div class="spacer"></div>
+        <button class="btn btn-xs" id="nov-fill-close">收起</button>
+      </div>
+      <div class="hint-xs" style="margin-top:4px">每一步分开报：补了什么、哪些原文确实没写、哪些引文对不上原文被丢弃。对不上原文的一条都没写。</div>
+      ${steps.map(sec).join('')}`);
   }
 
   async function fillFields(target, btn) {
@@ -1262,10 +1347,108 @@ export default async function novel(container, params = {}) {
     } finally { setBusy(btn, false); }
   }
 
+  /**
+   * AI 一键回原文补齐（批 8 补 44）：把「回原文找」这一族一次做完，**只弹一次计费确认**。
+   *
+   * 三件事让它比"把 5 个按钮依次点一遍"更安全，而不是更危险：
+   * ① **先免费问一遍**：每一类的干跑都是纯本地的，把"各有多少候选、共调几次"如实摆出来再确认；
+   * ② **每一步开跑前再问一遍**（干跑不要钱）：前面的步骤会改数据（新建的卡也可能缺长相），
+   *    拿最开始那份统计直接开跑就是对着**过期名单**花钱；
+   * ③ **失败只丢这一步**：某一步报错不影响其余步骤，报告里那一步单独说"这一步没做成、为什么"。
+   *
+   * 钱是**准的**（每一类固定 1 次调用），会随步骤漂的只有"各有多少候选"—— 确认框里明说这一点，
+   * 不让人以为报告里的数与刚才看到的不一致是出了错。
+   */
+  async function fillAll(btn) {
+    if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
+    /**
+     * 每一步的结果按 key 记，**最后按 FILL_ALL_STEPS 的顺序**拼成报告 ——
+     * 这样"跳过的/没做成的"也各占原位，用户看到的顺序与按钮上的顺序一致。
+     */
+    const rec = new Map();
+    // 第一步：**免费**问一遍每一类有没有候选（干跑是纯本地的、一次模型都不调）
+    for (const st of FILL_ALL_STEPS) {
+      let dry;
+      try { dry = await st.call(sourceId, { dryRun: true }); }
+      catch (e) { rec.set(st.key, { status: 'failed', reason: String((e && e.message) || e) }); continue; }
+      if (!dry.ok) {
+        // **400 与 5xx 是两件事，用状态码分、不猜文案**：这几个补字段端点的 400 只有一个含义 ——
+        // "这件事现在无从谈起"（这份原著还没有这一类卡片）。它是**结论**，不是故障；
+        // 报成"这一步没做成"就是假警报，而假警报比不检查更糟（用户会去找一个不存在的问题）。
+        // 真出错（模板里少了变量、模型调用失败）走的是 5xx，必须照实说成失败。
+        rec.set(st.key, dry.status === 400
+          ? { status: 'skipped', reason: dry.error }
+          : { status: 'failed', reason: dry.error });
+        continue;
+      }
+      if (!(dry.data.targets > 0)) {
+        rec.set(st.key, { status: 'skipped', reason: dry.data.note || '这一类没有候选' });
+        continue;
+      }
+      rec.set(st.key, { status: 'pending', targets: dry.data.targets });
+    }
+    const todo = FILL_ALL_STEPS.filter((st) => (rec.get(st.key) || {}).status === 'pending');
+    const dryFail = FILL_ALL_STEPS.filter((st) => (rec.get(st.key) || {}).status === 'failed');
+    if (!todo.length) {
+      // 一类候选都没有：如实说，并且把"哪几类没问出候选"的理由一起摆出来（不吞掉失败）
+      renderBatchReport(FILL_ALL_STEPS.map((st) => ({ ...st, ...rec.get(st.key) })));
+      toast.ok('回原文能补的都已经补上了（每一类都没有候选）');
+      if (dryFail.length) toast.err(`有 ${dryFail.length} 类没能问出候选（原因见下方报告）`);
+      return;
+    }
+    const list = todo.map((st) => `${st.cfg.label} ${rec.get(st.key).targets} ${st.cfg.unit}`).join('、');
+    const yes = await costConfirm({
+      count: todo.length, // 每一类固定调 1 次 —— 钱是准的
+      what: 'AI 回原文补齐',
+      note: `将依次补：${list}。每一类固定调 1 次模型，共 ${todo.length} 次。`
+        + '顺序是「分幕次 → 补人物卡 → 补长相 → 补场景道具字段 → 补时间点」，补人物卡排在补长相前面 ——'
+        + '新建的人物卡也会一起补上长相。因此上面这些数是**开始前**的统计，前面几步补完可能让后面的候选变多，'
+        + '实际数量以最后的报告为准（**调用次数不变**）。每一类都必须交出原文里的**原话**作为依据，'
+        + '与原文对不上的一律丢弃；原文确实没写的会如实报"没写"，绝不会拿编的顶上。'
+        + (dryFail.length ? `另有 ${dryFail.length} 类（${dryFail.map((st) => st.cfg.label).join('、')}）`
+          + '连"有没有候选"都没问出来，这次不会跑它们，原因会写在报告里。' : ''),
+    });
+    if (!yes) return;
+    // **必须传按钮**（不能传 container）：setBusy 会把 innerHTML 换成 spinner，
+    // 传容器会把整页连同监听一起抹掉 —— 补 35 抓到的"成功但页面已经变哑"就是这么来的
+    setBusy(btn, true, '正在回原文补齐');
+    try {
+      // 只跑"刚问出来有候选"的那几步；每一步**开跑前重新干跑一次**（免费）——
+      // 前面的步骤会改数据（新建的卡也可能缺长相），拿最开始那份名单直接开跑就是对着过期名单花钱
+      for (const st of todo) {
+        let dry;
+        try { dry = await st.call(sourceId, { dryRun: true }); }
+        catch (e) { rec.set(st.key, { status: 'failed', reason: String((e && e.message) || e) }); continue; }
+        if (!dry.ok) { rec.set(st.key, { status: 'failed', reason: dry.error }); continue; }
+        if (!(dry.data.targets > 0)) {
+          rec.set(st.key, { status: 'skipped', reason: '前面的步骤已经把它补上了' });
+          continue;
+        }
+        try {
+          const r = await st.call(sourceId);
+          if (!r.ok) { rec.set(st.key, { status: 'failed', reason: r.error }); continue; }
+          rec.set(st.key, { status: 'ok', data: r.data });
+        } catch (e) { rec.set(st.key, { status: 'failed', reason: String((e && e.message) || e) }); }
+      }
+      const steps = FILL_ALL_STEPS.map((st) => ({ ...st, ...rec.get(st.key) }));
+      const okN = steps.filter((x) => x.status === 'ok').length;
+      const failN = steps.filter((x) => x.status === 'failed').length;
+      const sum = steps.reduce((a, x) => a + ((x.data && x.data.assigned) || 0), 0);
+      toast.ok(`AI 一键补齐：${okN}/${steps.length} 步生效，共补上 ${sum} 处`);
+      if (failN) toast.err(`有 ${failN} 步没做成（其余步骤照常做了）—— 详情见下方报告，可以单独重试那一步`);
+      // 报告**留在页面上**：每一步的引文都要能核对（toast 会消失）
+      renderBatchReport(steps);
+      await loadCards();
+      // 幕次可能变了 → 分集要重切（与单独补幕次那条路一致）
+      await runOutline();
+    } finally { setBusy(btn, false); }
+  }
+
   container.querySelector('#nov-look').onclick = (e) => fillFields('char_look', e.currentTarget);
   container.querySelector('#nov-inject').onclick = (e) => fillFields('card_inject', e.currentTarget);
   container.querySelector('#nov-when').onclick = (e) => fillFields('timeline_when', e.currentTarget);
   container.querySelector('#nov-cast').onclick = (e) => fillFields('cast_card', e.currentTarget);
+  container.querySelector('#nov-fillall').onclick = (e) => fillAll(e.currentTarget);
 
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => {

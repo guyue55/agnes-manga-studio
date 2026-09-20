@@ -2435,6 +2435,148 @@ try {
       }
     }
 
+    group('AI 一键回原文补齐（批 8 补 44：真机点一遍 —— 只弹一次确认、失败只丢一步、报告按步分开）');
+    {
+      // 为什么必须有真机契约：这一轮新增的是**用户会点**的按钮，而且它把 5 个端点**串起来**跑 ——
+      // 每一段单独绿不代表"点一次真的走完了"（补 35 的教训：真机测试是唯一看得见页面状态的那一层）。
+      // 第一遍故意让「补长相」这一步**真失败**（mock 返回 500），专门验"失败只丢这一步"。
+      let failLooks = true;
+      let lookCalls = 0;
+      const mock = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          let b = {}; try { b = JSON.parse(body); } catch {}
+          const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+          if (req.url === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              // 剧情卡**不给 stage**（→ 补幕次有候选）、林晚**不给长相**（→ 补长相有候选）、
+              // involved 里放一个没有卡的名字（→ 补人物卡有候选）；故意不建地点/道具/时间线卡，
+              // 于是那两类的干跑会拿到 400 —— 正是"结论不是故障"那条断言要的输入
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'plot', name: '灯下问案', conflict: '对峙', turn: '翻供', outcome: '定案', involved: '林晚、沈砚' },
+                { kind: 'character', name: '林晚', role: '主角' },
+              ] }) } }] });
+            }
+            if (/"stages"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ stages: [{ index: 1, stage: '起' }] }) } }] });
+            }
+            if (/"people"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ people: [
+                { index: 1, found: true, identity: '绣娘的旧识', appearance: '青衫，眉目清冷', quote: '沈砚推门进来' },
+              ] }) } }] });
+            }
+            if (/"looks"\s*:/.test(um)) {
+              lookCalls += 1;
+              if (failLooks) { res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'mock 故意让补长相这一步失败' })); }
+              return send({ choices: [{ message: { content: JSON.stringify({ looks: [
+                { index: 1, appearance: '素白衣裙', quote: '林晚正在灯下缝衣' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b2) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2) });
+      // 门禁的惯例是"留一张当天免打扰票据，别让后续各组被计费确认挡住"——
+      // 本组**要看确认框**，所以先摘掉；跑完**还回去**，不然会污染后面各组（补 32 那组的原话）
+      const SKIP = 'agnes.cost.skipUntil';
+      const clearTicket = () => cdp.eval(`localStorage.removeItem('${SKIP}'); return true;`);
+      const restoreTicket = () => cdp.eval(`localStorage.setItem('${SKIP}', String(Date.now() + 86400000)); return true;`);
+      const modalText = () => cdp.eval(`return (document.querySelector('.modal-mask')||{}).innerText||'';`);
+      const reportText = () => cdp.eval(`return (document.querySelector('#nov-fill-box')||{}).innerText||'';`);
+      const toastText = () => cdp.eval(`return [...document.querySelectorAll('.toast')].map((x)=>x.innerText).join(' | ');`);
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'fillall-key' }) });
+        pid = (await POST('/api/projects', { name: '一键补齐真机验收剧' })).id;
+        const NOVEL = '沈砚推门进来，林晚正在灯下缝衣。'.repeat(20);
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '一键·原著', text: NOVEL, reduce: false });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        // **前提**：三类候选都真的存在。没有这条，下面点按钮时可能压根没有候选，
+        // 那几条断言就会"因为一个无关的原因"通过（比红更糟）
+        const codes0 = ((await J(`/api/story/audit?project_id=${pid}`)).issues || []).map((x) => x.code);
+        ok('前置：体检同时报出 缺幕次 / 查无此人 / 缺长相（否则一键补齐没有候选可跑）',
+          codes0.includes('plot_no_stage') && codes0.includes('plot_cast_unknown') && codes0.includes('char_no_look'),
+          JSON.stringify(codes0));
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-fillall');`), '「AI 一键补齐」按钮', 15000);
+
+        // ── 第一遍：让「补长相」真失败 —— 验"某一步没做成，其余步骤照常" ──
+        await clearTicket();
+        await cdp.eval(`document.querySelector('#nov-fillall').click(); return true;`);
+        let confirmText = '';
+        for (let i = 0; i < 40; i++) { const t = await modalText(); if (/AI 回原文补齐/.test(t)) { confirmText = t; break; } await sleep(200); }
+        ok('点一次只弹**一个**计费确认，并把"要补几类、共调几次"摆出来（3 类有候选 → 3 次）',
+          /共 3 次/.test(confirmText), JSON.stringify(confirmText.slice(0, 300)));
+        ok('确认框明说"调用次数不变、候选数会随前面的步骤变"（否则报告里的数与刚才不一致会被当成出错）',
+          /调用次数不变/.test(confirmText), JSON.stringify(confirmText.slice(0, 400)));
+        let report = ''; let seen = '';
+        for (let i = 0; i < 80; i++) {
+          await cdp.eval(`const y=document.querySelector('.modal-mask [data-yes]'); if (y) y.click(); return true;`);
+          report = (await reportText()) || report;
+          const t = await toastText(); if (t) seen = t;
+          if (/这一步没做成/.test(report) && /跳过/.test(report)) break;
+          await sleep(300);
+        }
+        ok('报告按步骤分开：没做成的那一步与跳过的两类各占一段',
+          /这一步没做成/.test(report) && /跳过/.test(report), JSON.stringify(report.slice(0, 400)));
+        ok('没做成的那一步点名是「人物长相」，并带上服务端给的原因',
+          /人物长相/.test(report) && /mock 故意让补长相这一步失败/.test(report), JSON.stringify(report.slice(0, 400)));
+        ok('"还没有这类卡片"（HTTP 400）被当成**结论**（跳过）、不是失败 —— 假警报比不检查更糟',
+          /还没有/.test(report) && /有 1 步没做成/.test(seen), `toast="${String(seen).slice(0, 200)}"`);
+        // **失败只丢这一步**：同一次点击里，前面两步真的落库了、失败的那一步真的没写
+        const cards1 = await J(`/api/story/cards?project_id=${pid}`);
+        const plot1 = cards1.find((c) => c.kind === 'plot') || {};
+        const lin1 = cards1.find((c) => c.kind === 'character' && c.name === '林晚') || {};
+        const shen1 = cards1.find((c) => c.kind === 'character' && c.name === '沈砚') || {};
+        ok('失败只丢这一步：同一次点击里幕次与人物卡都真的落库了',
+          plot1.stage === '起' && shen1.identity === '绣娘的旧识',
+          JSON.stringify({ stage: plot1.stage, shen: shen1.identity }));
+        ok('失败的那一步确实一个字都没写（不许"报失败但其实写了"）',
+          !String(lin1.appearance || '').trim() && !String(lin1.outfit || '').trim(), JSON.stringify(lin1.appearance));
+        ok('那一步是真的被调用了（不是"压根没跑"被报成"没做成"）', lookCalls >= 1, String(lookCalls));
+        const onPage = await cdp.eval(`return (document.querySelector('#nov-cards')||{}).innerText||'';`);
+        ok('卡片工作台**真的刷新了**（新卡出现在列表里 —— "接口成功、页面却没变"是补 35 抓到的坏形态）',
+          /沈砚/.test(onPage), JSON.stringify(onPage.slice(0, 200)));
+
+        // ── 第二遍：让「补长相」成功 —— 再点一次，只有这一类还有候选 ──
+        failLooks = false;
+        await clearTicket();
+        await cdp.eval(`document.querySelector('#nov-fillall').click(); return true;`);
+        let confirm2 = '';
+        for (let i = 0; i < 40; i++) { const t = await modalText(); if (/AI 回原文补齐/.test(t)) { confirm2 = t; break; } await sleep(200); }
+        ok('第二次只对"还有候选"的那一类收钱（共 1 次）—— 已经补上的不重复调用（不重复花钱）',
+          /共 1 次/.test(confirm2), JSON.stringify(confirm2.slice(0, 300)));
+        let report2 = '';
+        for (let i = 0; i < 80; i++) {
+          await cdp.eval(`const y=document.querySelector('.modal-mask [data-yes]'); if (y) y.click(); return true;`);
+          report2 = (await reportText()) || report2;
+          if (/素白衣裙/.test(report2)) break;
+          await sleep(300);
+        }
+        ok('第二遍补上了长相，并把"写进去的值 ← 原文原话"摆在报告里',
+          /素白衣裙/.test(report2) && /依据原文原话/.test(report2) && /林晚正在灯下缝衣/.test(report2),
+          JSON.stringify(report2.slice(0, 400)));
+        const lin2 = (await J(`/api/story/cards?project_id=${pid}`)).find((c) => c.kind === 'character' && c.name === '林晚') || {};
+        ok('这一次真的落库了（报告与库里是同一份数据）', lin2.appearance === '素白衣裙', JSON.stringify(lin2.appearance));
+        const rej = await cdp.eval(`return JSON.stringify((window.__uiRejects||[]).slice(0,3));`);
+        ok('一键补齐没有留下未处理的拒绝（"成功但页面已经变哑"最难发现）', rej === '[]', rej);
+      } finally {
+        await restoreTicket().catch(() => null);
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('setBusy 防呆契约（批 8 补 35：传容器会把整页内容与监听一起抹掉）');
     {
       // 补 32/补 33/补 34 三处都犯过：`setBusy(container, true, …)` —— 它会把 `container.innerHTML`

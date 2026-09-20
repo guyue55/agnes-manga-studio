@@ -440,6 +440,63 @@ group('B4 画风分层');
       castSeedSrc.includes('{{候选人物与原文片段}}') && /'候选人物与原文片段': story\.castFillLines/.test(castRouteSrc));
   }
 
+  // 批 8 补 44：AI 一键回原文补齐（把「回原文找」这一族一次做完，只弹一次计费确认）
+  {
+    const allBody = bodyOf(novelMaxSrc, 'async function fillAll(btn) {');
+    // `bodyOf` 只配平**花括号**，而步骤表是**数组** —— 拿它切只会切到第一个元素
+    // （第一版就是这么错的：at('cast_card') 得到 -1，断言红得莫名其妙）。这里按方括号配平切。
+    const arrOf = (src, sig) => {
+      const i = src.indexOf(sig);
+      if (i < 0) return '';
+      let d = 0;
+      for (let j = i + sig.length - 1; j < src.length; j++) {
+        if (src[j] === '[') d++;
+        else if (src[j] === ']') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return '';
+    };
+    const stepsBody = arrOf(novelMaxSrc, 'const FILL_ALL_STEPS = [');
+    const repBody = bodyOf(novelMaxSrc, 'function renderBatchReport(steps) {');
+    const loopBody = bodyOf(allBody, 'for (const st of todo) {');
+    const at = (k) => stepsBody.indexOf(`key: '${k}'`);
+    ok('4.4 工具栏有「AI 一键补齐」按钮，且点击接到了 fillAll',
+      /id="nov-fillall"/.test(novelMaxSrc) && /'#nov-fillall'[\s\S]{0,60}fillAll\(e\.currentTarget\)/.test(novelMaxSrc));
+    // 覆盖五类，且**顺序是有意的**：补人物卡排在补长相前面 —— 新建的卡也可能缺长相，一次补齐就顺手补上
+    ok('4.4 一键补齐覆盖 5 类，且补人物卡排在补长相**前面**（新建的卡也会一起补上长相）',
+      ['plot_stage', 'cast_card', 'char_look', 'card_inject', 'timeline_when'].every((k) => at(k) >= 0)
+      && at('plot_stage') < at('cast_card') && at('cast_card') < at('char_look')
+      && at('char_look') < at('card_inject') && at('card_inject') < at('timeline_when'));
+    // **判据一个都不许抄到前端**："有几张缺"全部来自服务端干跑（前端再抄一份迟早会漂，补 30 的教训）
+    ok('4.4 步骤表里没有任何判据（前端不自己算"有几张缺"）',
+      stepsBody.length > 0 && !/targets|missing|needsLook|\bpool\b/.test(stepsBody));
+    // 名字/单位/动词只有一份来源：放在配置里（FILL_TARGETS / STAGE_FILL），步骤表只留接线
+    ok('4.4 每一类"叫什么/报什么单位"只有一份来源（步骤表里不另写 label/unit/verb）',
+      !/label:|unit:|verb:/.test(stepsBody) && /s\.cfg\.label/.test(repBody) && /s\.cfg\.unit/.test(repBody));
+    // ① **先免费问一遍再确认**：干跑必须出现在计费确认之前（否则就是"先花钱再告诉你花了多少"）
+    ok('4.4 先免费干跑算出每一类有多少候选，**再**弹计费确认（不许先开跑）',
+      allBody.indexOf('dryRun: true') > 0 && allBody.indexOf('dryRun: true') < allBody.indexOf('costConfirm('));
+    // ② 每一步**开跑前重新干跑**：前面的步骤会改数据（新建的卡也可能缺长相）
+    ok('4.4 每一步开跑前**重新**干跑（前面的步骤会改数据，拿旧名单开跑＝对着过期候选花钱）',
+      /for \(const st of todo\)[\s\S]{0,500}st\.call\(sourceId, \{ dryRun: true \}\)/.test(allBody));
+    // ③ 400 是**结论**、5xx 才是失败 —— 用状态码分，不猜文案
+    ok('4.4 "还没有这类卡片"（HTTP 400）当结论、真出错（5xx）当失败 —— 用状态码分、不猜文案',
+      /dry\.status === 400/.test(allBody)
+      && /status: 'skipped', reason: dry\.error/.test(allBody)
+      && /status: 'failed', reason: dry\.error/.test(allBody));
+    // ④ 失败只丢这一步
+    ok('4.4 某一步失败只丢这一步（循环里一律 continue，不许 break/return/throw 中断整批）',
+      loopBody.length > 0 && /status: 'failed'/.test(loopBody)
+      && !/\bbreak\b|\bthrow\b|\breturn\b/.test(loopBody));
+    // ⑤ 报告正文只有一份实现（另写一份＝"少一列"没人发现）
+    ok('4.4 单个补与一键补齐**共用同一份**报告正文（另写一份就是同一个事实的第二份形状）',
+      (novelMaxSrc.match(/function fillReportBody\(/g) || []).length === 1
+      && /\$\{fillReportBody\(d, cfg\)\}/.test(novelMaxSrc)
+      && /\$\{fillReportBody\(d, s\.cfg\)\}/.test(novelMaxSrc));
+    // ⑥ 每一步分开报（跳过的/没做成的各占原位），报告留在页面上
+    ok('4.4 报告按步骤分开列（跳过的、没做成的各占原位），且留在页面上可核对引文',
+      /steps\.map\(sec\)/.test(repBody) && /这一步没做成/.test(repBody) && /跳过/.test(repBody));
+  }
+
   // 批 8 补 34：补场景/道具字段（与补长相同一套机制 —— 界面必须是**一个**函数、两份配置）
   {
     const injApiSrc = read(path.join(PUB, 'js', 'api.js'));
