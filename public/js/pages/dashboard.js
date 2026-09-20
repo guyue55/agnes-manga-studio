@@ -5,7 +5,8 @@
 import { icon, esc, relTime, fmtTime } from '../consts.js';
 import { api } from '../api.js';
 import { empty, spinner, skeleton, toast, errBox, clickableCard, imgWithFallback } from '../ui.js';
-import { head, projectPicker } from './helpers.js';
+import { head } from './helpers.js';
+import { loadPipeline, pipelineError, renderPanel } from '../pipeline.js';
 import { state, navigate } from '../app.js';
 
 export default async function dashboard(container) {
@@ -63,13 +64,14 @@ export default async function dashboard(container) {
     };
   });
 
-  // 进度面板选中的项目（切页不保留：这是个"看一眼就走"的面板）
-  let pipeProject = '';
-
   /**
-   * 创作进度（批 8 补 16）：七段链路各自在不同页面上，用户想知道"卡在哪一步、下一步点哪儿"必须自己拼。
-   * 服务端一次给全（纯本地统计、零模型调用），这里只负责渲染 + 一个直达下一步的按钮。
-   * `blocked`（前置还没做）与 `todo`（轮到你了）必须画得不一样 —— 混在一起用户会照着点却发现做不了。
+   * 创作进度（批 8 补 16 / UI 重构 B5.4）：七段链路各自在不同页面上，用户想知道"卡在哪一步、
+   * 下一步点哪儿"必须自己拼。服务端一次给全（纯本地统计、零模型调用）。
+   *
+   * 渲染**不再在这里实现**：常驻流程条与工作台面板共用 `pipeline.js` 一份语气表、一份数字口径、
+   * 一份"下一步"算法，只有排版密度不同。此前那份写死的 BADGE/WORD 表已经搬走 ——
+   * 留在页面里就是"同一件事两份口径"，改一处另一处就会分叉。
+   * 面板跟随**壳层当前项目**（不再自带项目下拉：换项目全站只有侧栏那一个控件）。
    */
   async function renderPipeline(projects) {
     const el = container.querySelector('#pipeline');
@@ -79,41 +81,18 @@ export default async function dashboard(container) {
       if (b) b.onclick = () => navigate('projects', { new: '1' });
       return;
     }
-    if (!projects.some((p) => p.id === pipeProject)) pipeProject = projects[0].id;
-    const r = await api.storyPipeline({ project_id: pipeProject });
-    if (!r.ok) {
-      el.innerHTML = `<div class="card">${errBox(`进度加载失败：${r.error || '网络错误'}`, undefined, r.trace)}</div>`;
+    const pid = state.projectId || projects[0].id;
+    const d = await loadPipeline(pid);
+    const e = pipelineError(pid);
+    if (!d) {
+      el.innerHTML = `<div class="card">${errBox(`进度加载失败：${(e && e.error) || '本地服务没有响应'}`, undefined, (e && e.trace) || '')}</div>`;
       const b = el.querySelector('[data-retry]');
       if (b) b.onclick = () => renderPipeline(projects);
       return;
     }
-    const d = r.data;
-    const BADGE = { done: 'green', partial: 'gold', todo: 'blue', blocked: 'gray' };
-    const WORD = { done: '已完成', partial: '进行中', todo: '该做了', blocked: '待前置' };
-    const nextStep = (d.steps || []).find((x) => x.key === d.next_step);
-    el.innerHTML = `<div class="card">
-      <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
-        <div class="card-title" style="margin:0">${icon('film', 15)} 七段链路</div>
-        ${projectPicker(projects, pipeProject, { id: 'pipe-pick', small: true })}
-        <div class="spacer"></div>
-        ${d.ready
-          ? '<span class="badge green">整条链已跑完</span>'
-          : `<button class="btn btn-sm btn-primary" id="pipe-go">${icon('play', 13)}去完成「${esc(d.next_label)}」</button>`}
-      </div>
-      <div class="chips" style="margin-top:10px">
-        ${(d.steps || []).map((x) => `<span class="chip ${x.state === 'blocked' ? '' : 'on'}" title="${esc(`${x.label}：${WORD[x.state]}${x.need > 1 ? `（${x.have}/${x.need}）` : ''} —— ${x.action}`)}">
-          ${x.state === 'done' ? icon('check', 12) + ' ' : ''}${esc(x.label)}<span class="badge ${BADGE[x.state]}" style="margin-left:6px">${WORD[x.state]}${x.need > 1 ? ` ${x.have}/${x.need}` : ''}</span>
-        </span>`).join('')}
-      </div>
-      ${(d.notes || []).length ? `<div class="note" style="margin-top:10px">${(d.notes || []).map((n) => esc(n)).join('<br>')}</div>` : ''}
-    </div>`;
-    const pick = el.querySelector('#pipe-pick');
-    if (pick) pick.onchange = () => { pipeProject = pick.value; renderPipeline(projects); };
-    const go = el.querySelector('#pipe-go');
-    if (go && nextStep) {
-      // 直达下一步：带上项目 id，省掉用户到那一页再选一次项目
-      go.onclick = () => navigate(nextStep.page, { project: pipeProject });
-    }
+    renderPanel(el, d, { onGo: (next) => navigate(next.page, { project: pid }) });
+    // 拿旧数字兜底时必须**说出来**：不说的话用户以为看到的是最新进度（"成功但没更新"最难发现）
+    if (e) el.insertAdjacentHTML('beforeend', `<div class="hint-xs" style="margin-top:6px;color:var(--warn)">上面的进度可能是旧的：最近一次刷新失败（${esc(e.error)}）${e.trace ? ` · 报错码 ${esc(e.trace)}` : ''}</div>`);
   }
 
   async function load() {

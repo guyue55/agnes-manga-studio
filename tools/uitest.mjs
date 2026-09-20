@@ -1948,15 +1948,63 @@ group('原著解析页（批 8：卡片类别同源 / 文件读取 / 端点齐�
     !/reference_image_ids/.test(stripComments((storySrc17.match(/function normalizeCard[\s\S]*?\n\}/) || [''])[0])),
     'normalizeCard 里出现了 reference_image_ids —— 重新解析会静默清空用户挂的参考图');
 
-  // ── 全链路进度面板（批 8 补 16）──
+  // ── 七段链（批 8 补 16 → UI 重构 B5.3/B5.4：一份数据、三处显示）──
+  // 主张变了：以前"七段链"是工作台里的一个面板，现在是**壳层的常驻流程条 + 侧栏徽标 + 工作台面板**
+  // 三处显示同一件事。所以钉子从"dashboard 里有这段代码"改成"只有一份实现，三处都从它来"。
   const dashSrc = read(path.join(PUB, 'js', 'pages', 'dashboard.js'));
-  ok('工作台有七段链路进度面板（卡在哪一步一眼可见）',
-    /七段链路/.test(dashSrc) && /api\.storyPipeline\(\{ project_id: pipeProject \}\)/.test(dashSrc));
+  const pipeSrc = read(path.join(PUB, 'js', 'pipeline.js'));
+  const appSrcP = read(path.join(PUB, 'js', 'app.js'));
+  const htmlP = read(path.join(PUB, 'index.html'));
+  ok('七段链只有一份实现（紧凑条 / 详细面板 / 侧栏徽标都在 pipeline.js）',
+    /export function renderStrip/.test(pipeSrc) && /export function renderPanel/.test(pipeSrc)
+    && /export function pipelineBadge/.test(pipeSrc) && /export async function loadPipeline/.test(pipeSrc));
+  ok('页面与壳层都不再自己写语气表（写死的第二份必然与第一份分叉）',
+    !/BADGE = \{ done/.test(dashSrc) && !/WORD = \{ done/.test(dashSrc)
+    && /STEP_TONE/.test(pipeSrc) && /STEP_WORD/.test(pipeSrc));
   ok('"待前置"与"该做了"画得不一样（否则用户照着点却发现做不了）',
-    /done: 'green', partial: 'gold', todo: 'blue', blocked: 'gray'/.test(dashSrc)
-    && /x\.state === 'blocked' \? '' : 'on'/.test(dashSrc));
+    /done: 'green', partial: 'gold', todo: 'blue', blocked: 'gray'/.test(pipeSrc)
+    && /x\.state === 'blocked' \? '' : 'on'/.test(pipeSrc));
   ok('下一步给一个直达按钮，并带上项目 id（省掉到那页再选一次项目）',
-    /去完成「\$\{esc\(d\.next_label\)\}」/.test(dashSrc) && /navigate\(nextStep\.page, \{ project: pipeProject \}\)/.test(dashSrc));
+    /去完成「/.test(pipeSrc) && /navigate\(next\.page, \{ project: pid \}\)/.test(dashSrc));
+  ok('侧栏徽标读的是**缓存**（renderSidebar 会被 SSE 高频调用，那里发请求就是灾难）',
+    /pipelineBadge\(n\.id, cachedPipeline\(state\.projectId\)\)/.test(appSrcP)
+    && /cachedPipeline/.test(pipeSrc));
+  ok('常驻流程条挂在 #view 之外（页面重挂不会把它清掉，否则就不叫常驻了）',
+    /<div id="pipe-strip"><\/div>\s*<div id="view">/.test(htmlP));
+  ok('拉取失败时保留旧数字、但界面会说出来（"成功但没更新"最难发现）',
+    /lastErr\.set/.test(pipeSrc) && /export function pipelineError/.test(pipeSrc)
+    && /上面的进度可能是旧的/.test(dashSrc));
+  ok('换项目时**强制**刷新（TTL 是给同一项目的重复请求用的，不是给换项目用的）',
+    /refreshPipeline\(\{ force: true \}\)/.test(appSrcP));
+  // 跨文件棘轮：服务端每一步标的 nav 必须是**真实存在**的侧栏入口。
+  // 拼错一个字母的后果是那个入口永远没有徽标 —— 而"没有徽标"看起来跟"这一步没做"一样。
+  {
+    const storySrcP = read(path.join(ROOT, 'lib', 'story.js'));
+    const bodyP = (storySrcP.match(/function pipelineOverview[\s\S]*?\n\}/) || [''])[0];
+    const navIdsP = new Set([...appSrcP.matchAll(/\{ id: '([a-z]+)', label:/g)].map((m) => m[1]));
+    const argsOf = (src, name) => {
+      const out = [];
+      for (let i = src.indexOf(`${name}(`); i >= 0; i = src.indexOf(`${name}(`, i + 1)) {
+        let depth = 0; let arg = ''; const args = [];
+        for (let j = i + name.length + 1; j < src.length; j++) {
+          const c = src[j];
+          if (c === '(') depth++;
+          if (c === ')') { if (!depth) { args.push(arg); break; } depth--; }
+          if (c === ',' && !depth) { args.push(arg); arg = ''; continue; }
+          arg += c;
+        }
+        out.push(args.map((x) => x.trim()));
+      }
+      return out;
+    };
+    const stepsP = argsOf(bodyP, 'add');
+    const navsP = stepsP.map((x) => (x[6] || '').replace(/'/g, ''));
+    ok('解析到七段（自证解析器有效）', stepsP.length === 7, `steps=${stepsP.length}`);
+    ok('每一步标的侧栏入口都真实存在（拼错一个字母 = 那个入口永远没有徽标）',
+      navsP.every((n) => navIdsP.has(n)), navsP.filter((n) => !navIdsP.has(n)).join(',') || navsP.join(','));
+    ok('每一步都带数字单位（界面不自己拼单位，那是第二份口径）',
+      stepsP.every((x) => /^'[^']+'$/.test(x[7] || '')), JSON.stringify(stepsP.map((x) => x[7])));
+  }
   ok('失败态也有 CTA（空态必须能一键走下去）',
     /empty\('项目加载失败', '修好后这里会显示创作进度', 'alert', \{ label: '重试', go: '#\/dashboard' \}\)/.test(dashSrc));
 

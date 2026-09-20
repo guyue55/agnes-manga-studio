@@ -4,6 +4,7 @@
 import { icon, esc } from './consts.js';
 import { api } from './api.js';
 import { toast } from './ui.js';
+import { cachedPipeline, loadPipeline, pipelineBadge, renderStrip } from './pipeline.js';
 
 import dashboard from './pages/dashboard.js';
 import projects from './pages/projects.js';
@@ -95,8 +96,10 @@ export function rememberProject(id) {
   try {
     if (v) localStorage.setItem(PROJECT_KEY, v); else localStorage.removeItem(PROJECT_KEY);
   } catch { /* 记不住就当没记住 */ }
-  // 侧栏那一个是"我在哪个项目"的**显式声明**，它必须跟着变（否则壳层显示的项目与页面用的不是一回事）
-  if (changed) renderSidebar();
+  // 侧栏那一个是"我在哪个项目"的**显式声明**，它必须跟着变（否则壳层显示的项目与页面用的不是一回事）。
+  // 进度徽标与流程条也得跟着换 —— 换项目必须**强制**拉一次：TTL 是给同一项目的重复请求用的，
+  // 不是给换项目用的（否则会有 5 秒显示着上一个项目的进度）。
+  if (changed) { renderSidebar(); refreshPipeline({ force: true }).catch(() => { /* 拉不到就保持现状 */ }); }
   return v;
 }
 
@@ -187,6 +190,9 @@ async function render() {
   view.appendChild(page);
 
   renderSidebar();
+  // 换页 = 刷新一次进度（**强制**）：流程条就在眼前，显示着上一个页面的旧数字是最容易被当成
+  // "系统算错了"的那种错。一次本地 GET（~3ms），用户一次点击一次，不是高频路径。
+  refreshPipeline({ force: true }).catch(() => { /* 拉不到就保持现状 */ });
 
   try {
     const c = await nav.page(page, params);
@@ -202,6 +208,18 @@ async function render() {
 
 let sbCollapsed = localStorage.getItem('agnes.sidebar.collapsed') === '1'; // B3.2
 document.body.classList.toggle('sb-collapsed', sbCollapsed);
+
+/**
+ * 侧栏入口右侧那个角标：优先显示**创作进度**（这个入口还欠着什么），其次才是运行中的视频数。
+ * 为什么优先：进度角标回答的是"我下一步点哪儿"，而"还有 2 个视频在跑"是任务页的事 ——
+ * 两个都要时把进度放前面，因为它每页都缺、任务数是偶发的。
+ * 读的是**缓存**，这里绝不许发请求：renderSidebar 会被 SSE 高频调用（每个事件一次请求就是灾难）。
+ */
+function navBadge(n, running) {
+  const b = pipelineBadge(n.id, cachedPipeline(state.projectId));
+  if (b) return `<span class="badge ${b.tone}" title="${esc(b.title)}">${esc(b.text)}</span>`;
+  return n.id === 'tasks' && running ? `<span class="badge">${running}</span>` : '';
+}
 
 function renderSidebar() {
   const el = document.getElementById('sidebar');
@@ -226,7 +244,7 @@ function renderSidebar() {
         <button class="nav-item ${n.id === state.current ? 'active' : ''}" data-nav="${n.id}" title="${esc(n.label)}"${n.id === state.current ? ' aria-current="page"' : ''}>
           ${icon(n.icon, 17)}
           <span class="lbl">${esc(n.label)}</span>
-          ${n.id === 'tasks' && running ? `<span class="badge">${running}</span>` : ''}
+          ${navBadge(n, running)}
         </button>`).join('')}
       <button class="nav-item sb-toggle" id="sb-toggle" title="${sbCollapsed ? '展开侧栏' : '折叠侧栏'}">
         ${icon(sbCollapsed ? 'arrowRight' : 'arrowLeft', 16)}<span class="lbl">折叠侧栏</span>
@@ -244,7 +262,7 @@ function renderSidebar() {
   if (sp) sp.onchange = () => {
     // 换项目 = 换上下文：**只带 project 重新进入当前页**。刻意不保留 episode / source_id 等参数 ——
     // 它们属于旧项目，"带着旧参数切项目"正是"看起来切了、其实还指着旧数据"的来源。
-    rememberProject(sp.value);
+    rememberProject(sp.value);   // 它内部会强制刷新进度徽标
     navigate(state.current, { project: sp.value });
   };
   const tgl = el.querySelector('#sb-toggle');
@@ -278,6 +296,25 @@ export async function refreshState() {
 }
 
 /**
+ * 刷新七段进度（侧栏徽标 + 常驻流程条），然后重画这两处。
+ * 放在 refreshState 里是**唯一**的触发点：boot、SSE 去抖刷新、页面改完数据后调的 softRefresh
+ * 都会走到这里，所以徽标不会长期停在旧值上；重复请求由 loadPipeline 的 TTL/并发去重挡掉。
+ */
+async function refreshPipeline(opts = {}) {
+  const pid = state.projectId;
+  const strip = document.getElementById('pipe-strip');
+  if (!pid) { renderStrip(strip, null); return; }
+  const d = await loadPipeline(pid, opts);
+  // 等结果的这段时间里用户可能换了项目：那份数据已经不属于当前上下文，画上去就是"两个项目混着看"
+  if (pid !== state.projectId) return;
+  renderSidebar();
+  renderStrip(strip, d, {
+    // 直达下一步：带上项目 id，省掉用户到那一页再选一次项目
+    onGo: (next) => navigate(next.page, { project: pid }),
+  });
+}
+
+/**
  * R15：拉取某项目的角色档案并合并进 state.characters。
  * 为什么不让页面直接用 bootstrap 的快照：分镜/图片页要显示"生成时真正发出什么"的计算态预览，
  * 而注入是后端按库里最新数据做的 —— 快照过期 = 预览骗人。进页面时对齐一次，本地调用极快。
@@ -297,6 +334,9 @@ export async function loadCharacters(projectId) {
 /** 给页面用：改了项目/设置之后刷新侧边栏与统计 */
 export async function softRefresh() {
   await refreshState();
+  // 这是"我刚改完数据"的入口，所以**强制**刷新进度：TTL 会把紧接着的这次刷新吞掉，
+  // 于是"解析完了但徽标还说该解析"—— 而用户刚做完的事最不该显示成没做。
+  await refreshPipeline({ force: true });
 }
 
 // ── SSE：视频状态与批量任务进度 ─────────────────────────────
@@ -319,7 +359,9 @@ export function onEvent(kind, fn) {
 let sseTmr = null;
 function debouncedRefresh() {
   if (sseTmr) return;
-  sseTmr = setTimeout(() => { sseTmr = null; refreshState(); }, 400);
+  // 视频跑完会改变"分镜视频"那一段的进度 —— 但这里**不带 force**：TTL 保证整批任务
+  // 再长也最多 5 秒一次请求（"每个事件一次请求"是灾难，哪怕接口很便宜）。
+  sseTmr = setTimeout(() => { sseTmr = null; refreshState(); refreshPipeline().catch(() => { /* ignore */ }); }, 400);
 }
 
 function connectSSE() {

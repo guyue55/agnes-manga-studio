@@ -231,6 +231,63 @@ html, body {
   to { opacity: 1; transform: none; }
 }
 
+/* ── 常驻流程条（UI 重构 B5.4）─────────────────────────────
+   为什么常驻在壳层而不是工作台里：用户最需要知道"我卡在哪、下一步点哪儿"的时候，
+   恰恰是他**已经在某一页干活**的时候，而不是回到总览页的时候。 */
+.pipe-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  margin: 0 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.022);
+  overflow: hidden;
+}
+.pipe-strip-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-4);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pipe-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pipe-chips::-webkit-scrollbar { display: none; }
+.pipe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pipe-chip b { font-weight: 550; font-variant-numeric: tabular-nums; }
+.pipe-chip.green { border-color: rgba(79, 190, 139, 0.28); color: var(--ok); }
+.pipe-chip.gold { border-color: rgba(245, 213, 138, 0.28); color: var(--gold-light); }
+.pipe-chip.blue { border-color: rgba(111, 190, 234, 0.25); color: var(--info); }
+.pipe-chip.gray b { color: var(--text-4); font-weight: 400; }
+.pipe-strip .btn { flex-shrink: 0; }
+/* 窄屏（≤900px）先把标签收起来，保住链本身与"下一步" */
+@media (max-width: 900px) {
+  .pipe-strip-lbl .lbl { display: none; }
+}
+
 .page-head {
   display: flex;
   align-items: flex-end;

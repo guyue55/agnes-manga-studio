@@ -2997,12 +2997,15 @@ try {
         body: JSON.stringify({ name: '进度验收剧' }) });
       const pid = pj16.id;
       try {
-        // ① 空项目：第一步该做、其余待前置，且给一个直达按钮
-        await cdp.eval(`location.hash = '#/dashboard'; return true;`);
-        await cdp.send('Page.reload', {}); await sleep(1000);
-        await waitFor(() => cdp.eval(`return !!document.querySelector('#pipe-pick');`), '工作台进度面板', 12000);
-        await cdp.eval(`const s = document.querySelector('#pipe-pick'); s.value = '${pid}'; s.dispatchEvent(new Event('change')); return true;`);
-        await waitFor(() => cdp.eval(`return /原著落库/.test(document.querySelector('#pipeline').innerText);`), '进度面板渲染', 10000);
+        // ① 空项目：第一步该做、其余待前置，且给一个直达按钮。
+        // 项目上下文现在只有**一个**入口（壳层侧栏），所以这里走真实路径：URL → 壳层 → 面板，
+        // 顺带把"面板跟着壳层当前项目走"这件事一起验了（以前面板自带一个 #pipe-pick 下拉）。
+        await cdp.eval(`location.hash = '#/dashboard?project=${pid}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return /原著落库/.test((document.querySelector('#pipeline')||{}).innerText||'');`), '进度面板渲染', 12000);
+        ok('工作台面板跟随壳层当前项目（不再自带项目下拉）',
+          (await cdp.eval(`return (document.querySelector('#sb-project')||{}).value||'';`)) === pid
+          && (await cdp.eval(`return document.querySelectorAll('#pipeline select').length;`)) === 0);
         const box = await cdp.eval(`return document.querySelector('#pipeline').innerText;`);
         ok('七段链路一次列全（用户不用自己拼）',
           ['原著落库', '解析出卡片', '分集骨架', '分集剧本', '分镜', '分镜图', '分镜视频'].every((x) => box.includes(x)),
@@ -3030,6 +3033,33 @@ try {
         ok('有原著后第一段完成、下一步推进到解析卡片',
           st.steps[0].state === 'done' && st.next_step === 'cards', JSON.stringify({ a: st.steps[0].state, n: st.next_step }));
         ok('还没解析出卡片时如实提示"解析出卡片"是下一步', st.steps[1].state === 'todo', st.steps[1].state);
+
+        // ④ UI 重构 B5.3/B5.4：七段链要在**每一页**都看得见，而不是只在工作台
+        await cdp.eval(`location.hash = '#/scripts?project=${pid}'; return true;`);
+        await sleep(900);
+        const stripBox = await cdp.eval(`return (document.querySelector('#pipe-strip')||{}).innerText||'';`);
+        ok('流程条在**创作页**也常驻（用户正干活的那一页才是最需要它的地方）',
+          ['原著落库', '解析出卡片', '分集骨架', '分集剧本', '分镜', '分镜图', '分镜视频'].every((x) => stripBox.includes(x)),
+          stripBox.replace(/\s+/g, ' ').slice(0, 200));
+        ok('流程条挂的位置不在 #view 里（页面重挂不会把它清掉）',
+          await cdp.eval(`const a=document.querySelector('#pipe-strip'); const v=document.querySelector('#view'); return !!a && !!v && !v.contains(a);`));
+        ok('流程条上的"下一步"与工作台是同一个判据（都指原著落库之后的解析卡片）',
+          /下一步：解析出卡片/.test(stripBox), stripBox.replace(/\s+/g, ' ').slice(0, 200));
+        // 侧栏徽标：这个入口现在欠着什么，不用点进去就能看见
+        const navText = await cdp.eval(`return [...document.querySelectorAll('#sidebar [data-nav]')].map((b)=>b.getAttribute('data-nav')+':'+(b.querySelector('.badge')||{}).innerText).join(' | ');`);
+        ok('侧栏入口带进度徽标（原著入口显示它欠的那一步）',
+          /novel:[^|]*该做/.test(String(navText)), JSON.stringify(String(navText).slice(0, 200)));
+        // ⑤ 点流程条的按钮直达下一步所在页（与工作台那条路径同一个落点）
+        await cdp.eval(`document.querySelector('#pipe-strip-go').click(); return true;`);
+        await sleep(900);
+        const hash5 = await cdp.eval(`return location.hash;`);
+        ok('流程条的按钮直达那一步所在的页面，并带上项目 id',
+          /^#\/novel\?/.test(hash5) && hash5.includes(pid), hash5);
+        // ⑥ 侧栏徽标与流程条必须说**同一件事**（两处各算一份就会出现两个答案，
+        //    而"两个数字都对不上"正是用户最没法判断的那种错）
+        const navTitle = await cdp.eval(`return (document.querySelector('#sidebar [data-nav="novel"] .badge')||{}).title||'';`);
+        ok('侧栏徽标的说法与流程条的"下一步"同源（都指解析卡片，且状态词一致）',
+          navTitle.includes('解析出卡片') && navTitle.includes('该做了'), JSON.stringify(navTitle));
       } finally {
         await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' });
       }

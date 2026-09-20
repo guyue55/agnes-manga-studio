@@ -1154,6 +1154,16 @@ group('全链路进度体检（批 8 补 16：卡在哪一步、下一步点哪�
   ok('脏输入一律当 0（面板不能因为一个坏值整块崩掉）',
     dirty.steps.every((x) => Number.isFinite(x.have) && x.have >= 0), JSON.stringify(dirty.steps.map((x) => x.have)));
   eq('字符串数字照常认', state(dirty, 'images') === 'partial' || state(dirty, 'images') === 'done', true);
+
+  // B5.3/B5.4：侧栏徽标与常驻流程条要靠 `nav`/`unit` 才画得出来。
+  // 这两个字段以前没有（unit 甚至一直是个空串的死字段）—— 界面只能自己拼单位/自己猜入口，
+  // 那就是"同一件事两份口径"。这里把"每一步都带齐"钉住。
+  ok('每一步都标了它属于侧栏哪个入口（nav），且都带数字单位（unit）',
+    full.steps.every((x) => typeof x.nav === 'string' && x.nav && typeof x.unit === 'string' && x.unit));
+  eq('nav 与 page 是两个独立事实（分镜图/分镜视频在分镜页做，但账算在图片/视频入口上）',
+    full.steps.filter((x) => x.nav === 'images' || x.nav === 'videos').map((x) => x.page).join(','), 'storyboards,storyboards');
+  ok('每个侧栏入口只被它自己的那几步认领（novel 认领前三步，其余一一对应）',
+    full.steps.map((x) => `${x.key}:${x.nav}`).join(' ') === 'source:novel cards:novel episodes:novel scripts:scripts shots:storyboards images:images videos:videos');
 }
 
 group('负面提示词并入正向提示词（批 8 补 14：一份措辞，三处同源）');

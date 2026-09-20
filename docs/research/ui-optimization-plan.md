@@ -63,8 +63,8 @@
 |---|---|---|---|
 | 5.1 | 项目上下文唯一来源 | 壳层持有 `state.projectId` + 唯一入口 `resolveProjectId`/`rememberProject` + 侧栏那**一个**选择器；规范名 `project`（旧别名 `project_id` 一处迁移） | ✔ |
 | 5.2 | 删掉页面级项目选择器 | `projectPicker` → `projectLabel`（只读），换项目统一走侧栏 | ✔ |
-| 5.3 | 导航即进度 | 侧栏入口带状态徽标，数取自 `/api/story/pipeline`（**同一份**数据） | · |
-| 5.4 | 流程条常驻 | 七段链抽成 `public/js/pipeline.js`，每页可见 + "去下一步" | · |
+| 5.3 | 导航即进度 | 侧栏入口带状态徽标，数取自 `/api/story/pipeline`（**同一份**数据） | ✔ |
+| 5.4 | 流程条常驻 | 七段链抽成 `public/js/pipeline.js`，每页可见 + "去下一步" | ✔ |
 | 5.5 | 页头"上游产物 + 下一步" | `head({from, next})`，向后兼容 | · |
 | 5.6 | 项目级"上次停在哪一段" | 记忆进 `agnes.project.<id>.stage`，项目卡显示"继续创作 →" | · |
 
