@@ -379,7 +379,8 @@ group('B4 画风分层');
     ok('4.1 工具栏有「AI 补长相」按钮，且点击接到了 char_look 目标',
       /id="nov-look"/.test(novelMaxSrc) && /'#nov-look'[\s\S]{0,60}fillFields\('char_look'/.test(novelMaxSrc));
     ok('4.1 补长相先干跑拿到"要补几张"再走计费确认（不许直接开跑）',
-      /storyFieldFill\(sourceId, target, \{ dryRun: true \}\)/.test(lookBody) && /costConfirm\(/.test(lookBody));
+      /call\(\{ dryRun: true \}\)/.test(lookBody) && /costConfirm\(/.test(lookBody)
+      && /storyFieldFill\(sourceId, target, opts\)/.test(lookBody));
     ok('4.1 干跑里就拦住"一张都不缺"的情况（不弹确认也不花钱）',
       /if \(!dry\.data\.targets\)/.test(lookBody));
     // 界面**不自己算**"有几张缺长相"：那个判据在服务端（体检也用它），前端再抄一份迟早会漂。
@@ -389,7 +390,7 @@ group('B4 画风分层');
     ok('4.1 两条路（补长相/补场景字段）共用**一个**函数与一份文案表（不是抄两遍）',
       (novelMaxSrc.match(/async function fillFields\(/g) || []).length === 1
       && /FILL_TARGETS = \{/.test(novelMaxSrc) && /char_look:/.test(novelMaxSrc) && /card_inject:/.test(novelMaxSrc));
-    ok('4.1 补完如实报出补了几张', /已补 \$\{d\.assigned\}\/\$\{d\.targets\}/.test(lookBody));
+    ok('4.1 补完如实报出补了几张', /已\$\{cfg\.verb \|\| '补'\} \$\{d\.assigned\}\/\$\{d\.targets\}/.test(lookBody));
     // 三种"没写成"必须**分开**报：原文没写（结论）/ 引文对不上原文（那是它编的）/ 没接住。
     // 合成一个数，用户就分不清"原著没写"和"模型在编"—— 而后者才是真正要警惕的
     ok('4.1 "原文确实没写"单独说，且明说是结论不是失败',
@@ -404,6 +405,39 @@ group('B4 画风分层');
       /kind: 'character'/.test(lookStorySrc) && /code: 'char_no_look'/.test(lookStorySrc));
     // 补 33 的提示词模板必须真的在内置模板里（否则运行时报"缺少提示词模板"）
     ok('4.1 补长相用的提示词模板在内置模板表里', lookSeedSrc.includes("key: 'char_look'"));
+  }
+
+  // 批 8 补 43：AI 回原文补人物卡（与补字段同一套机制，但落点是**新增卡** → 另一个端点）
+  {
+    const castApiSrc = read(path.join(PUB, 'js', 'api.js'));
+    const castSeedSrc = read(path.join(ROOT, 'lib', 'seed.js'));
+    const castStorySrc = read(path.join(ROOT, 'lib', 'story.js'));
+    const castRouteSrc = read(path.join(ROOT, 'lib', 'routes.js'));
+    // 入口：工具栏按钮 → fillFields('cast_card')；体检那条问题的文案要**指名**这个入口（否则用户不知道点哪）
+    ok('4.3 工具栏有「AI 补人物卡」按钮，且点击接到了 cast_card 目标',
+      /id="nov-cast"/.test(novelMaxSrc) && /'#nov-cast'[\s\S]{0,60}fillFields\('cast_card'/.test(novelMaxSrc));
+    ok('4.3 体检的 plot_cast_unknown 文案**指名**这个入口（体检不能只有结论、没有出口）',
+      /AI 补人物卡/.test(castStorySrc) && /plot_cast_unknown/.test(castStorySrc));
+    // 端点封装：另一个端点 + 同样的 dry_run 干跑闸门
+    ok('4.3 前端有补卡的端点封装，且带 dry_run（干跑不花钱）',
+      /storyCastFill:/.test(castApiSrc) && /\/api\/story\/cast-fill/.test(castApiSrc) && /dry_run/.test(castApiSrc));
+    // **一条路**：cast 走的是同一个 fillFields（不是抄第二份函数），只在配置里多一个 cast 标记
+    ok('4.3 补卡复用**同一个** fillFields（多抄一份就会有两份计费确认与报告）',
+      (novelMaxSrc.match(/async function fillFields\(/g) || []).length === 1
+      && /cast_card: \{/.test(novelMaxSrc) && /cfg\.cast \? api\.storyCastFill/.test(novelMaxSrc));
+    // 报告同构：界面共用同一个报告渲染器（服务端返回 assigned_items，不是另造一份 created）
+    ok('4.3 服务端返回与补字段**同构**的报告（assigned_items/values/quote），界面才能共用渲染器',
+      /assigned_items: written/.test(castRouteSrc) && /values: meta\[i\]\.values/.test(castRouteSrc));
+    // 红线：原文里找不到的人**一张卡都不许建**（泛称/代称变成卡会进提示词与名册）
+    ok('4.3 服务端对 not_found 一条都不建卡（红线：宁可少建一张，也不建一张编的）',
+      /not_found\.push/.test(castStorySrc) && /cards\.push\(\{ index: n, kind: 'character'/.test(castStorySrc));
+    // 落库必须走**唯一一份**规范化，绝不自己拼一个卡对象
+    ok('4.3 新卡落库走 normalizeCard（与分块抽取抽出来的卡形状完全一致）',
+      /story\.normalizeCard\(\s*\{ kind: 'character', name: p\.name/.test(castRouteSrc));
+    // 提示词模板必须在内置模板表里（否则运行时报"缺少提示词模板"）
+    ok('4.3 补卡用的提示词模板在内置模板表里', castSeedSrc.includes("key: 'cast_card'"));
+    ok('4.3 模板变量与路由传入的键逐字一致（写错就是静默发空）',
+      castSeedSrc.includes('{{候选人物与原文片段}}') && /'候选人物与原文片段': story\.castFillLines/.test(castRouteSrc));
   }
 
   // 批 8 补 34：补场景/道具字段（与补长相同一套机制 —— 界面必须是**一个**函数、两份配置）

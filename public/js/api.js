@@ -189,6 +189,13 @@ export const api = {
   storyFieldFill: (sourceId, target, opts = {}) => req('POST', '/api/story/field-fill',
     { source_id: sourceId, target, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
 
+  /**
+   * 回原文补一张人物卡（批 8 补 43）：把剧情卡「涉及人物」里、系统里还没有档案的名字交给模型回原文建档。
+   * 与 `storyFieldFill` 同一套机制（干跑闸门 → 一次调用 → 引文核对 → 分桶上报），只是**新增**卡而不是改字段。
+   */
+  storyCastFill: (sourceId, opts = {}) => req('POST', '/api/story/cast-fill',
+    { source_id: sourceId, dry_run: !!opts.dryRun, model: opts.model }, { timeoutMs: TIMEOUT.gen }),
+
   /** 单集拍表 + 前情提要（批 8 补 8）：逐集生成的本集大纲与连续性上下文，纯本地计算 */
   storyEpisodeBrief: (q = {}) => {
     // 这里**没有** qs 助手（本文件一贯用 URLSearchParams 拼查询串）：写 qs(...) 只会在运行时抛

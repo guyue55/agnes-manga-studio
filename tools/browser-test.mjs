@@ -2337,6 +2337,104 @@ try {
       }
     }
 
+    group('AI 回原文补人物卡（批 8 补 43：真机点一遍 —— 报告、落库、页面刷新、体检闭环）');
+    {
+      // 为什么这条必须有真机契约：这一轮新增的是**用户会点**的按钮，而补 35 的教训是
+      // "真机测试是唯一看得见页面状态的那一层" —— 接口全绿、页面已经变哑，只有这一层抓得到
+      // `http` 已在文件顶部 import —— 这里**不要**再 require：本文件是 ESM（require 未定义），
+      // 而且局部声明会遮蔽顶层那个（第一版就是 `require is not defined` 整组崩掉）
+      const mock = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          let b = {}; try { b = JSON.parse(body); } catch {}
+          const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+          if (req.url === '/v1/chat/completions') {
+            const um = String(((b.messages || []).find((m) => m.role === 'user') || {}).content || '');
+            if (/"cards"\s*:/.test(um)) {
+              // 剧情卡的 involved 里放一个"查无此人"的名字（林晚有卡、沈砚没有）
+              return send({ choices: [{ message: { content: JSON.stringify({ cards: [
+                { kind: 'plot', name: '灯下问案', stage: '起', involved: '林晚、沈砚' },
+                { kind: 'character', name: '林晚', role: '主角', appearance: '白衣' },
+              ] }) } }] });
+            }
+            // 补卡：交一句**真的在原文里**的原话（服务端逐字核对，编的过不去、也一张卡都不会建）
+            if (/"people"\s*:/.test(um)) {
+              return send({ choices: [{ message: { content: JSON.stringify({ people: [
+                { index: 1, found: true, identity: '绣娘的旧识', appearance: '青衫，眉目清冷', quote: '沈砚推门进来' },
+              ] }) } }] });
+            }
+            return send({ choices: [{ message: { content: '{}' } }] });
+          }
+          return send({ ok: true });
+        });
+      });
+      await new Promise((r) => mock.listen(0, '127.0.0.1', r));
+      const mockPort = mock.address().port;
+      const J = (u, o) => fetch(`http://127.0.0.1:${port}${u}`, o).then((x) => x.json());
+      const POST = (u, b2) => J(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b2) });
+      let pid = '';
+      try {
+        await J('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agnes_api_base_url: `http://127.0.0.1:${mockPort}/v1`, agnes_api_key: 'cast-key' }) });
+        pid = (await POST('/api/projects', { name: '补卡真机验收剧' })).id;
+        const NOVEL = '沈砚推门进来，林晚正在灯下缝衣。'.repeat(20);
+        const an = await POST('/api/story/analyze', { project_id: pid, title: '补卡·原著', text: NOVEL, reduce: false });
+        for (let i = 0; i < 100; i++) { await sleep(200); const j = await J(`/api/batch/${an.jobId}`); if (j && j.status !== 'running') break; }
+        // **前提**：体检确实报出"沈砚查无此人"。没有这条，下面点按钮时可能压根没有候选，
+        // 那几条断言就会"因为一个无关的原因"通过（比红更糟）
+        const au0 = await J(`/api/story/audit?project_id=${pid}`);
+        ok('前置：体检报出「沈砚」查无此人（否则下面没有候选可补）',
+          (au0.cast_issues || []).some((x) => x.code === 'plot_cast_unknown' && x.target_name === '沈砚'),
+          JSON.stringify((au0.cast_issues || []).map((x) => x.target_name)));
+
+        await cdp.eval(`location.hash = '#/novel?project_id=${pid}&source_id=${an.source.id}'; return true;`);
+        await cdp.send('Page.reload', {}); await sleep(1200);
+        await waitFor(() => cdp.eval(`return !!document.querySelector('#nov-cast');`), '「AI 补人物卡」按钮', 15000);
+
+        await cdp.eval(`document.querySelector('#nov-cast').click(); return true;`);
+        let report = ''; let seen = ''; let seenH = '';
+        for (let i = 0; i < 40; i++) {
+          await cdp.eval(`const y=document.querySelector('.modal-mask [data-yes]'); if (y) y.click(); return true;`);
+          const now = await cdp.eval(`return JSON.stringify({
+            r: (document.querySelector('#nov-fill-box')||{}).innerText||'',
+            h: ((document.querySelector('#nov-fill-box')||{}).outerHTML||'').slice(0, 400),
+            t: [...document.querySelectorAll('.toast')].map((x)=>x.innerText).join(' | '),
+          });`);
+          let snap = {}; try { snap = JSON.parse(now); } catch { snap = {}; }
+          if (snap.t) seen = snap.t;
+          if (snap.h) seenH = snap.h;
+          report = snap.r || '';
+          if (/已写入/.test(report)) break;
+          await sleep(250);
+        }
+        ok('点「AI 补人物卡」后报告面板出现', /已写入/.test(report),
+          `toast="${String(seen).slice(0, 140)}" html="${String(seenH).slice(0, 140)}"`);
+        ok('报告说的是"新建"而不是"写入"（这是新增一张卡，不是改字段）', /新建/.test(report), JSON.stringify(report.slice(0, 200)));
+        ok('报告列出新卡的名字与写进去的值', /沈砚/.test(report) && /绣娘的旧识/.test(report), JSON.stringify(report.slice(0, 300)));
+        ok('并把原文原话摆在值旁边（"值 ← 原话"才核对得了）',
+          /依据原文原话/.test(report) && /沈砚推门进来/.test(report), JSON.stringify(report.slice(0, 400)));
+
+        // **真落库**：报告说的与库里存的是同一件事
+        const made = (await J(`/api/story/cards?project_id=${pid}&kind=character`)).find((c) => c.name === '沈砚') || {};
+        ok('新卡真的落库了（不是只报了个数）',
+          made.identity === '绣娘的旧识' && made.appearance === '青衫，眉目清冷', JSON.stringify(made).slice(0, 200));
+        // **页面真的刷新了**：卡片工作台里能看到这张新卡 ——
+        // "接口成功、toast 报成功、页面却没变"是补 35 抓到的"最坏形态"，这一条就是它的哨兵
+        const onPage = await cdp.eval(`return (document.querySelector('#nov-cards')||{}).innerText||'';`);
+        ok('卡片工作台**真的刷新了**（新卡出现在列表里）', /沈砚/.test(onPage), JSON.stringify(onPage.slice(0, 200)));
+        // 闭环：建完卡，体检那一条必须消失
+        const au1 = await J(`/api/story/audit?project_id=${pid}`);
+        ok('建完卡 → 体检不再报「沈砚」查无此人',
+          !(au1.cast_issues || []).some((x) => x.code === 'plot_cast_unknown' && x.target_name === '沈砚'));
+        const rej = await cdp.eval(`return JSON.stringify((window.__uiRejects||[]).slice(0,3));`);
+        ok('补卡这条流程没有留下未处理的 Promise 拒绝（"成功但页面已经变哑"最难发现）', rej === '[]', rej);
+      } finally {
+        await J(`/api/projects/${pid}?cascade=1`, { method: 'DELETE' }).catch(() => null);
+        await new Promise((r) => mock.close(r));
+      }
+    }
+
     group('setBusy 防呆契约（批 8 补 35：传容器会把整页内容与监听一起抹掉）');
     {
       // 补 32/补 33/补 34 三处都犯过：`setBusy(container, true, …)` —— 它会把 `container.innerHTML`

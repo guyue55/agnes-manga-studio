@@ -190,6 +190,10 @@ const mock = http.createServer((req, res) => {
           // 批 8 补 35：多三张时间线卡 —— 两张"没有时间点"（候选），一张**带着时间点**（对照组）。
           // 对照组是"已有的一个都不动"这条钉的前提（补 33 踩过：连对照组一起清，钉就失效了）
           ...(userMsg.includes('__WHENFILL__') ? [{ kind: 'timeline', name: '离开临江' }, { kind: 'timeline', name: '夜访' }, { kind: 'timeline', name: '重逢', when: '第二年春天' }] : []),
+          // 批 8 补 43：回原文补人物卡的候选 —— 一个"查无此人"的名字（沈砚）。
+          // **刻意不复用 __PLOTCAST__**：那个用例的苏婉儿在末尾会被建进角色库，
+          // 复用会让"候选是谁"取决于用例顺序（顺序敏感的断言等于没断言）
+          ...(userMsg.includes('__CASTFILL__') ? [{ kind: 'plot', name: '灯下问案', stage: '承', conflict: '对峙', turn: '翻供', outcome: '定案', involved: '林晚、沈砚' }] : []),
           // 批 8 补 36：给"全剧设定要进逐集上下文"造一张时间线卡。
           // 分块抽取每段都会返回它，同名会被归并成一张 —— 正是我们想验的"归并后再渲染"。
           ...(userMsg.includes('__WORLDSET__') ? [{ kind: 'timeline', name: '三日后', when: '第三天黄昏', order_note: '紧接第一幕' }] : []),
@@ -293,6 +297,30 @@ const mock = http.createServer((req, res) => {
         if (userMsg.includes('__INJLONG__')) return all(fills.map((x) => ({ ...x, [Object.keys(x).find((k) => k !== 'index' && k !== 'found' && k !== 'quote') || 'features']: '长'.repeat(500) })));
         if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没写这些。' } }] });
         return all(fills);
+      }
+      // 批 8 补 43：回原文补人物卡。与补字段同一套机制，只有返回键不同（people）。
+      // 引文同样必须来自**这个人的**原文片段 —— 随手编一句的话，连顺利路径都过不去
+      if (/"people"\s*:/.test(userMsg)) {
+        // 只按**候选行**切（`1. 待确认的人物：…`）—— 模板正文里还有 "1. **必须给出…**" 这类编号要求，
+        // 用 /^\d+\. / 会把它们也切成条目，于是 mock 返回一堆越界编号（补 34 就这么错过一次）
+        const parts = userMsg.split(/^\d+\. 待确认的人物：/m).slice(1);
+        const people = parts.map((part, i) => {
+          const body = String(part.split('原文片段：')[1] || '');
+          const lines = body.split('\n').map((x) => x.trim());
+          const line = lines.find((x) => x.length >= 12 && !x.includes('__')) || lines.find((x) => x.length >= 8) || '';
+          return { index: i + 1, found: true, identity: `模型补的身份${i + 1}`, appearance: `模型补的外貌${i + 1}`, quote: line.slice(0, 12) };
+        });
+        const all = (rows) => send(200, { choices: [{ message: { content: JSON.stringify({ people: rows }) } }] });
+        // __CASTNONE__：每一张都如实回"原文里没这个人" → 必须计 not_found、**一张卡都不建**
+        if (userMsg.includes('__CASTNONE__')) return all(parts.map((_, i) => ({ index: i + 1, found: false })));
+        // __CASTFAKE__：引文是编的 → 整条丢弃、一张卡都不建（建一张编的卡比不建更糟）
+        if (userMsg.includes('__CASTFAKE__')) return all(people.map((x) => ({ ...x, quote: '此人生得英武不凡，天下无双' })));
+        // __CASTLONG__：引文是真的，但外貌超长 → 必须过与手改**同一把尺子**，且报告要报截断后的那一份
+        if (userMsg.includes('__CASTLONG__')) return all(people.map((x) => ({ ...x, appearance: '长'.repeat(500) })));
+        // __CASTSTRAY__：引文是真的，但只给**别类卡**的键 → 一条都不许建（不许建一张空壳卡）
+        if (userMsg.includes('__CASTSTRAY__')) return all(people.map((x) => ({ index: x.index, found: true, quote: x.quote, owner: '别类卡的字段', when: '也是别类的' })));
+        if (userMsg.includes('__GARBAGE__')) return send(200, { choices: [{ message: { content: '这段原文里好像没提到这个人。' } }] });
+        return all(people);
       }
       // 批 8 补 35：补时间点。**同一套机制**的第三份规格，只有返回键不同（whens）。
       // 引文同样必须来自**那张卡自己**的片段 —— 这一组的核心就是"推算出来的时间进不了库"，
@@ -4280,6 +4308,153 @@ group('剧情卡人物闭环体检（批 8 补 28：involved 里的人真的存�
   const au2 = await api('GET', `/api/story/audit?project_id=${PID}`);
   eq('角色库补上这个人之后，这一条消失（体检不是永远报同样的话）',
     au2.data.cast_issues.filter((x) => x.code === 'plot_cast_unknown').length, 0);
+}
+
+group('AI 回原文补人物卡（批 8 补 43：体检报的名字，AI 回原文建档，建完体检就不再报）');
+{
+  // 独立的项目：这一组要"先有体检问题、再被 AI 关掉"，用别人的项目会互相影响
+  const pj = await api('POST', '/api/projects', { name: 'AI 补人物卡测试剧' });
+  const PID = pj.data.id;
+  // 独立的原著：候选是"查无此人"的沈砚。**刻意不复用 __PLOTCAST__ 的苏婉儿** ——
+  // 那个名字在补 28 的用例末尾被建进了角色库，复用会让"候选是谁"取决于用例顺序。
+  // 原文里**真的写了**沈砚（不是靠"没命中就取开头"兜底），所以还能顺带验"片段以他为中心"
+  const an = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '补卡·原著', reduce: false, max_chars: 800, max_chunks: 10,
+    text: `__CASTFILL__\n\n${'沈砚推门进来，林晚正在灯下缝衣。'.repeat(30)}`,
+  });
+  eq('解析任务已建', an.status, 200);
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${an.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const src = (await api('GET', `/api/story/sources?project_id=${PID}`)).data
+    .find((s) => String(s.preview || '').includes('__CASTFILL__'));
+  ok('拿到了带标记的那份原著（列表不带全文，按 preview 找）', !!src, '找不到 __CASTFILL__ 那份');
+  const charsOf = async () => (await api('GET', `/api/story/cards?source_id=${src.id}&kind=character`)).data;
+  const ppl = async () => (await charsOf()).filter((c) => c.name === '沈砚');
+  // 全文要单独取（列表接口刻意不带 text，只给 preview）
+  const srcFull = (await api('GET', `/api/story/sources/${src.id}`)).data;
+
+  const au0 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  const before = au0.data.cast_issues.filter((x) => x.code === 'plot_cast_unknown' && x.target_name === '沈砚');
+  eq('体检先如实报出「沈砚」查无此人（这是这一轮要关掉的那一条）', before.length, 1);
+  eq('此时项目里确实没有沈砚的人物卡', (await ppl()).length, 0);
+
+  // ① 干跑：如实报出"要确认几个名字、调几次"，且**一个字都不许写**
+  const dry = await api('POST', '/api/story/cast-fill', { source_id: src.id, dry_run: true });
+  eq('干跑 200', dry.status, 200);
+  eq('干跑报出要确认几个名字', dry.data.targets, 1);
+  eq('干跑报出调用次数（全部候选一次给完 = 1 次）', dry.data.calls, 1);
+  eq('干跑报出候选是谁（用户确认前要知道是哪些名字）', (dry.data.candidates || []).map((c) => c.name).join(','), '沈砚');
+  eq('干跑报出"有几个能定位到原文"', dry.data.with_source, 1);
+  eq('干跑不写库', (await ppl()).length, 0);
+  eq('干跑也没动体检结论（报的那条还在）',
+    (await api('GET', `/api/story/audit?project_id=${PID}`)).data.cast_issues
+      .filter((x) => x.code === 'plot_cast_unknown' && x.target_name === '沈砚').length, 1);
+
+  // ② 真跑：mock 给的是**从沈砚那段原文里截的原话** → 必须过核对并建卡
+  const run = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  eq('真跑 200', run.status, 200);
+  eq('建了 1 张卡', run.data.assigned, 1);
+  eq('如实报出建的是谁', (run.data.assigned_names || []).join(','), '沈砚');
+  const made = (await ppl())[0] || {};
+  eq('新卡确实是人物卡且名字就是清单里那个（模型改名也不认）', made.kind, 'character');
+  ok('身份与外貌都写上了', made.identity === '模型补的身份1' && made.appearance === '模型补的外貌1',
+    JSON.stringify({ i: made.identity, a: made.appearance }));
+  ok('留痕：标了 origin=cast_fill（用户能看出这张卡是 AI 回原文建的）', made.origin === 'cast_fill', String(made.origin));
+  ok('留痕：带着依据的段号（点开卡能回原文核对）', Array.isArray(made.evidence) && made.evidence.length > 0, JSON.stringify(made.evidence));
+  eq('没接住的四种原因都为空',
+    [run.data.ungrounded, run.data.not_found, run.data.missing, run.data.invalid].map((x) => (x || []).length).join(','), '0,0,0,0');
+
+  // ③ 报告与落库**同源**：报告里列的字段与值必须是真写进去的那一份（不是模型的提议）
+  const item = (run.data.assigned_items || [])[0] || {};
+  eq('报告条目与补字段**同构**（name/fields/values/quote）',
+    `${typeof item.name}/${Array.isArray(item.fields)}/${typeof item.values}/${!!item.quote}`, 'string/true/object/true');
+  eq('报告里的值就是库里那份', Object.keys(item.values || {}).sort().join(','), 'appearance,identity');
+  ok('报告带着引文（这是唯一能让人核对的依据）', String(item.quote || '').length > 0, String(item.quote));
+  ok('报告里的引文真的在原文片段里（不是我方自己编的）', String(srcFull.text || '').includes(String(item.quote || '').slice(0, 8)));
+
+  // ④ **闭环**：建完卡之后，体检那条必须消失（这一轮的意义就在这里）
+  const au1 = await api('GET', `/api/story/audit?project_id=${PID}`);
+  eq('建完卡 → 体检不再报「沈砚」查无此人（体检不是永远报同样的话）',
+    au1.data.cast_issues.filter((x) => x.code === 'plot_cast_unknown' && x.target_name === '沈砚').length, 0);
+
+  // ⑤ 幂等：再跑一次 → 没有候选了，不会重复建卡
+  const again = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  eq('再跑一次没有候选（刚建的卡算已知）', again.data.targets, 0);
+  eq('再跑一次不再建卡', (await ppl()).length, 1);
+  ok('并如实说明"都已经有档案了"', /档案/.test(again.data.note || ''), again.data.note);
+
+  // ⑥ **红线**：原文里找不到这个人（泛称/代称）→ 一张卡都不建。
+  //    建一张编出来的卡比不建更糟：它会进剧本提示词、角色名册与分集大纲，而"它是编的"在界面上看不出来。
+  //    标记走**剧情卡的名字**（它会原样进候选行的"哪几张卡提到"）——
+  //    塞在 `model` 字段里没用：mock 是按**提示词内容**分流的，而 model 名不进 messages
+  const plotCard = (await api('GET', `/api/story/cards?source_id=${src.id}&kind=plot`)).data[0];
+  const mark = (m) => api('PUT', `/api/story/cards/${plotCard.id}`, { name: `${m} 灯下问案` });
+  // 把刚建的卡改名 → 候选重新出现（不是删卡：删卡会让分镜绑定悬空，正是项目一直在防的事）
+  await api('PUT', `/api/story/cards/${made.id}`, { name: '沈砚改名占位' });
+  const n0 = (await charsOf()).length;
+  await mark('__CASTNONE__');
+  const none = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  eq('模型说原文里没这个人 → 计 not_found（这是结论，不是失败）', (none.data.not_found || []).length, 1);
+  eq('**一张卡都没建**（assigned 0）', none.data.assigned, 0);
+  eq('卡总数一个都没变（assigned 0 只说明"没报成功"，这里钉的是"库里真的没多"）', (await charsOf()).length, n0);
+  ok('报告留在页面上说明"没新建任何卡"', /没有新建任何卡/.test(none.data.note || ''), none.data.note);
+
+  // ⑦ 引文对不上原文 = 模型在编 → 整条丢弃、一张卡都不建
+  await mark('__CASTFAKE__');
+  const fake = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  eq('引文对不上原文 → 计 ungrounded', (fake.data.ungrounded || []).length, 1);
+  eq('**编出来的一条都不建**', fake.data.assigned, 0);
+  eq('卡总数也一个都没变', (await charsOf()).length, n0);
+
+  // ⑧ 只给别类卡的字段 → 不许建一张空壳人物卡
+  await mark('__CASTSTRAY__');
+  const stray = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  eq('只给别类卡的键 → 计 empty', (stray.data.empty || []).length, 1);
+  eq('空壳卡一张都不建', stray.data.assigned, 0);
+  eq('卡总数还是没变', (await charsOf()).length, n0);
+
+  // ⑨ 长度过**与手改同一把尺子**，且报告要报截断**之后**的那一份（否则报告与库是两份数据）
+  await mark('__CASTLONG__');
+  const long = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  eq('超长照样建卡（引文是真的）', long.data.assigned, 1);
+  const longMade = (await ppl())[0] || {};
+  eq('appearance 被截到上限', String(longMade.appearance || '').length, storyLib.FIELD_MAX.appearance);
+  eq('报告里报的也是截断后的那一份（报告与库同源）',
+    String(((long.data.assigned_items || [])[0] || {}).values?.appearance || '').length, storyLib.FIELD_MAX.appearance);
+
+  // ⑩ 模板变量被删 → 报错说清是哪个变量（静默发空是最难查的一类失败）
+  const castTpl = (await api('GET', '/api/templates')).data.find((t) => t.key === 'cast_card');
+  ok('内置模板表里有 cast_card', !!castTpl);
+  const origCast = castTpl.content;
+  // 先让候选**重新出现**：上一步刚建了一张卡，若此刻没有候选，路由会在"没有候选"那一行就返回，
+  // 根本走不到模板变量检查 —— 那条断言就会"因为一个无关的原因"通过（比红更糟）
+  for (const c of await ppl()) await api('PUT', `/api/story/cards/${c.id}`, { name: `${c.name}·占位` });
+  eq('候选重新出现（下面那条模板断言才有意义）',
+    (await api('POST', '/api/story/cast-fill', { source_id: src.id, dry_run: true })).data.targets, 1);
+  await api('PUT', `/api/templates/${castTpl.id}`, { content: String(origCast).replace('{{候选人物与原文片段}}', '') });
+  const broken = await api('POST', '/api/story/cast-fill', { source_id: src.id });
+  ok('模板缺变量时报错而不是静默发空', /没有 \{\{候选人物与原文片段\}\} 变量/.test(broken.data.error || ''), broken.data.error);
+  await api('PUT', `/api/templates/${castTpl.id}`, { content: origCast });
+  const restored = await api('POST', '/api/story/cast-fill', { source_id: src.id, dry_run: true });
+  eq('模板改回来之后恢复可用', restored.status, 200);
+
+  // ⑪ 没有剧情卡的原著 → 明确说清"先解析出剧情卡"，而不是含糊地报 0
+  // `reduce:false` 是关键：全局归并那一步会造剧情卡，开着它这份"过场文字"也会有剧情卡，
+  // 于是这条用例测的就不是"没有剧情卡"了（第一版就是这么红的）
+  const plain = await api('POST', '/api/story/analyze', {
+    project_id: PID, title: '无剧情卡·原著', reduce: false, max_chars: 800, max_chunks: 10,
+    text: '一段没有任何剧情卡的过场文字。'.repeat(40),
+  });
+  for (let i = 0; i < 80; i++) { await sleep(150); const j = (await api('GET', `/api/batch/${plain.data.jobId}`)).data; if (j && j.status !== 'running') break; }
+  const plainSrc = (await api('GET', `/api/story/sources?project_id=${PID}`)).data.find((s) => String(s.preview || '').includes('过场文字'));
+  const noPlot = await api('POST', '/api/story/cast-fill', { source_id: plainSrc.id });
+  eq('没有剧情卡 → 400', noPlot.status, 400);
+  ok('并说清原因（先解析出剧情卡才有「涉及人物」可核对）', /剧情卡/.test(noPlot.data.error || ''), noPlot.data.error);
+  const noSrc = await api('POST', '/api/story/cast-fill', { source_id: 'nope' });
+  eq('原著不存在 → 404', noSrc.status, 404);
+
+  await mark('灯下问案');
+  // 收尾：把这一组建的卡清掉（后面还有按项目统计的用例，别让它们被这一组影响）
+  for (const c of await charsOf()) if (/沈砚/.test(c.name)) await api('DELETE', `/api/story/cards/${c.id}`);
 }
 
 group('内置提示词同步（批 8 补 28：改了提示词，老库也能收到；改过的绝不覆盖）');

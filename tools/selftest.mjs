@@ -2735,7 +2735,16 @@ group('AI 回原文补时间点（批 8 补 35：撤销补 32 的"只能猜"，�
   ok('模板明令照原文说法写、不换算成具体日期', /换算成具体日期/.test(tpl.content));
   ok('模板的返回格式是 whens 数组且用 index 对位', /"whens":\[\{"index":1/.test(tpl.content));
   ok('模板变量与路由传入的键一致', /\{\{时间线卡与原文片段\}\}/.test(tpl.content));
-  eq('模板数比补 34 多了一个', seed.DEFAULT_TEMPLATES.length, 20);
+  // 模板数**不钉快照**（每加一轮功能它就会变，钉死了只会得到一条"看起来是事实、其实是旧快照"的断言）。
+  // 改钉**这批"回原文找"的模板 key 集合**：每个规格的模板都必须在，而且 key 不能重复 ——
+  // 这才是真正的不变量（补 29 的同一条教训：钉"历史表里有上一版指纹"，别钉"= 2"）
+  {
+    const want = [...Object.keys(story.FILL_SPECS).map((k) => story.FILL_SPECS[k].template), 'cast_card'];
+    const have = seed.DEFAULT_TEMPLATES.map((t) => t.key);
+    const missing = want.filter((k) => !have.includes(k));
+    eq('每个"回原文找"的规格都有对应的内置模板', missing.length, 0, missing.join(','));
+    eq('内置模板 key 不重复（重复会让 storyTemplate 取到哪一份变成偶然）', new Set(have).size, have.length);
+  }
 
   // ⑨ **跨文件棘轮**：每个规格的 varName 都必须真的出现在它自己的模板正文里。
   //    变量名对不上是**静默**失败 —— `renderPrompt` 会把"没给的 {{…}}"替换成**空串**，
@@ -2809,6 +2818,126 @@ group('剧情卡人物闭环体检（批 8 补 28）');
   // 与镜头侧的分工：卡片侧早一步、更便宜；这条钉住"它确实比 shot_char_unknown 更早发现"
   eq('还没生成任何分镜时就能发现（镜头侧要等分镜生成完）', run([plot('苏婉儿')]).issues.length, 1);
 }
+
+// ══════════════════════════════════════════════════════════════
+// 批 8 补 43：AI 回原文补一张人物卡（关掉最后一条"只能人工"的 AI 可做项）
+// ══════════════════════════════════════════════════════════════
+// 体检里 `plot_cast_unknown` 与镜头侧 `shot_char_unknown` 是**同一个病**的两侧：有个名字，
+// 系统里没有这个人的档案。原来只说"去抽一张人物卡（或在角色库里建一个）"——可那件事**原著通常写了**。
+// 本轮把它接成"让模型回去找"（与补 33 同一条思路），但机制不同：那是**补字段**，这是**新建一张卡**，
+// 所以另立一份实现（`castFill*`），而**共用的那两件事**（引文核对、谁是未知名字）各自只有一份实现。
+group('AI 回原文补人物卡（批 8 补 43）');
+{
+  const plot = (involved, id = 'p1', name = '夜访') => ({ id, kind: 'plot', name, involved, evidence: [0] });
+  const chunks = [{ text: '顾寒推门进来，林晚秋正在灯下缝衣。' }, { text: '林晚秋抬头，眉眼冷淡。' }];
+
+  // ① **同一份"谁是未知名字"**：体检报几个，补卡候选就必须是那几个。
+  //    抄成两份的后果是体检报 3 个、补卡只补 2 个，剩下那个**永远补不上、用户还看不出为什么**
+  {
+    // 顾寒**必须出现在 involved 里**，否则下面那条"已知名字不进候选"是**空测**：
+    // 候选本来就不会有他，把 known 检查整个关掉也照样绿（对照 OE 就是这么抓出来的）
+    const cards = [plot('林晚、苏婉儿、顾寒', 'p1'), plot('苏婉儿', 'p2'), { id: 'c1', kind: 'character', name: '顾寒' }];
+    ok('前提：顾寒确实出现在 involved 里（否则下面那条钉是空测）',
+      cards.some((c) => c.kind === 'plot' && String(c.involved).includes('顾寒')));
+    const audit = story.auditPlotCast(cards, { characters: [] }).issues.map((i) => i.target_name).sort();
+    const targets = story.castFillTargets(cards, { characters: [], chunks }).map((t) => t.name).sort();
+    eq('补卡候选与体检报的未知名字**完全一致**（同一份 unknownPlotCast）', targets.join(','), audit.join(','));
+    eq('已知的人物卡名字不进候选', targets.includes('顾寒'), false);
+  }
+
+  // ② 字段表**从 CARD_FIELDS 推导**（手抄一份的代价是"某天加了字段、这里没跟上"，而那表现为
+  //    新卡上那一个字段永远是空的 —— 补 30/31 的同一条教训）
+  {
+    const fs = story.castFillFields();
+    const missing = story.CARD_FIELDS.character.filter((f) => !fs.includes(f));
+    eq('人物卡认得的每个字段都在补卡字段表里（漏一个 = 那个字段永远空着）', missing.length, 0, missing.join(','));
+    eq('补卡字段表里没有系统不认识的字段（多要一个 = 白花钱，还会进 dropped）',
+      fs.filter((f) => !story.CARD_FIELDS.character.includes(f)).join(','), story.CAST_EXTRA_FIELDS.join(','));
+  }
+
+  // ③ 候选带着**它自己那几段原文**，且片段以**这个待确认的名字**为中心取
+  {
+    const t = story.castFillTargets([plot('林晚秋')], { characters: [], chunks })[0] || {};
+    eq('候选带着原文片段', t.has_text, true);
+    ok('片段里真的出现了这个待确认的名字', String(t.text).includes('林晚秋'), String(t.text).slice(0, 60));
+    ok('片段里也带着上下文（不是只给三个字）', String(t.text).length > 10, String(t.text).length);
+    eq('候选记着是哪几张剧情卡提到的（报告要用）', (t.cards || []).length, 1);
+    const noEv = story.castFillTargets([{ id: 'p9', kind: 'plot', name: '无出处', involved: '林晚秋' }],
+      { characters: [], chunks })[0] || {};
+    eq('剧情卡没有段号 → has_text=false（回原文找无从谈起，要如实说）', noEv.has_text, false);
+  }
+
+  // ④ 引文核对：**找到的必须带原文原话**，对不上整条丢弃、**一张卡都不建**
+  {
+    const ts = story.castFillTargets([plot('林晚秋')], { characters: [], chunks });
+    const run = (people) => story.applyCastCards(ts, { people });
+    const good = run([{ index: 1, quote: '林晚秋正在灯下缝衣', identity: '绣娘', appearance: '眉眼冷淡' }]);
+    eq('引文对得上 → 建一张卡', good.cards.length, 1);
+    eq('卡上写的字段就是计划里那几个（调用方照它写）', (good.cards[0] || {}).fields.join(','), 'identity,appearance');
+    eq('卡的名字用**清单里给的名字**（模型改了名也不认）',
+      run([{ index: 1, name: '别人', quote: '林晚秋正在灯下缝衣', identity: '绣娘' }]).cards[0].name, '林晚秋');
+    // 去空白比对：模型常顺手在中文里加空格/换行，那是格式差异、不是编造（补 33 立的规矩）
+    eq('引文里多打了空格照样认（去空白比对，不是放宽到"差不多"）',
+      run([{ index: 1, quote: '林晚秋 正在 灯下 缝衣', identity: '绣娘' }]).cards.length, 1);
+    eq('引文与原文对不上 → 丢弃并计 ungrounded', run([{ index: 1, quote: '她是个杀手', identity: '杀手' }]).ungrounded.length, 1);
+    eq('**对不上的一个卡都不许建**（建一张编出来的卡比不建更糟）',
+      run([{ index: 1, quote: '她是个杀手', identity: '杀手' }]).cards.length, 0);
+    // 原文没写 → **诚实的结论**，不是失败；但也绝不建卡（这一条是本轮的红线）
+    const nf = run([{ index: 1, found: false }]);
+    eq('found=false → 计 not_found（原文没写是正确结论）', nf.not_found.length, 1);
+    eq('**found=false 一个卡都不建**（红线：泛称/代称不许变成卡）', nf.cards.length, 0);
+    eq('found 是字符串 "false" 也认（模型偶尔这么写）', run([{ index: 1, found: 'false' }]).not_found.length, 1);
+    eq('引文对上了但一个字段都没给 → 计 empty，不建空卡', run([{ index: 1, quote: '林晚秋正在灯下缝衣' }]).empty.length, 1);
+    eq('empty 也不建卡', run([{ index: 1, quote: '林晚秋正在灯下缝衣' }]).cards.length, 0);
+    // 分桶互不重叠 + 没回来的算 missing
+    eq('模型没提这个编号 → 计 missing', run([]).missing.length, 1);
+    eq('编号越界 → 计 invalid，不当成 missing 也不崩', run([{ index: 9, quote: 'x' }]).invalid.length, 1);
+    eq('编号重复 → 计 invalid（同一张卡只认第一次）', run([
+      { index: 1, quote: '林晚秋正在灯下缝衣', identity: '绣娘' }, { index: 1, quote: '林晚秋正在灯下缝衣', identity: '杀手' },
+    ]).invalid.length, 1);
+    eq('桶之间不重叠：一条只进一个桶', (() => {
+      const r = run([{ index: 1, quote: '她是个杀手', identity: 'x' }]);
+      return `${r.cards.length}/${r.not_found.length}/${r.ungrounded.length}/${r.empty.length}/${r.missing.length}/${r.invalid.length}`;
+    })(), '0/0/1/0/0/0');
+    // 只收我们认识的字段（模型多给的键一律不写）
+    eq('模型多给的键不进卡（它可能顺手把别类卡的字段也填了）',
+      Object.keys(run([{ index: 1, quote: '林晚秋正在灯下缝衣', identity: '绣娘', owner: '不该有', when: '也不该有' }]).cards[0] || {})
+        .filter((k) => ['owner', 'when'].includes(k)).length, 0);
+  }
+
+  // ⑤ **引文核对只有一份实现**（补 43 把它从 `applyFillAssignments` 里抽出来共用）。
+  //    抽出来之前"补字段"与"补一张卡"各判各的 —— 一处放宽一处收紧，谁也不会发现。
+  //    这里用**同一句话、同一个片段**分别过两条路，要求它们给出同一个结论
+  {
+    eq('quoteGrounded 是共用的那一句判据（去空白后包含）', story.quoteGrounded('林晚 秋', '他叫林晚秋'), true);
+    eq('空引文 / 空原文一律不算成立（不能靠"两边都空"通过）',
+      `${story.quoteGrounded('', 'x')}/${story.quoteGrounded('x', '')}/${story.quoteGrounded('', '')}`, 'false/false/false');
+    const spec = story.FILL_SPECS.char_look;
+    const card = { id: 'k1', kind: 'character', name: '林晚秋', appearance: '', outfit: '' };
+    const fill = story.applyFillAssignments([card],
+      { looks: [{ index: 1, appearance: '眉眼冷淡', quote: '林晚 秋正在 灯下缝衣' }] },
+      { k1: chunks[0].text }, spec);
+    const cast = story.applyCastCards(story.castFillTargets([plot('林晚秋')], { characters: [], chunks }),
+      { people: [{ index: 1, identity: '绣娘', quote: '林晚 秋正在 灯下缝衣' }] });
+    eq('同一句引文在"补字段"那条路上成立', fill.patch.length, 1);
+    eq('同一句引文在"补一张卡"那条路上也成立（两条路同一把尺子）', cast.cards.length, 1);
+  }
+
+  // ⑥ 提示词与代码的字段闭环（补 29 的教训用在**新的**提示词上：新加的提示词同样要对差集）
+  {
+    const tpl = seed.DEFAULT_TEMPLATES.find((x) => x.key === 'cast_card') || {};
+    const notAsked = story.castFillFields().filter((f) => !String(tpl.content).includes(f));
+    eq('补卡字段表里的每个字段，模板都真的在向模型要（否则那个字段永远是空的）', notAsked.length, 0, notAsked.join(','));
+    ok('模板写明了返回的键名与数组名（people）', /"people":\[\{"index":1/.test(tpl.content));
+    ok('模板变量与路由传入的键逐字一致（写错就是静默发空）', /\{\{候选人物与原文片段\}\}/.test(tpl.content));
+    ok('模板写明引文会被逐字核对、对不上就丢弃', /逐字比对/.test(tpl.content) && /丢弃/.test(tpl.content));
+    ok('模板写明找不到就 found=false（宁可少建一张，也不建一张编的）',
+      /found=false/.test(tpl.content) && /编/.test(tpl.content));
+    ok('模板明令不许改名字（否则我们会用模型编的名字建卡）', /一个字都不要改/.test(tpl.content));
+    ok('模板要求没写的字段**不返回该键**（返回"未提及"会被当成真值写进卡）', /不返回这个键/.test(tpl.content));
+  }
+}
+
 
 // ══════════════════════════════════════════════════════════════
 // 批 8 补 29：字段闭环（系统认识的字段，必须有提示词在向模型要）

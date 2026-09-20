@@ -1,4 +1,51 @@
-## B105 内置模板同步只哈希 `content`：官方只改了 `system` 的改进永远到不了老库，而且一个字都不说（批 8 补 42，**已实施**）
+## B106 体检报"剧情卡提到的人查无此人"，出口却写着"去抽一张人物卡"——可原著通常写了，只是抽取漏了（批 8 补 43，**已实施**）
+
+**症状**：`plot_cast_unknown`（补 28）与 `shot_char_unknown`（补 5/6）是**同一个病的两侧** ——
+一个名字出现在剧情卡的 `involved` 里（镜头侧是「出场人物」），而项目里既没有他的人物卡、角色库里也没有他。
+后果是**静默到底**：外貌注入、绑定、参考图全都落不到这个人身上，而链路上**零报错**。
+补 28 已经把它变成可见的体检项，但**出口是错的** —— 文案写"去抽一张人物卡（或在角色库里建一个）"，
+把这件事定性成"需要人写"。而按补 32 的方法论回头数 `fixable: false` 的清单就会发现：
+`no_inject`/`char_no_look`/`plot_no_stage`/`timeline_no_when` 都已经在补 32–35 交给 AI"回原文找"了，
+`plot_cast_unknown` 是**同一个性质**却漏在外面 —— 原著里通常**写了**这个人是谁，只是分块抽取那一步漏了。
+
+**修法**：`POST /api/story/cast-fill` —— 与 `field-fill` **同一套机制**（干跑闸门 → 一次调用 →
+引文核对 → 分桶上报），只是**落点不同**：`field-fill` 改一张已有卡的字段，`cast-fill` **新增一张卡**。
+两处**必须同源**的东西抽成单一实现：`story.quoteGrounded`（引文核对）与 `story.unknownPlotCast`
+（谁算"查无此人"）。**后者的后果最重**：抄两份的话，体检报 3 个名字、补卡只认 2 个，
+而第 3 个**永远补不上、用户还看不出为什么**。
+
+**红线（这一轮最重要的一条）**：`not_found` / `ungrounded` / `empty` **一张卡都不许建**。
+建一张编出来的卡比不建更糟 —— 它会进剧本提示词、角色名册与分集大纲，而"它是编的"在界面上**看不出来**。
+配套的三条设计：① 卡名**永远取清单里的名字**（提示词里就要求"一个字都不要改"），模型自造的名字成不了卡；
+② `order = maxOrder + i + 1`（**追加**，不插队）；③ `origin: 'cast_fill'` + `evidence` 取
+"提到他的那些剧情卡"的段号并集 —— 用户能顺着它回原文核对。
+
+**报告必须与落库同源**：`insertMany` 回传的是**真落库的那些行**（带 id），报告条目取它的 id；
+`values` 取 `normalizeCard` **之后**的字段值（截断后的那一份），不是模型的提议。
+报告形状**与 `field-fill` 同构**（`assigned_items` / `fields` / `values` / `quote`），
+于是界面能共用**同一个**报告渲染器 —— 第一版给它单开了 `created`/`created_names`，
+那是**同一个事实的第二份形状**，迟早分叉，而分叉的表现是"报告里少了一列"，没人会注意到。
+
+**出口**：原著页卡片工作台工具栏新增「AI 补人物卡」按钮（**付费动作**，所以**不**标 `fixable: true` ——
+补 32 的纪律：付费动作不许混进"免费的一键修复"）。`plot_cast_unknown` 的文案改成**指名**这个入口。
+
+### 实施记录（补 43 已完成）
+
+- `lib/story.js`：新增 `quoteGrounded`（`applyFillAssignments` 改为调它，删掉本地 `norm`）、
+  `unknownPlotCast`（从 `auditPlotCast` **抽出来**，体检与补卡共用）、`CAST_EXTRA_FIELDS` /
+  `castFillFields` / `castFillTargets` / `castFillLines` / `applyCastCards`。
+- `lib/routes.js`：`POST /api/story/cast-fill`（`{source_id, dry_run, model}`）；返回体与 `field-fill` 同构。
+- `lib/seed.js`：新增内置模板 `cast_card`（**DEFAULT_TEMPLATES 20 → 21**，提示词里**刻意不写数字** ——
+  上限只该有 `FIELD_MAX` 一份来源）。
+- 界面：`public/js/pages/novel.js` 的 `FILL_TARGETS` 多一条 `cast_card` 配置（带 `cast: true`），
+  `fillFields` **只多一行**"调哪个端点"的分支 —— 干跑、计费确认、分桶文案、报告渲染、按钮忙碌态全部复用。
+- 测试：selftest **1257/0**（+38）、apitest **1352/0**（+47）、uitest **1222/0**（+11）、
+  browser-test 新增真机组（报告 + 落库 + **页面真的刷新了** + 体检闭环）。
+- 顺手修掉两条**因我的重构而红**的旧钉（不是放宽）：`uitest` 里
+  `/storyFieldFill\(sourceId, target, \{ dryRun: true \}\)/` 与 `/已补 \$\{d\.assigned\}/`
+  钉的是**当时的写法**，改成钉**现在的不变量**（干跑走 `call({dryRun:true})`、报数走 `cfg.verb`），
+  并保留"`fillFields` 只有一个实现"这条更强的结构棘轮。
+
 
 **症状（两个方向都有病，同一个病根）**：`seed.planTemplateSync` 的判据是
 `digestText(cur.content)` vs `digestText(d.content)` —— **只哈希正文**，`system` 不参与。

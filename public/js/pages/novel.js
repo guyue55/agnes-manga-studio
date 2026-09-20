@@ -103,6 +103,7 @@ export default async function novel(container, params = {}) {
             <button class="btn btn-xs" id="nov-look" title="给还没有外貌/服装的人物卡回原文找一遍（找到的必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补长相</button>
             <button class="btn btn-xs" id="nov-inject" title="给没有任何可注入描述的地点卡/道具卡回原文找一遍（氛围/地域/时段/特征、持有者/用途/特征；同样必须带原文原话，对不上原文的一律丢弃）">${icon('sparkles', 13)}AI 补场景字段</button>
             <button class="btn btn-xs" id="nov-when" title="给没有时间点的时间线卡回原文找一遍（只照原文的说法写，不换算、不推算；必须带原文原话，对不上原文的一律丢弃；原文没写就如实说没写）">${icon('sparkles', 13)}AI 补时间点</button>
+            <button class="btn btn-xs" id="nov-cast" title="剧情卡的「涉及人物」里有些名字没有人物卡与角色库档案 —— 回原文确认他是谁并直接建卡（必须带原文原话，对不上原文的一张都不建；原文里找不到这个人就如实说没找到，同样不建）">${icon('sparkles', 13)}AI 补人物卡</button>
           </div>
           <div id="nov-fill-box"></div>
           <div id="nov-outline-box"></div>
@@ -1153,6 +1154,21 @@ export default async function novel(container, params = {}) {
       what: '补时间点', label: '时间点', unit: '张时间线卡',
       empty: '所有时间线卡都已经有时间点了',
     },
+    /**
+     * 回原文补人物卡（批 8 补 43）：与上面三项**同一套机制**（干跑 → 计费确认 → 引文核对 → 分桶上报），
+     * 只是落点是**新增一张卡**而不是改字段，所以走另一个端点（`storyCastFill`）。报告形状与它们同构，
+     * 于是报告渲染器、分桶文案、按钮忙碌态**一行都不用另写**。
+     */
+    cast_card: {
+      what: '回原文补人物卡', label: '人物档案', unit: '个名字', verb: '新建',
+      empty: '剧情卡里提到的名字都已经有人物卡或角色库档案了',
+      cast: true,
+      note: '这些名字出现在剧情卡的「涉及人物」里，但项目里还没有他们的人物卡 —— 请模型回原文确认他是谁，'
+        + '并**直接建出这张卡**（外貌/服装/身份/性格等）。模型必须交出原文里的**原话**作为依据，'
+        + '与原文对不上的一律丢弃、**一张卡都不会建**；原文里找不到这个人（泛称/代称）会如实报"没找到"，'
+        + '同样不建卡 —— 宁可少建一张，也不建一张编出来的卡（编的卡会进剧本提示词与角色名册，'
+        + '而"它是编的"在界面上完全看不出来）。',
+    },
   };
 
   /**
@@ -1183,17 +1199,17 @@ export default async function novel(container, params = {}) {
     box.innerHTML = `
       <div class="card" style="margin-bottom:10px;padding:12px">
         <div class="row wrap" style="gap:6px;align-items:center">
-          <b>${esc(cfg.what)}：写入 ${d.assigned}/${d.targets} ${esc(cfg.unit)}</b>
+          <b>${esc(cfg.what)}：${esc(cfg.verb || '写入')} ${d.assigned}/${d.targets} ${esc(cfg.unit)}</b>
           <div class="spacer"></div>
           <button class="btn btn-xs" id="nov-fill-close">收起</button>
         </div>
-        <div class="hint-xs" style="margin-top:4px">下面每一张都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。</div>
+        <div class="hint-xs" style="margin-top:4px">下面每一${cfg.cast ? '张新卡' : '张'}都能核对：写进去的值 ← 它依据的原文原话。对不上原文的一条都没写。</div>
         ${d.note ? `<div class="hint-xs" style="margin-top:6px">${esc(d.note)}</div>` : ''}
         ${items.length ? items.map(rowOf).join('') : ''}
-        ${bucket(`原文确实没写（${(d.not_found || []).length} 张）—— 这是结论，不是失败`, d.not_found, 'gray')}
-        ${bucket(`引文对不上原文，已丢弃不写（${(d.ungrounded || []).length} 张）—— 那是它编的`, d.ungrounded, 'red')}
-        ${bucket('没接住，已保持原样（模型没给全或编号越界）', (d.missing || []).concat(d.invalid || [], d.empty || []), 'gold')}
-        ${d.no_source ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">没有原文出处，已跳过</span> ${d.no_source} 张（人工新建或来自全局归并、没有段号，回原文找无从谈起）</div>` : ''}
+        ${bucket(`原文确实没写（${(d.not_found || []).length} ${cfg.unit}）—— 这是结论，不是失败`, d.not_found, 'gray')}
+        ${bucket(`引文对不上原文，已丢弃${cfg.cast ? '、一张卡都没建' : '不写'}（${(d.ungrounded || []).length} ${cfg.unit}）—— 那是它编的`, d.ungrounded, 'red')}
+        ${bucket(`没接住，${cfg.cast ? '没有建卡' : '已保持原样'}（模型没给全或编号越界）`, (d.missing || []).concat(d.invalid || [], d.empty || []), 'gold')}
+        ${d.no_source ? `<div class="hint-xs" style="margin-top:6px"><span class="chip blue">没有原文出处，已跳过</span> ${d.no_source} ${esc(cfg.unit)}（人工新建或来自全局归并、没有段号，回原文找无从谈起）</div>` : ''}
         ${d.aligned === false ? '<div class="hint-xs" style="margin-top:6px;color:var(--warn)">这份原著的重新切块与解析时不一致，补上的内容请人工核对一遍。</div>' : ''}
       </div>`;
     const close = box.querySelector('#nov-fill-close');
@@ -1203,16 +1219,22 @@ export default async function novel(container, params = {}) {
   async function fillFields(target, btn) {
     const cfg = FILL_TARGETS[target];
     if (!sourceId) { toast.err('先在左侧选中一份解析记录'); return; }
-    const dry = await api.storyFieldFill(sourceId, target, { dryRun: true });
+    // 补字段走 field-fill（target 选规格），补一张卡走 cast-fill（落点是新增）——
+    // 只差"调哪个端点"，其余（干跑、确认、分桶、报告）全部共用
+    const call = (opts) => (cfg.cast ? api.storyCastFill(sourceId, opts) : api.storyFieldFill(sourceId, target, opts));
+    const dry = await call({ dryRun: true });
     if (!dry.ok) { toast.err(dry.error); return; }
     if (!dry.data.targets) { toast.ok(cfg.empty); return; }
     const noSrc = dry.data.no_source || 0;
+    const names = cfg.cast ? (dry.data.candidates || []).map((c) => c.name) : [];
     const yes = await costConfirm({
       count: 1,
       what: cfg.what,
-      note: `有 ${dry.data.targets} ${cfg.unit}还缺${cfg.label}，全部一次交给模型回原文找，只调 1 次。`
+      note: (cfg.note || `有 ${dry.data.targets} ${cfg.unit}还缺${cfg.label}，全部一次交给模型回原文找，只调 1 次。`
         + '模型必须交出原文里的**原话**作为依据，与原文对不上的一律丢弃；原文确实没写的会如实报"没写"，'
-        + `绝不会拿编的顶上。${noSrc ? `其中 ${noSrc} 张没有可定位的原文出处，会被跳过（回原文找无从谈起）。` : ''}`,
+        + '绝不会拿编的顶上。')
+        + `${names.length ? ` 这次要确认的名字：${names.slice(0, 6).join('、')}${names.length > 6 ? '…' : ''}。` : ''}`
+        + `${noSrc ? `其中 ${noSrc} ${cfg.unit}没有可定位的原文出处，会被跳过（回原文找无从谈起）。` : ''}`,
     });
     if (!yes) return;
     // **必须传按钮**，不能传 container：setBusy 会把 innerHTML 换成 spinner，
@@ -1221,10 +1243,10 @@ export default async function novel(container, params = {}) {
     // 页面监听也随 innerHTML 一起没了（"成功但页面已经变哑"是最难发现的一类失败）
     setBusy(btn, true, '正在回原文找');
     try {
-      const r = await api.storyFieldFill(sourceId, target);
+      const r = await call();
       if (!r.ok) { toast.err(r.error); return; }
       const d = r.data;
-      toast.ok(`已补 ${d.assigned}/${d.targets} ${cfg.unit}的${cfg.label}`);
+      toast.ok(`已${cfg.verb || '补'} ${d.assigned}/${d.targets} ${cfg.unit}的${cfg.label}`);
       // 三种"没写成"分开说：原文没写 / 引文对不上原文 / 没给全 —— 合成一个数就分不清"原著没写"和"模型在编"
       const nf = (d.not_found || []).length;
       const ug = (d.ungrounded || []).length;
@@ -1243,6 +1265,7 @@ export default async function novel(container, params = {}) {
   container.querySelector('#nov-look').onclick = (e) => fillFields('char_look', e.currentTarget);
   container.querySelector('#nov-inject').onclick = (e) => fillFields('card_inject', e.currentTarget);
   container.querySelector('#nov-when').onclick = (e) => fillFields('timeline_when', e.currentTarget);
+  container.querySelector('#nov-cast').onclick = (e) => fillFields('cast_card', e.currentTarget);
 
   const picker = container.querySelector('#p-picker');
   picker.onchange = () => {
