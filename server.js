@@ -542,6 +542,11 @@ function banner(url, port, resumed) {
   if (tpl.kept_edited && tpl.kept_edited.length) {
     console.log(`  提示词保留  ${tpl.kept_edited.length} 个内置模板有新版，但你改过 —— 保留你的版本：${tpl.kept_edited.join('、')}`);
   }
+  // 补 42：官方只改了 system、而这一行的 system 证明不了是官方版（老库的指纹只覆盖正文）——
+  // 保留它，但**必须说话**。从前这种情况被判成"什么都没变"，改进静默丢失且启动日志一个字都不说。
+  if (tpl.kept_system && tpl.kept_system.length) {
+    console.log(`  提示词提醒  ${tpl.kept_system.length} 个内置模板的 system 有新版，但这几行的 system 证明不了是官方版 —— 已保留：${tpl.kept_system.join('、')}`);
+  }
   const line = '─'.repeat(58);
   console.log('');
   console.log(line);

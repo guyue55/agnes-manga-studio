@@ -2097,25 +2097,50 @@ group('内置提示词更新决策（批 8 补 28）');
 {
   const D = [{ key: 'k', content: '新版内容', system: '新 system', builtin_version: 2 }];
   const dg = story.digestText;
+  const dgf = story.templateDigest;
   const plan = (stored, opts) => seed.planTemplateSync(stored, D, opts || {});
   // 同样"要红得干净"：keep[0] 取不到就给 {}（整段判定被反过来时，直接取字段会让自检崩掉）
   const kept = (stored, opts) => plan(stored, opts).keep[0] || {};
 
   eq('库里没有这个 key → 新增', plan([]).insert.length, 1);
-  eq('内容与新版一致 → 不更新（也算没被改过）', kept([{ key: 'k', content: '新版内容', is_builtin: true }]).reason, 'same');
-  eq('老库（没有 digest 字段）+ 历史指纹命中 → 更新',
-    plan([{ key: 'k', content: '旧版内容', is_builtin: true }], { superseded: { k: [dg('旧版内容')] } }).update.length, 1);
-  eq('行上 builtin_digest 自证没被改过 → 更新',
-    plan([{ key: 'k', content: '旧版内容', is_builtin: true, builtin_digest: dg('旧版内容') }]).update.length, 1);
+  eq('内容与 system 都与新版一致 → 不更新（也算没被改过）',
+    kept([{ key: 'k', content: '新版内容', system: '新 system', is_builtin: true }]).reason, 'same');
+  eq('老库（没有 digest 字段）+ 历史指纹命中 → 更新正文',
+    plan([{ key: 'k', content: '旧版内容', system: '新 system', is_builtin: true }], { superseded: { k: [dg('旧版内容')] } }).update_content.length, 1);
+  eq('行上 builtin_digest（旧式·只覆盖正文）自证没被改过 → 更新正文',
+    plan([{ key: 'k', content: '旧版内容', system: '新 system', is_builtin: true, builtin_digest: dg('旧版内容') }]).update_content.length, 1);
   eq('证明不了"还是官方那一版" → 保留（宁可漏更新，也不覆盖人的劳动）',
-    kept([{ key: 'k', content: '用户自己改的', is_builtin: true }]).reason, 'edited');
+    kept([{ key: 'k', content: '用户自己改的', system: '新 system', is_builtin: true }]).reason, 'edited');
   eq('用户把它改成自定义模板（is_builtin=false）→ 保留',
-    kept([{ key: 'k', content: '旧版内容', is_builtin: false }]).reason, 'custom');
+    kept([{ key: 'k', content: '旧版内容', system: '新 system', is_builtin: false }]).reason, 'custom');
   eq('保留的项要点名（启动日志要如实说"为什么没更新"）',
-    (kept([{ key: 'k', content: '用户自己改的', is_builtin: true }]).def || {}).key, 'k');
+    (kept([{ key: 'k', content: '用户自己改的', system: '新 system', is_builtin: true }]).def || {}).key, 'k');
   // 正对照 FG 把这条判据反过来（证明不了也更新），下面这行必须变红
-  eq('指纹对不上时**绝不**更新（这条是整段逻辑的安全底线）',
-    plan([{ key: 'k', content: '用户自己改的', is_builtin: true, builtin_digest: 'deadbeef' }]).update.length, 0);
+  {
+    const bad = plan([{ key: 'k', content: '用户自己改的', system: '新 system', is_builtin: true, builtin_digest: 'deadbeef' }]);
+    eq('指纹对不上时**绝不**更新（这条是整段逻辑的安全底线）', bad.update.length + bad.update_content.length, 0);
+  }
+
+  // ── 批 8 补 42：指纹必须覆盖 system，而且判据要**逐字段** ──────────────────
+  // 病①（漏更新、且**静默**）：官方这一轮只改了 system → 从前两边 content 指纹相等 → 判成 same
+  // → 改进永远到不了老库，而且启动日志一个字都不说（实测 update: 0 / reason: 'same'）
+  eq('官方**只改了 system** → 不再被当成 same（从前就是在这里静默丢掉的）',
+    kept([{ key: 'k', content: '新版内容', system: '旧的 system', is_builtin: true, builtin_digest: dg('新版内容') }]).reason,
+    'system_kept');
+  eq('…而且**点名上报**（保留可以，装成"什么都没变"不行）',
+    (kept([{ key: 'k', content: '新版内容', system: '旧的 system', is_builtin: true, builtin_digest: dg('新版内容') }]).def || {}).key, 'k');
+  // 病②（覆盖人的劳动）：用户只改了 system，官方改了正文 → 从前 update 会把 system 一起写掉（不可逆）
+  {
+    const p = plan([{ key: 'k', content: '旧版内容', system: '用户自己写的 system', is_builtin: true, builtin_digest: dg('旧版内容') }]);
+    eq('用户改过 system 的行 → 正文照更新（老库该收到的改进不能少）', p.update_content.length, 1);
+    eq('…但**绝不动它的 system**（这一行不能进"整行更新"）', p.update.length, 0);
+  }
+  // 只有**全量**证明才配整行更新：行上的指纹覆盖 system+content 时，两个字段才都可以写
+  eq('全量指纹自证 → 整行更新（content + system 一起）',
+    plan([{
+      key: 'k', content: '旧版内容', system: '旧 system', is_builtin: true,
+      builtin_digest: dgf({ content: '旧版内容', system: '旧 system' }),
+    }]).update.length, 1);
 
   // 棘轮：版本号与历史指纹表必须自洽，否则"改了提示词但忘了 bump/登记"会让老用户永远收不到
   ok('每个内置模板都带整数 builtin_version ≥ 1',
@@ -2137,16 +2162,66 @@ group('内置提示词更新决策（批 8 补 28）');
     store._resetForTest(); // 与本文件既有的播种组同一写法（这个 block 在文件末尾，不会影响别的组）
     const st = store;
     const SAME = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'story_concept');
-    st.insert('prompt_templates', { key: 'story_concept', content: SAME.content, is_builtin: true }); // 内容对、无指纹
+    const PS = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'plot_summary');
+    // 内容**与 system** 都对、但行上没有指纹（老库形状之一）。system 必须一起给：
+    // 补 42 起"逐字相同"要比 system，漏给就是**另一个形状**（会被判成 system_kept 而不是 same）
+    st.insert('prompt_templates', { key: 'story_concept', content: SAME.content, system: SAME.system, is_builtin: true });
     st.insert('prompt_templates', { key: 'novel_extract', content: '用户改过的', is_builtin: true }); // 用户改过
+    // 老库形状之二：逐字都对，但指纹是**旧式的"只覆盖正文"** —— 补 42 的迁移对象
+    st.insert('prompt_templates', {
+      key: 'plot_summary', content: PS.content, system: PS.system, is_builtin: true, builtin_digest: story.digestText(PS.content),
+    });
     const r = seed.seedTemplates(st);
     const k = st.list('prompt_templates').find((x) => x.key === 'story_concept');
     const e = st.list('prompt_templates').find((x) => x.key === 'novel_extract');
-    eq('内容已等于官方默认 → 补记指纹（下次才能自证）', k.builtin_digest, story.digestText(SAME.content));
-    eq('补记数量如实返回', r.stamped, 1);
+    const ps = st.list('prompt_templates').find((x) => x.key === 'plot_summary');
+    eq('逐字等于官方默认 → 补记**全量**指纹（覆盖 system + content，下次才能自证整行）',
+      k.builtin_digest, story.templateDigest(SAME));
+    eq('补记数量如实返回（两个形状各一条）', r.stamped, 2);
     eq('补记**不动内容**（只是登记事实）', k.content, SAME.content);
     eq('补记也补版本号（下次判据要一起用）', k.builtin_version, SAME.builtin_version || 1);
+    // 迁移：老式正文指纹 → 全量指纹。不升级的话"将来官方单独改 system"永远收不到
+    eq('旧式正文指纹被**升级成全量指纹**（补 42 的迁移）', ps.builtin_digest, story.templateDigest(PS));
+    eq('迁移同样只补指纹、不动内容与 system', `${ps.content}|${ps.system}`, `${PS.content}|${PS.system}`);
     eq('用户改过的行**绝不补记**（补记 = 把用户的内容登记成官方版 → 下次就会被覆盖）', e.builtin_digest, undefined);
+    // 病② 的**落库**验收：判定对了、`seedTemplates` 却把 system 也写进去 = 什么都没修
+    {
+      store._resetForTest();
+      const st2 = store;
+      const NE = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'novel_extract');
+      st2.insert('prompt_templates', {
+        key: 'novel_extract',
+        content: '官方旧正文',
+        system: '用户自己写的 system',
+        is_builtin: true,
+        builtin_digest: story.digestText('官方旧正文'),
+      });
+      seed.seedTemplates(st2);
+      const ne = st2.list('prompt_templates').find((x) => x.key === 'novel_extract');
+      eq('只证明得了正文的行 → 正文更新到新版（该收到的改进不能少）', ne.content, NE.content);
+      eq('…而它的 system **原样保留**（绝不被官方 system 覆盖）', ne.system, '用户自己写的 system');
+      eq('…指纹只登记"正文是我们发的"这一半，不冒充全量', ne.builtin_digest, story.digestText(NE.content));
+    }
+    // 反向红线（补 28 立下、补 42 继续守）：**只证明了一半的行绝不补记全量指纹** ——
+    // 那等于把用户写的 system 登记成"官方发过的整行"，而下一次启动就再也证明不了它，
+    // 于是这一行会从"正文还能更新"退化成 edited（**永久**收不到任何改进）。
+    {
+      store._resetForTest();
+      const st3 = store;
+      const SB = seed.DEFAULT_TEMPLATES.find((t) => t.key === 'story_bible');
+      st3.insert('prompt_templates', {
+        key: 'story_bible',
+        content: SB.content,                       // 正文就是官方这一版
+        system: '用户自己写的 system',              // 但 system 不是
+        is_builtin: true,
+        builtin_digest: story.digestText(SB.content), // 老式·只覆盖正文
+      });
+      seed.seedTemplates(st3);
+      const sb = st3.list('prompt_templates').find((x) => x.key === 'story_bible');
+      eq('system 证明不了的行**不补记全量指纹**（补记 = 把用户的 system 登记成官方版）',
+        sb.builtin_digest, story.digestText(SB.content));
+      eq('…它的 system 也一个字没动', sb.system, '用户自己写的 system');
+    }
     // 按 **key 集合**比对，不钉张数：张数是快照，每加一个内置模板就得改一次（补 29 的教训②）；
     // 而 key 集合是真正的不变量 —— "其余内置模板都补上了"这句话说的就是这个
     eq('其余没提到的内置模板照旧新增（比对 key 集合，不钉张数）',
