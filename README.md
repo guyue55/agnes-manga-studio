@@ -50,6 +50,19 @@ node server.js
 PORT=5178 AGNES_STUDIO_HOME=./data node server.js
 ```
 
+日常更省事的是用 `scripts/` 下的脚本（后台常驻、日志落 `data/run/server.log`）：
+
+```bash
+scripts/start.sh      # 启动（已在跑就只报状态，不会起第二个实例）
+scripts/restart.sh    # 重启（改了后端代码就用它）
+scripts/stop.sh       # 停止（先 TERM，10 秒不退再 KILL）
+scripts/status.sh     # 看状态（PID / 端口 / 版本 / 代码指纹 / 是否跑着旧代码）
+scripts/build.sh      # 重新生成派生产物（本项目**没有编译步骤**，见下）
+```
+
+退出码：`0` 成功、`1` 失败（`stop.sh` 还会在"证明不了是本工作台的进程"时拒绝动手）、`3` 没在运行。
+端口被别的程序占着时，脚本会问出**实际**端口（server.js 会自动 +1 重试），而不是假设 5178。
+
 **改了后端代码（`server.js` / `lib/*.js`）要重启服务才生效。**
 重启还会**顺带更新内置提示词**（提示词是抽取质量的关键，改进了就得能到你手上）——
 只更新你没改过的那些；**你编辑过的内置模板一律原样保留**，启动横幅会说明"更新了几个 / 保留了哪几个"。 前端静态文件是每次刷新都从磁盘读的，
@@ -109,6 +122,10 @@ node tools/run-all.mjs
 node tools/ui-audit.mjs     # 真机视觉度量报表：4 视口 × 9 页的溢出/微字号/对比度/截断无提示
 node tools/port-check.mjs   # 端口撞车防护三场景 6 断言实测（复用 / 漂移 / 影子实例 + 收尾无残留自检）
                             #   退出码：0 全过 / 1 真实违例 / 2 环境冲突（端口被无关进程占用，结论不可用）
+node tools/scripts-check.mjs # 启动/重启/停止脚本的真机契约 22 断言（起真进程、发真信号、探真端口）
+                            #   覆盖：pid/端口/健康体三者一致、不重复启动、端口漂移、
+                            #   以及"过期 pid 文件指向活着的无关进程时必须拒绝动手"（PID 复用误杀）
+                            #   退出码同上；用临时数据目录 + 高位端口，不碰线上实例
 ```
 
 ## 打包 Windows exe
@@ -131,6 +148,7 @@ lib/jobs.js           批量任务队列
 lib/seed.js           默认提示词模板
 public/               原生 HTML/CSS/JS 前端
 tools/                测试与 exe 打包脚本
+scripts/              启动/重启/停止/状态/构建 的 shell 脚本
 docs/knowledge-graph/ 项目知识图谱（JSON 数据 + 交互式 viewer）
 ```
 
